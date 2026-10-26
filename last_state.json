@@ -1,0 +1,268 @@
+{
+  "updated_at": "2026-10-23T14:10:00Z",
+  "accounts": {
+    "ber_turtle": {
+      "cards": [
+        {
+          "slug": "/cards/a-aristia-la-monique-b",
+          "url": "https://senkuro.com/cards/a-aristia-la-monique-b",
+          "name": "Аристия ла Моник",
+          "rank": "B",
+          "manga": "Брошенная императрица",
+          "qty": 1,
+          "img": ""
+        },
+        {
+          "slug": "/cards/sm-sedina-roshen-c",
+          "url": "https://senkuro.com/cards/sm-sedina-roshen-c",
+          "name": "Седина Рошен",
+          "rank": "C",
+          "manga": "Сильнейший профессор магии",
+          "qty": 1,
+          "img": ""
+        },
+        {
+          "slug": "/cards/dd-gu-rong-d",
+          "url": "https://senkuro.com/cards/dd-gu-rong-d",
+          "name": "Гу Рон",
+          "rank": "D",
+          "manga": "Боевой континент",
+          "qty": 1,
+          "img": ""
+        },
+        {
+          "slug": "/cards/iwas-yumina-d",
+          "url": "https://senkuro.com/cards/iwas-yumina-d",
+          "name": "Юмина",
+          "rank": "D",
+          "manga": "Это была случайность",
+          "qty": 1,
+          "img": "https://shiro.senkuro.org/GTd1Di0L4hHnlatcg59s0FeTT5YMYF1cGr5vsSpf6yQ/rs:fit:180:270/aHR0cHM6Ly9taXMyMTMzNzUxMTcXMjE2T0RnMWE2M2M0ZjI1NWNmI1NWE2E2OTRmNWUzO2NGIyWN0ZXJkO2N2MTMzMTMzNzMzNzM2M2E2M2E2M2E2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A.webp"
+        },
+        {
+          "slug": "/cards/mb-olivia-f",
+          "url": "https://senkuro.com/cards/mb-olivia-f",
+          "name": "Оливия",
+          "rank": "F",
+          "manga": "Кровь мадам Жизель",
+          "qty": 1,
+          "img": ""
+        }
+      ],
+      "shards": [
+        {
+          "slug": "/cards/thdwaql-bi-gwang-hyeokryeon-d",
+          "url": "https://senkuro.com/cards/thdwaql-bi-gwang-hyeokryeon-d",
+          "name": "Хёрён Пигван",
+          "rank": "D",
+          "manga": "",
+          "qty": 1,
+          "img": "https://shiro.senkuro.org/GTd1Di0L4hHnlatcg59s0FeTT5YMYF1cGr5vsSpf6yQ/rs:fit:180:270/aHR0cHM6Ly9taXMyMTMzNzUxMTcXMjE2T0RnMWE2M2M0ZjI1NWNmI1NWE2E2OTRmNWUzO2NGIyWN0ZXJkO2N2MTMzMTMzNzMzNzM2M2E2M2E2M2E2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A.webp"
+        }
+      ]
+    },
+    "ainz": {
+      "cards": [
+        {
+          "slug": "/cards/bumgd-deruth-henituse-c",
+          "url": "https://senkuro.com/cards/bumgd-deruth-henituse-c",
+          "name": "Дерус Хенитус",
+          "rank": "C",
+          "manga": "Я стал графским ублюдком",
+          "qty": 1,
+          "img": ""
+        },
+        {
+          "slug": "/cards/d-taehee-jin-c",
+          "url": "https://senkuro.com/cards/d-taehee-jin-c",
+          "name": "Джин Тхэ Хи",
+          "rank": "C",
+          "manga": "Свинарник",
+          "qty": 1,
+          "img": ""
+        },
+        {
+          "slug": "/cards/wh-meiling-d",
+          "url": "https://senkuro.com/cards/wh-meiling-d",
+          "name": "Мэйлинг",
+          "rank": "D",
+          "manga": "Охотник на ведьм",
+          "qty": 1,
+          "img": ""
+        }
+      ],
+      "shards": [
+        {
+          "slug": "/cards/tbotb-hajin-seo-c",
+          "url": "https://senkuro.com/cards/tbotb-hajin-seo-c",
+          "name": "Со Хаджин",
+          "rank": "C",
+          "manga": "Кровь бабочки",
+          "qty": 1,
+          "img": ""
+        }
+      ]
+    },
+    "catswat": {
+      "cards": [
+        {
+          "slug": "/cards/qg-xinjie-zhang-c",
+          "url": "https://senkuro.com/cards/qg-xinjie-zhang-c",
+          "name": "Чжан Синьцзе",
+          "rank": "C",
+          "manga": "Аватар короля",
+          "qty": 1,
+          "img": ""
+        },
+        {
+          "slug": "/cards/n-tao-f",
+          "url": "https://senkuro.com/cards/n-tao-f",
+          "name": "Тао",
+          "rank": "F",
+          "manga": "Дворянство",
+          "qty": 1,
+          "img": ""
+        }
+      ],
+      "shards": [
+        {
+          "slug": "/cards/asb-rinae-mi-c",
+          "url": "https://senkuro.com/cards/asb-rinae-mi-c",
+          "name": "Ми Ри Нэ",
+          "rank": "C",
+          "manga": "Истинный злодей",
+          "qty": 1,
+          "img": ""
+        },
+        {
+          "slug": "/cards/8wr-hayden-greenriver-c",
+          "url": "https://senkuro.com/cards/8wr-hayden-greenriver-c",
+          "name": "Хейден Гринривер",
+          "rank": "C",
+          "manga": "Регрессия мага восьмого класса",
+          "qty": 1,
+          "img": ""
+        },
+        {
+          "slug": "/cards/zg-hyeji-do-c",
+          "url": "https://senkuro.com/cards/zg-hyeji-do-c",
+          "name": "До Хе Джи",
+          "rank": "C",
+          "manga": "Девушка-свинка",
+          "qty": 1,
+          "img": ""
+        }
+      ]
+    },
+    "wolfrice": {
+      "cards": [
+        {
+          "slug": "/cards/jj-suchan-jang-d",
+          "url": "https://senkuro.com/cards/jj-suchan-jang-d",
+          "name": "Чан Су Чхан",
+          "rank": "D",
+          "manga": "Сок джунглей",
+          "qty": 1,
+          "img": ""
+        },
+        {
+          "slug": "/cards/vsa-ares-f",
+          "url": "https://senkuro.com/cards/vsa-ares-f",
+          "name": "Арес",
+          "rank": "F",
+          "manga": "Странствующий воин Арес",
+          "qty": 1,
+          "img": ""
+        }
+      ],
+      "shards": []
+    },
+    "cesium254": {
+      "cards": [
+        {
+          "slug": "/cards/jj-jun-ji-s",
+          "url": "https://senkuro.com/cards/jj-jun-ji-s",
+          "name": "Чи Джун",
+          "rank": "S",
+          "manga": "Сок джунглей",
+          "qty": 1,
+          "img": ""
+        },
+        {
+          "slug": "/cards/orv-aileen-makerfield-a",
+          "url": "https://senkuro.com/cards/orv-aileen-makerfield-a",
+          "name": "Айлин Мекерфилд",
+          "rank": "A",
+          "manga": "Всеведущий читатель",
+          "qty": 1,
+          "img": ""
+        },
+        {
+          "slug": "/cards/igb-karinne-cayenne-b",
+          "url": "https://senkuro.com/cards/igb-karinne-cayenne-b",
+          "name": "Каринн Кайен",
+          "rank": "B",
+          "manga": "Я родила ребёнка убийцы",
+          "qty": 1,
+          "img": ""
+        },
+        {
+          "slug": "/cards/ith-kang-soo-han-b",
+          "url": "https://senkuro.com/cards/ith-kang-soo-han-b",
+          "name": "Хан Кан Су",
+          "rank": "B",
+          "manga": "Это реально герой?",
+          "qty": 1,
+          "img": ""
+        },
+        {
+          "slug": "/cards/irts-seon-ah-yoon-c",
+          "url": "https://senkuro.com/cards/irts-seon-ah-yoon-c",
+          "name": "Юн Сон А",
+          "rank": "C",
+          "manga": "Я регрессирую чтобы выжить",
+          "qty": 1,
+          "img": ""
+        },
+        {
+          "slug": "/cards/ibm-gunther-d",
+          "url": "https://senkuro.com/cards/ibm-gunther-d",
+          "name": "Гюнтер",
+          "rank": "D",
+          "manga": "Я стала женой главного героя",
+          "qty": 1,
+          "img": ""
+        },
+        {
+          "slug": "/cards/rmh-taepyeong-ma-f",
+          "url": "https://senkuro.com/cards/rmh-taepyeong-ma-f",
+          "name": "Ма Тхэпён",
+          "rank": "F",
+          "manga": "Реинкарнация в безумного наследника",
+          "qty": 1,
+          "img": ""
+        }
+      ],
+      "shards": [
+        {
+          "slug": "/cards/shard-shin-yoo-na-a",
+          "url": "https://senkuro.com/users/cesium254/cards",
+          "name": "Син Ю На",
+          "rank": "A",
+          "manga": "",
+          "qty": 1,
+          "img": ""
+        },
+        {
+          "slug": "/cards/shard-elena-d",
+          "url": "https://senkuro.com/users/cesium254/cards",
+          "name": "Елена",
+          "rank": "D",
+          "manga": "",
+          "qty": 1,
+          "img": ""
+        }
+      ]
+    }
+  }
+}
