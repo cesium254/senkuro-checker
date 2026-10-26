@@ -1,63 +1,90 @@
 {
-  "updated_at": "2026-10-23T14:10:00Z",
+  "updated_at": "2026-10-26T09:29:11.099492+00:00",
   "accounts": {
     "ber_turtle": {
       "cards": [
         {
-          "slug": "/cards/a-aristia-la-monique-b",
-          "url": "https://senkuro.com/cards/a-aristia-la-monique-b",
-          "name": "Аристия ла Моник",
-          "rank": "B",
-          "manga": "Брошенная императрица",
-          "qty": 1,
-          "img": ""
+          "slug": "/cards/apj-arin-ocelot-c",
+          "url": "https://senkuro.com/cards/apj-arin-ocelot-c",
+          "name": "Арин Оцелот",
+          "rank": "C",
+          "manga": "",
+          "qty": 3,
+          "img": "https://shiro.senkuro.org/FxSGff572h5FBJ2FMKwR6DygTS0rJukVO2ByLr3JTMI/rs:fit:180:270/aHR0cHM6Ly9taXJhaS5zZW5rdXJvLm9yZy9jYXJkcy9jaGFyYWN0ZXJzLzY3MTYxNDYzNDA3NTcwNDU0LzZiNDg5NWQwZDg1ZGY2NzI3ODhhY2JiZmEzMDBhOTg5Y2ZhZjVjMTkud2VicA.webp"
         },
         {
-          "slug": "/cards/sm-sedina-roshen-c",
-          "url": "https://senkuro.com/cards/sm-sedina-roshen-c",
+          "slug": "/cards/awd-sedena-rothian-c",
+          "url": "https://senkuro.com/cards/awd-sedena-rothian-c",
           "name": "Седина Рошен",
           "rank": "C",
-          "manga": "Сильнейший профессор магии",
-          "qty": 1,
-          "img": ""
+          "manga": "",
+          "qty": 3,
+          "img": "https://shiro.senkuro.org/2S2rHDUtrO9PlAPXi-yoBXbGTCkv-Z9GH8PbZnfFMCg/rs:fit:180:270/aHR0cHM6Ly9taXJhaS5zZW5rdXJvLm9yZy9jYXJkcy9jaGFyYWN0ZXJzLzE0NTc3NzY1NDY1Njc0NzAyOC8zNTQzMzk3ZWU0MWUzOWQ4YzNjMDJlZGE5ODhlMjc5Y2IzMDE4ZWM5LndlYnA.webp"
         },
         {
-          "slug": "/cards/dd-gu-rong-d",
-          "url": "https://senkuro.com/cards/dd-gu-rong-d",
+          "slug": "/cards/dd-rong-gu-d",
+          "url": "https://senkuro.com/cards/dd-rong-gu-d",
           "name": "Гу Рон",
           "rank": "D",
-          "manga": "Боевой континент",
-          "qty": 1,
-          "img": ""
+          "manga": "",
+          "qty": 3,
+          "img": "https://shiro.senkuro.org/j6MxxhMtjxY40bL85_ZFg9bprM-9vxUKBmMkwsLWyj8/rs:fit:180:270/aHR0cHM6Ly9taXJhaS5zZW5rdXJvLm9yZy9jYXJkcy9jaGFyYWN0ZXJzLzUyNjYzNDI3MDAwMjM0NzQzL2E3MWI0MzZhODQ3NDMzZDhiNTk0ZjFiM2ZkYWYzN2Y0NDQ3MDgwMzMud2VicA.webp"
         },
         {
-          "slug": "/cards/iwas-yumina-d",
-          "url": "https://senkuro.com/cards/iwas-yumina-d",
+          "slug": "/cards/aiawot-yumina-d",
+          "url": "https://senkuro.com/cards/aiawot-yumina-d",
           "name": "Юмина",
           "rank": "D",
-          "manga": "Это была случайность",
-          "qty": 1,
-          "img": "https://shiro.senkuro.org/GTd1Di0L4hHnlatcg59s0FeTT5YMYF1cGr5vsSpf6yQ/rs:fit:180:270/aHR0cHM6Ly9taXMyMTMzNzUxMTcXMjE2T0RnMWE2M2M0ZjI1NWNmI1NWE2E2OTRmNWUzO2NGIyWN0ZXJkO2N2MTMzMTMzNzMzNzM2M2E2M2E2M2E2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A.webp"
+          "manga": "",
+          "qty": 3,
+          "img": "https://shiro.senkuro.org/tZ1Srp0j9TC1vH-pBF8GcVElJQFB0G_0QPVdyxiPUyE/rs:fit:180:270/aHR0cHM6Ly9taXJhaS5zZW5rdXJvLm9yZy9jYXJkcy9jaGFyYWN0ZXJzLzIxNjU4NzM2Mzg0ODUwNDg3NC81MzIyNzczODkwZjcxNjNjZDk5M2Q2OWM3NmQwY2QzNjgzNTk1NjgxLndlYnA.webp"
         },
         {
-          "slug": "/cards/mb-olivia-f",
-          "url": "https://senkuro.com/cards/mb-olivia-f",
+          "slug": "/cards/jsp-olivia-f",
+          "url": "https://senkuro.com/cards/jsp-olivia-f",
           "name": "Оливия",
           "rank": "F",
-          "manga": "Кровь мадам Жизель",
-          "qty": 1,
-          "img": ""
+          "manga": "",
+          "qty": 3,
+          "img": "https://shiro.senkuro.org/6zEL0dcnRKP0VbGgzsq7Lb4NwNPGq0eEjKJcOUaNkv0/rs:fit:180:270/aHR0cHM6Ly9taXJhaS5zZW5rdXJvLm9yZy9jYXJkcy9jaGFyYWN0ZXJzLzU0NTkwNDkwMTA3OTc2NTA0LzhmZDczZTVlOGI5MDJiOGJlMzQ0YjY3YTFjZGM0NWIwMzlmMmY5MmMud2VicA.webp"
+        },
+        {
+          "slug": "/cards/hnr-sheska-f",
+          "url": "https://senkuro.com/cards/hnr-sheska-f",
+          "name": "Шеска",
+          "rank": "F",
+          "manga": "",
+          "qty": 3,
+          "img": "https://shiro.senkuro.org/2Wwc-_banFVxOWZ-dktKWKsIjXXmCrnk9acs577M4UI/rs:fit:180:270/aHR0cHM6Ly9taXJhaS5zZW5rdXJvLm9yZy9jYXJkcy9jaGFyYWN0ZXJzLzUyNjYwMTAwMTI4NjMzNTkxL2M2ZDhhMDhlNmNkYTY1NWI0M2E0ZTIwZDcyYjFlMjc2NWJhZmU2MzUud2VicA.webp"
         }
       ],
       "shards": [
+        {
+          "slug": "/cards/me-yuna-shin-a",
+          "url": "https://senkuro.com/cards/me-yuna-shin-a",
+          "name": "Син Ю На",
+          "rank": "A",
+          "manga": "",
+          "qty": 3,
+          "img": "https://shiro.senkuro.org/WbDOHE9iBeyS38NA4gOAqX4GC3QSb35y28cr2IZNFns/rs:fit:180:270/aHR0cHM6Ly9taXJhaS5zZW5rdXJvLm9yZy9jYXJkcy9jaGFyYWN0ZXJzLzUzMzE2MDU0NDk1MDM5MDY2L2YyNDZkOGE2YTNmMjIxY2EyYjI2ODZmNmE5YzJkMWM4NDgxYWFjNjAud2VicA.webp"
+        },
+        {
+          "slug": "/cards/lhiaahs-elena-d",
+          "url": "https://senkuro.com/cards/lhiaahs-elena-d",
+          "name": "Елена",
+          "rank": "D",
+          "manga": "",
+          "qty": 3,
+          "img": "https://shiro.senkuro.org/XAE5qEN_os2NfECu0UltlAxuh6mWRImOKbVeh8iX6zw/rs:fit:180:270/aHR0cHM6Ly9taXJhaS5zZW5rdXJvLm9yZy9jYXJkcy9jaGFyYWN0ZXJzLzI1MTM3NjQwNjM2MDE4MDI0MC9mMWYwN2VmNWQwZjk2ODU2ZTVhYmUyOTU4OGVlNjQ2NzJkYTQ3NDBlLndlYnA.webp"
+        },
         {
           "slug": "/cards/thdwaql-bi-gwang-hyeokryeon-d",
           "url": "https://senkuro.com/cards/thdwaql-bi-gwang-hyeokryeon-d",
           "name": "Хёрён Пигван",
           "rank": "D",
           "manga": "",
-          "qty": 1,
-          "img": "https://shiro.senkuro.org/GTd1Di0L4hHnlatcg59s0FeTT5YMYF1cGr5vsSpf6yQ/rs:fit:180:270/aHR0cHM6Ly9taXMyMTMzNzUxMTcXMjE2T0RnMWE2M2M0ZjI1NWNmI1NWE2E2OTRmNWUzO2NGIyWN0ZXJkO2N2MTMzMTMzNzMzNzM2M2E2M2E2M2E2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A2M2A.webp"
+          "qty": 3,
+          "img": "https://shiro.senkuro.org/GTdlDi0L4hHnlatcg59sOFeTT5YMYFlCgr5vs5pf6yQ/rs:fit:180:270/aHR0cHM6Ly9taXJhaS5zZW5rdXJvLm9yZy9jYXJkcy9jaGFyYWN0ZXJzLzIzODc2NTMyMTMzNzUyMTcxMS85M2E2OTRmNWE1ODI2NGIyYjE4M2NmNDRmMTgyMTY4ZjM1NWY4YmNiLndlYnA.webp"
         }
       ]
     },
@@ -68,27 +95,63 @@
           "url": "https://senkuro.com/cards/bumgd-deruth-henituse-c",
           "name": "Дерус Хенитус",
           "rank": "C",
-          "manga": "Я стал графским ублюдком",
-          "qty": 1,
-          "img": ""
+          "manga": "",
+          "qty": 3,
+          "img": "https://shiro.senkuro.org/ExZ8rU0QpCufTsUADzTuVG-LlguLxVUAxljO23mv3MU/rs:fit:180:270/aHR0cHM6Ly9taXJhaS5zZW5rdXJvLm9yZy9jYXJkcy9jaGFyYWN0ZXJzLzEwMDU2ODk1NDQwOTMyMzEwNi82NDExYTYzOTJjNzM0ZWU2MTg5ZTkzZWNjYjFjYTc5NjY5NDgzMmIyLndlYnA.webp"
         },
         {
           "slug": "/cards/d-taehee-jin-c",
           "url": "https://senkuro.com/cards/d-taehee-jin-c",
-          "name": "Джин Тхэ Хи",
+          "name": "Джин Тхэ Xи",
           "rank": "C",
-          "manga": "Свинарник",
-          "qty": 1,
-          "img": ""
+          "manga": "",
+          "qty": 3,
+          "img": "https://shiro.senkuro.org/O2PkgKxWHwvzJGhLCRrmZepfPQsizYpxzTG2acNFYqs/rs:fit:180:270/aHR0cHM6Ly9taXJhaS5zZW5rdXJvLm9yZy9jYXJkcy9jaGFyYWN0ZXJzLzU0NTkwNzYxNzgxNDM1MTkyL2U1MzYwNTA3ZjAxYzBiOThlOWFhOWQyMTY4MDNmODhjZDU5NDM0OTYud2VicA.webp"
         },
         {
           "slug": "/cards/wh-meiling-d",
           "url": "https://senkuro.com/cards/wh-meiling-d",
-          "name": "Мэйлинг",
+          "name": "Мейлинг",
           "rank": "D",
-          "manga": "Охотник на ведьм",
-          "qty": 1,
-          "img": ""
+          "manga": "",
+          "qty": 3,
+          "img": "https://shiro.senkuro.org/RmWPpRuTCWHdeisrJ3nryqw0Y54HVcj1JwktBZ5uk5I/rs:fit:180:270/aHR0cHM6Ly9taXJhaS5zZW5rdXJvLm9yZy9jYXJkcy9jaGFyYWN0ZXJzLzU5MzM2NTUzMzA2MDU0NDYxL2E2OGQ3NjFhOGMwN2Y1ZDE2MDVlMmQwNGRiZTUzY2Q2ZTk5OTIzODAud2VicA.webp"
+        },
+        {
+          "slug": "/cards/nnad-arendt-clovis-f",
+          "url": "https://senkuro.com/cards/nnad-arendt-clovis-f",
+          "name": "Арендт Кловис",
+          "rank": "F",
+          "manga": "",
+          "qty": 3,
+          "img": "https://shiro.senkuro.org/g31wjC2DAsS8R-rVMPUaa6qzI665y-Rlxt6MLzu-X-w/rs:fit:180:270/aHR0cHM6Ly9taXJhaS5zZW5rdXJvLm9yZy9jYXJkcy9jaGFyYWN0ZXJzLzU5MzQ0ODA0MDM4ODkzMzczL2Y1M2NjMTA1NDRlY2EwOWVkY2FkMTZjY2NjZWE2ZWI0Yjk2ZWJkMjcud2VicA.webp"
+        },
+        {
+          "slug": "/cards/gsbs-misha-karlstein-f",
+          "url": "https://senkuro.com/cards/gsbs-misha-karlstein-f",
+          "name": "Миша Карлштейн",
+          "rank": "F",
+          "manga": "",
+          "qty": 3,
+          "img": "https://shiro.senkuro.org/KDHoHwh9RBZUGo9R4PuDOh2btWHVGsRlObB4ID88x_0/rs:fit:180:270/aHR0cHM6Ly9taXJhaS5zZW5rdXJvLm9yZy9jYXJkcy9jaGFyYWN0ZXJzLzE4MzM5MjQ2NjEyNzMwODI5OC81MWUyN2Y2Yjc4Y2IyNDA1ZDEwZjc2NzU5MmE5MmUyYTU2Zjg0Y2JjLndlYnA.webp"
+        },
+        {
+          "slug": "/cards/bmer-serin-f",
+          "url": "https://senkuro.com/cards/bmer-serin-f",
+          "name": "Серин",
+          "rank": "F",
+          "manga": "",
+          "qty": 3,
+          "img": "https://shiro.senkuro.org/nXRvr2wqF4bRI2ADZ6jfLjbQYs_JCQWc0govEyxH1Bg/rs:fit:180:270/aHR0cHM6Ly9taXJhaS5zZW5rdXJvLm9yZy9jYXJkcy9jaGFyYWN0ZXJzLzQ2Nzg2NzkzNzcyNjk5Nzk4LzEzMTM1ZDhiYWY3ODk3NjE1MGExOGNjMDEyMjM5YWMyMGQ1ZTRmMDUud2VicA.webp"
+        },
+        {
+          "slug": "/cards/tbnw-ha-ru-f",
+          "url": "https://senkuro.com/cards/tbnw-ha-ru-f",
+          "name": "Хару",
+          "rank": "F",
+          "manga": "",
+          "qty": 3,
+          "img": "https://shiro.senkuro.org/gitcKtTCsqzwaRAVoHbWkeA7fu53eDE4t-npKIhbals/rs:fit:180:270/aHR0cHM6Ly9taXJhaS5zZW5rdXJvLm9yZy9jYXJkcy9jaGFyYWN0ZXJzLzU2NTk2NTMzNDAyOTU3NTY0LzllYjFhNzdiNjM5MjU4MWZiNTdmZGY4NTdiZWIxZTg5OGFjMzFlYjMud2VicA.webp"
         }
       ],
       "shards": [
@@ -97,9 +160,9 @@
           "url": "https://senkuro.com/cards/tbotb-hajin-seo-c",
           "name": "Со Хаджин",
           "rank": "C",
-          "manga": "Кровь бабочки",
-          "qty": 1,
-          "img": ""
+          "manga": "",
+          "qty": 3,
+          "img": "https://shiro.senkuro.org/srl938ezB5XeQfLlbZhqiJmT2CNBWQqzj1iSUryFxlE/rs:fit:180:270/aHR0cHM6Ly9taXJhaS5zZW5rdXJvLm9yZy9jYXJkcy9jaGFyYWN0ZXJzLzExNzExNTc5OTc4ODg0OTc2Mi8wMWFmNTgxYmZkZTQ5N2ZjODZmMjA5M2VlZTgzYmY1ZGEzNDk0MGYzLndlYnA.webp"
         }
       ]
     },
