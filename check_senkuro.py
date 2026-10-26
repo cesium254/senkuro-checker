@@ -7,8 +7,8 @@ import urllib.error
 from datetime import datetime, timezone
 from playwright.async_api import async_playwright
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4").strip()
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "457787014").strip()
+TELEGRAM_BOT_TOKEN = "8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4"
+TELEGRAM_CHAT_ID = "457787014"
 STATE_FILE = os.environ.get("STATE_FILE", "last_state.json")
 
 ACCOUNTS = [
