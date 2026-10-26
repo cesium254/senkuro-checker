@@ -7,8 +7,14 @@ import urllib.error
 from datetime import datetime, timezone
 from playwright.async_api import async_playwright
 
-TELEGRAM_BOT_TOKEN = "8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4"
-TELEGRAM_CHAT_ID = "457787014"
+TELEGRAM_BOT_TOKEN = (
+    os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    or "8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4"
+)
+TELEGRAM_CHAT_ID = (
+    os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    or "457787014"
+)
 STATE_FILE = os.environ.get("STATE_FILE", "last_state.json")
 
 ACCOUNTS = [
@@ -41,7 +47,9 @@ def tg_request(method: str, payload: dict) -> dict:
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            res_data = json.loads(resp.read().decode("utf-8"))
+            print(f"[TG OK] {method}")
+            return res_data
     except urllib.error.HTTPError as e:
         err_body = e.read().decode("utf-8", errors="ignore")
         print(f"[TG ERROR] {method} ({e.code}): {err_body}")
@@ -294,8 +302,7 @@ def send_account_report(text: str, photos: list[dict], add_reply_button: bool = 
             if res.get("ok"):
                 return
 
-    # Если текст длиннее 1024 символов или нужно прикрепить inline-кнопку:
-    # сначала отправляем альбом картинок аккаунта, а следом — полное описание
+    # Если текст длиннее 1024 символов, или нужно прикрепить inline-кнопку, или Telegram не принял фото по URL:
     if valid_photos:
         if len(valid_photos) == 1:
             tg_request("sendPhoto", {"chat_id": TELEGRAM_CHAT_ID, "photo": valid_photos[0]})
