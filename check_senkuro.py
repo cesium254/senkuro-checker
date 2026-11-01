@@ -76,11 +76,10 @@ def extract_rank(slug: str, style_attr: str, text_content: str) -> str:
 
 
 async def extract_items_from_dom(page) -> list[dict]:
-    """Извлекает ровно 1 запись на каждую карточку/осколок (без дублей x3)."""
+    """Извлекает ровно 1 запись на каждую карточку/осколок."""
     raw_items = await page.evaluate(
         """() => {
         const results = [];
-        // Выбираем только верхнеуровневый контейнер карточки, чтобы не множить на 3!
         let elements = Array.from(document.querySelectorAll('.card-collect-preview'));
         if (elements.length === 0) {
             elements = Array.from(document.querySelectorAll('a.card-collect'));
@@ -129,20 +128,38 @@ async def extract_items_from_dom(page) -> list[dict]:
     return parsed
 
 
+async def auto_scroll_to_end(page, max_scrolls: int = 15):
+    """Скроллит страницу вниз до тех пор, пока количество карточек растет (подгружает все 20, 33, 100+ карт)."""
+    last_count = 0
+    stable_count = 0
+
+    for _ in range(max_scrolls):
+        current_count = await page.evaluate("document.querySelectorAll('.card-collect-preview, a.card-collect').length")
+        if current_count == last_count and current_count > 0:
+            stable_count += 1
+            if stable_count >= 2:
+                break
+        else:
+            stable_count = 0
+            last_count = current_count
+
+        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        await page.wait_for_timeout(1000)
+
+
 async def scrape_account(context, account: dict) -> dict:
-    """Последовательно открывает профиль и считывает Карты и Осколки."""
+    """Последовательно открывает профиль, прокручивает до конца и считывает абсолютно все Карты и Осколки."""
     page = await context.new_page()
     print(f"Проверка {account['label']} -> {account['url']}")
     try:
-        # Используем domcontentloaded вместо networkidle, чтобы никогда не падало по Timeout 45000ms
         await page.goto(account["url"], wait_until="domcontentloaded", timeout=30000)
         try:
             await page.wait_for_selector(".card-collect-preview, a.card-collect", timeout=8000)
         except Exception:
             await page.wait_for_timeout(2500)
 
-        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        await page.wait_for_timeout(1000)
+        # Полный скролл до упора для карточек
+        await auto_scroll_to_end(page)
 
         cards = await extract_items_from_dom(page)
 
@@ -152,8 +169,8 @@ async def scrape_account(context, account: dict) -> dict:
         if await shard_tab.count() > 0:
             await shard_tab.click()
             await page.wait_for_timeout(2000)
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await page.wait_for_timeout(800)
+            # Полный скролл до упора для осколков
+            await auto_scroll_to_end(page)
             shards = await extract_items_from_dom(page)
 
         return {"cards": cards, "shards": shards, "error": None}
@@ -164,8 +181,8 @@ async def scrape_account(context, account: dict) -> dict:
         await page.close()
 
 
-def format_rank_breakdown(items: list[dict], word_one: str, word_two: str, word_many: str) -> str:
-    """Форматирует краткую сводку по рангам: например '1 B-ранга, 2 C-ранга, 3 D-ранга'."""
+def format_rank_breakdown(items: list[dict]) -> str:
+    """Форматирует краткую сводку по рангам: например '3 S | 3 B | 7 C | 11 D | 9 F'."""
     if not items:
         return "нет"
     counts = Counter(x["rank"] for x in items)
@@ -179,15 +196,15 @@ def format_rank_breakdown(items: list[dict], word_one: str, word_two: str, word_
 
 
 def build_account_message(account: dict, current: dict) -> tuple[str, list[str]]:
-    """Формирует компактный отчёт по аккаунту (только текущее наличие) и список фото ЦЕЛЫХ карт."""
+    """Формирует компактный отчёт по аккаунту со ВСЕМИ карточками и список фото ЦЕЛЫХ карт."""
     cards = current["cards"]
     shards = current["shards"]
 
     total_cards = len(cards)
     total_shards = len(shards)
 
-    cards_summary = format_rank_breakdown(cards, "карта", "карты", "карт")
-    shards_summary = format_rank_breakdown(shards, "осколок", "осколка", "осколков")
+    cards_summary = format_rank_breakdown(cards)
+    shards_summary = format_rank_breakdown(shards)
 
     lines = [
         f"👤 <b><a href=\"{account['url']}\">{account['label']}</a></b>",
@@ -198,13 +215,13 @@ def build_account_message(account: dict, current: dict) -> tuple[str, list[str]]
 
     full_text = "\n".join(lines)
 
-    # Прикрепляем фотографии ТОЛЬКО целых карт (без осколков, чтобы не путать!)
+    # Прикрепляем фотографии ЦЕЛЫХ карт (до 10 штук в альбом Telegram)
     card_photos = [c["img"] for c in cards if c.get("img", "").startswith("http")]
     return full_text, card_photos[:10]
 
 
 def send_account_report(text: str, photo_urls: list[str], add_reply_button: bool = False):
-    """Отправляет компактный отчёт и картинки целых карт по аккаунту."""
+    """Отправляет отчёт и картинки целых карт по аккаунту."""
     if photo_urls and not add_reply_button:
         if len(photo_urls) == 1:
             res = tg_request(
@@ -230,7 +247,6 @@ def send_account_report(text: str, photo_urls: list[str], add_reply_button: bool
             if res.get("ok"):
                 return
 
-    # Для последнего (5-го) аккаунта: сначала отправляем альбом его карт, а следом — его текст с кнопкой запуска
     if photo_urls:
         if len(photo_urls) == 1:
             tg_request("sendPhoto", {"chat_id": TELEGRAM_CHAT_ID, "photo": photo_urls[0]})
@@ -260,7 +276,6 @@ async def main():
             locale="ru-RU",
         )
 
-        # Проверяем аккаунты СТРОГО ПО ОЧЕРЕДИ (чтобы не триггерить защиту от DDoS и слать сообщения по порядку)
         for idx, acc in enumerate(ACCOUNTS):
             acc_data = await scrape_account(context, acc)
             is_last = idx == len(ACCOUNTS) - 1
@@ -272,7 +287,6 @@ async def main():
 
             text, card_photos = build_account_message(acc, acc_data)
             send_account_report(text, card_photos, add_reply_button=is_last)
-            # Небольшая пауза между аккаунтами
             await asyncio.sleep(1.5)
 
         await browser.close()
