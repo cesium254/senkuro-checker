@@ -27,8 +27,8 @@ ACCOUNTS = [
 RANK_ORDER = ["R", "S", "A", "B", "C", "D", "F", "?"]
 RANK_BADGE = {
     "R": "💎 R",
-    "S": "🟨 S",
-    "A": "🟥 A",
+    "S": "🟥 S",
+    "A": "🟨 A",
     "B": "🟪 B",
     "C": "🟦 C",
     "D": "🟩 D",
@@ -109,8 +109,10 @@ async def extract_items_from_dom(page) -> list[dict]:
     )
 
     parsed = []
+    seen_slugs = set()
     for item in raw_items:
         href = item["href"]
+        # Если в DOM уже есть эта карточка, учитываем все реальные карточки в сетке
         full_url = f"https://senkuro.com{href}" if href.startswith("/") else href
         rank = extract_rank(href, item["style"], item["titleText"])
         parsed.append(
@@ -128,23 +130,68 @@ async def extract_items_from_dom(page) -> list[dict]:
     return parsed
 
 
-async def auto_scroll_to_end(page, max_scrolls: int = 15):
-    """Скроллит страницу вниз до тех пор, пока количество карточек растет (подгружает все 20, 33, 100+ карт)."""
-    last_count = 0
-    stable_count = 0
+async def auto_scroll_to_end(page, max_rounds: int = 35) -> list[dict]:
+    """
+    Надежно прокручивает страницу до конца всеми способами (scrollIntoView последней карточки,
+    прокрутка внутренних скролл-контейнеров, колесико мыши и клавиша End) и накапливает все карточки,
+    чтобы не потерять ни одной даже при виртуализации списка.
+    """
+    collected_by_index = {}
+    stable_rounds = 0
+    last_total = 0
 
-    for _ in range(max_scrolls):
-        current_count = await page.evaluate("document.querySelectorAll('.card-collect-preview, a.card-collect').length")
-        if current_count == last_count and current_count > 0:
-            stable_count += 1
-            if stable_count >= 2:
+    for round_idx in range(max_rounds):
+        current_items = await extract_items_from_dom(page)
+        current_total = len(current_items)
+
+        # Сохраняем карточки (если список просто догружается вниз, берем самый полный снимок)
+        if current_total >= len(collected_by_index):
+            collected_by_index = {i: item for i, item in enumerate(current_items)}
+
+        if current_total > 0 and current_total == last_total:
+            stable_rounds += 1
+            # Ждем минимум 4 полных цикла после последней подгрузки (около 6 секунд),
+            # чтобы карточки >20 гарантированно успели прийти от сервера Senkuro
+            if stable_rounds >= 4:
                 break
         else:
-            stable_count = 0
-            last_count = current_count
+            stable_rounds = 0
+            last_total = current_total
 
-        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        await page.wait_for_timeout(1000)
+        # 1. Скроллим к самой последней карточке и прокручиваем все возможные контейнеры
+        await page.evaluate(
+            """() => {
+            const cards = document.querySelectorAll('.card-collect-preview, a.card-collect');
+            if (cards.length > 0) {
+                cards[cards.length - 1].scrollIntoView({ behavior: 'instant', block: 'end' });
+            }
+            window.scrollBy(0, 1500);
+            window.scrollTo(0, document.body.scrollHeight);
+            if (document.documentElement) {
+                document.documentElement.scrollTop = document.documentElement.scrollHeight;
+            }
+            document.querySelectorAll('main, .layout, .page, [class*="scroll"], [class*="content"]').forEach(el => {
+                if (el.scrollHeight > el.clientHeight) {
+                    el.scrollTop = el.scrollHeight;
+                }
+            });
+        }"""
+        )
+
+        # 2. Эмулируем реальное колесо мыши и клавишу PageDown/End для срабатывания всех триггеров
+        try:
+            await page.mouse.move(640, 500)
+            await page.mouse.wheel(0, 1800)
+            await page.keyboard.press("End")
+        except Exception:
+            pass
+
+        await page.wait_for_timeout(1500)
+
+    final_items = list(collected_by_index.values())
+    rank_idx = {r: i for i, r in enumerate(RANK_ORDER)}
+    final_items.sort(key=lambda x: (rank_idx.get(x["rank"], 9), x["name"]))
+    return final_items
 
 
 async def scrape_account(context, account: dict) -> dict:
@@ -152,16 +199,16 @@ async def scrape_account(context, account: dict) -> dict:
     page = await context.new_page()
     print(f"Проверка {account['label']} -> {account['url']}")
     try:
-        await page.goto(account["url"], wait_until="domcontentloaded", timeout=30000)
+        await page.goto(account["url"], wait_until="domcontentloaded", timeout=35000)
         try:
-            await page.wait_for_selector(".card-collect-preview, a.card-collect", timeout=8000)
+            await page.wait_for_selector(".card-collect-preview, a.card-collect", timeout=10000)
         except Exception:
-            await page.wait_for_timeout(2500)
+            await page.wait_for_timeout(3000)
 
-        # Полный скролл до упора для карточек
-        await auto_scroll_to_end(page)
-
-        cards = await extract_items_from_dom(page)
+        # Даем 1.5 секунды на первичную отрисовку и крутим до самого конца
+        await page.wait_for_timeout(1500)
+        cards = await auto_scroll_to_end(page)
+        print(f"  Найдено карт у {account['id']}: {len(cards)}")
 
         # Переключаемся на вкладку «Осколки»
         shards = []
@@ -169,9 +216,11 @@ async def scrape_account(context, account: dict) -> dict:
         if await shard_tab.count() > 0:
             await shard_tab.click()
             await page.wait_for_timeout(2000)
-            # Полный скролл до упора для осколков
-            await auto_scroll_to_end(page)
-            shards = await extract_items_from_dom(page)
+            # Возвращаемся наверх перед скроллом вкладки осколков
+            await page.evaluate("window.scrollTo(0, 0)")
+            await page.wait_for_timeout(500)
+            shards = await auto_scroll_to_end(page)
+            print(f"  Найдено осколков у {account['id']}: {len(shards)}")
 
         return {"cards": cards, "shards": shards, "error": None}
     except Exception as e:
@@ -182,7 +231,7 @@ async def scrape_account(context, account: dict) -> dict:
 
 
 def format_rank_breakdown(items: list[dict]) -> str:
-    """Форматирует краткую сводку по рангам: например '3 S | 3 B | 7 C | 11 D | 9 F'."""
+    """Форматирует краткую сводку по рангам: например '3 🟥 S  |  3 🟪 B  |  7 🟦 C'."""
     if not items:
         return "нет"
     counts = Counter(x["rank"] for x in items)
@@ -215,20 +264,27 @@ def build_account_message(account: dict, current: dict) -> tuple[str, list[str]]
 
     full_text = "\n".join(lines)
 
-    # Прикрепляем фотографии ЦЕЛЫХ карт (до 10 штук в альбом Telegram)
+    # Прикрепляем фотографии ВСЕХ целых карт (а не только первых 10!)
     card_photos = [c["img"] for c in cards if c.get("img", "").startswith("http")]
-    return full_text, card_photos[:10]
+    return full_text, card_photos
 
 
 def send_account_report(text: str, photo_urls: list[str], add_reply_button: bool = False):
-    """Отправляет отчёт и картинки целых карт по аккаунту."""
-    if photo_urls and not add_reply_button:
-        if len(photo_urls) == 1:
+    """
+    Отправляет отчёт и картинки ВСЕХ целых карт по аккаунту.
+    Если карт больше 10 (например, 33 штуки на основе), разбивает фотографии на альбомы по 10 штук,
+    чтобы Telegram показал абсолютно все карты без урезания!
+    """
+    chunks = [photo_urls[i : i + 10] for i in range(0, len(photo_urls), 10)]
+
+    if chunks and not add_reply_button and len(chunks) == 1:
+        chunk = chunks[0]
+        if len(chunk) == 1:
             res = tg_request(
                 "sendPhoto",
                 {
                     "chat_id": TELEGRAM_CHAT_ID,
-                    "photo": photo_urls[0],
+                    "photo": chunk[0],
                     "caption": text,
                     "parse_mode": "HTML",
                 },
@@ -237,7 +293,7 @@ def send_account_report(text: str, photo_urls: list[str], add_reply_button: bool
                 return
         else:
             media = []
-            for idx, url in enumerate(photo_urls[:10]):
+            for idx, url in enumerate(chunk):
                 item = {"type": "photo", "media": url}
                 if idx == 0:
                     item["caption"] = text
@@ -247,11 +303,13 @@ def send_account_report(text: str, photo_urls: list[str], add_reply_button: bool
             if res.get("ok"):
                 return
 
-    if photo_urls:
-        if len(photo_urls) == 1:
-            tg_request("sendPhoto", {"chat_id": TELEGRAM_CHAT_ID, "photo": photo_urls[0]})
+    # Если альбомов несколько (>10 карт) или это последний аккаунт с кнопкой:
+    # отправляем все пачки фотографий по 10 штук, а следом — итоговое сообщение с текстом (и кнопкой)
+    for chunk in chunks:
+        if len(chunk) == 1:
+            tg_request("sendPhoto", {"chat_id": TELEGRAM_CHAT_ID, "photo": chunk[0]})
         else:
-            media = [{"type": "photo", "media": url} for url in photo_urls[:10]]
+            media = [{"type": "photo", "media": url} for url in chunk]
             tg_request("sendMediaGroup", {"chat_id": TELEGRAM_CHAT_ID, "media": media})
 
     msg_payload = {
