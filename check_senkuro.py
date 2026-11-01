@@ -59,7 +59,7 @@ def tg_request(method: str, payload: dict) -> dict:
 
 
 def parse_graphql_edges(edges: list[dict]) -> list[dict]:
-    """Преобразует список edges из ответа GraphQL Senkuro в плоский список карт/осколков (с учетом quantity)."""
+    """Преобразует список edges из ответа GraphQL Senkuro в плоский список карт/осколков."""
     parsed = []
     for edge in edges:
         node = edge.get("node") or {}
@@ -97,67 +97,8 @@ def parse_graphql_edges(edges: list[dict]) -> list[dict]:
     return parsed
 
 
-async def fetch_all_pages_via_graphql(page, captured_req: dict, modifier_val: int) -> list[dict]:
-    """
-    Использует пойманный заголовок и шаблон запроса браузера к https://api.senkuro.com/graphql,
-    чтобы напрямую выгрузить ВСЕ страницы (page 1, page 2, page 3...) через курсор `after`
-    до тех пор, пока `hasNextPage` не станет False.
-    """
-    raw_edges = await page.evaluate(
-        """async ({ reqInfo, modifierVal }) => {
-        const allEdges = [];
-        let afterCursor = null;
-        const seenCursors = new Set();
-
-        const headers = {};
-        for (const [k, v] of Object.entries(reqInfo.headers || {})) {
-            const lk = k.toLowerCase();
-            if (lk === 'content-type' || lk === 'accept' || lk.startsWith('app-') || lk === 'authorization') {
-                headers[k] = v;
-            }
-        }
-        headers['Content-Type'] = 'application/json';
-
-        for (let pageNum = 0; pageNum < 50; pageNum++) {
-            const bodyObj = JSON.parse(JSON.stringify(reqInfo.postData));
-            bodyObj.variables = bodyObj.variables || {};
-            bodyObj.variables.modifier = { include: [modifierVal] };
-            if (afterCursor) {
-                bodyObj.variables.after = afterCursor;
-            } else {
-                delete bodyObj.variables.after;
-            }
-
-            const resp = await fetch(reqInfo.url, {
-                method: 'POST',
-                headers: headers,
-                body: JSON.stringify(bodyObj)
-            });
-            if (!resp.ok) break;
-            const json = await resp.json();
-            const userCards = json?.data?.userCards;
-            if (!userCards) break;
-
-            const edges = userCards.edges || [];
-            allEdges.push(...edges);
-
-            const pageInfo = userCards.pageInfo || {};
-            if (pageInfo.hasNextPage && pageInfo.endCursor && !seenCursors.has(pageInfo.endCursor)) {
-                seenCursors.add(pageInfo.endCursor);
-                afterCursor = pageInfo.endCursor;
-            } else {
-                break;
-            }
-        }
-        return allEdges;
-    }""",
-        {"reqInfo": captured_req, "modifierVal": modifier_val},
-    )
-    return parse_graphql_edges(raw_edges or [])
-
-
 def extract_rank_dom(slug: str, style_attr: str, text_content: str) -> str:
-    """Резервное определение ранга карты из DOM."""
+    """Определение ранга карты из clip-path, ссылки или текста."""
     if style_attr:
         m = re.search(r"#rank-([RSABCDF])", style_attr, re.IGNORECASE)
         if m:
@@ -174,7 +115,7 @@ def extract_rank_dom(slug: str, style_attr: str, text_content: str) -> str:
 
 
 async def extract_items_from_dom(page) -> list[dict]:
-    """Резервное извлечение из DOM на случай, если GraphQL-запрос не был перехвачен."""
+    """Надежное извлечение карточек прямо из DOM страницы."""
     raw_items = await page.evaluate(
         """() => {
         const results = [];
@@ -208,56 +149,168 @@ async def extract_items_from_dom(page) -> list[dict]:
     return parsed
 
 
+async def fetch_remaining_pages_in_browser(page, req_url: str, req_headers: dict, req_body: dict, initial_edges: list[dict], next_cursor: str | None) -> list[dict]:
+    """Докачивает 2-ю, 3-ю и последующие страницы через браузерный fetch, если на странице >20 карт."""
+    all_edges = list(initial_edges)
+    if not next_cursor:
+        return all_edges
+
+    extra_edges = await page.evaluate(
+        """async ({ url, headers, baseBody, startCursor }) => {
+        const collected = [];
+        let afterCursor = startCursor;
+        const seenCursors = new Set([startCursor]);
+
+        const cleanHeaders = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/graphql-response+json, application/graphql+json, application/json',
+            'App-Id': headers['app-id'] || headers['App-Id'] || '4026531840100',
+            'App-Version': headers['app-version'] || headers['App-Version'] || '301026'
+        };
+
+        for (let i = 0; i < 40; i++) {
+            try {
+                const payload = JSON.parse(JSON.stringify(baseBody));
+                payload.variables = payload.variables || {};
+                payload.variables.after = afterCursor;
+
+                const resp = await fetch(url, {
+                    method: 'POST',
+                    headers: cleanHeaders,
+                    body: JSON.stringify(payload)
+                });
+                if (!resp.ok) break;
+                const data = await resp.json();
+                const uc = data?.data?.userCards;
+                if (!uc) break;
+
+                if (Array.isArray(uc.edges)) {
+                    collected.push(...uc.edges);
+                }
+                const pi = uc.pageInfo || {};
+                if (pi.hasNextPage && pi.endCursor && !seenCursors.has(pi.endCursor)) {
+                    seenCursors.add(pi.endCursor);
+                    afterCursor = pi.endCursor;
+                } else {
+                    break;
+                }
+            } catch (e) {
+                break;
+            }
+        }
+        return collected;
+    }""",
+        {
+            "url": req_url,
+            "headers": req_headers,
+            "baseBody": req_body,
+            "startCursor": next_cursor,
+        },
+    )
+    if isinstance(extra_edges, list):
+        all_edges.extend(extra_edges)
+    return all_edges
+
+
+async def collect_tab_items(page, captured_responses: list[dict]) -> list[dict]:
+    """
+    Собирает элементы текущей вкладки (Карты или Осколки):
+    1. Сначала берет реальный ответ сервера Senkuro (и докачивает страницы 2+, если hasNextPage=true).
+    2. Дополнительно скроллит страницу и сверяет с DOM: если в DOM больше элементов или ответ не перехвачен,
+       объединяет/берет из DOM, чтобы НИКОГДА не вернуть 0 карт на непустом аккаунте!
+    """
+    # Прокручиваем страницу вниз, чтобы сам браузер тоже подгрузил карточки в DOM
+    for _ in range(3):
+        await page.evaluate(
+            """() => {
+            const cards = document.querySelectorAll('.card-collect-preview, a.card-collect');
+            if (cards.length > 0) {
+                cards[cards.length - 1].scrollIntoView({ behavior: 'instant', block: 'end' });
+            }
+            window.scrollTo(0, document.body.scrollHeight);
+        }"""
+        )
+        await page.wait_for_timeout(800)
+
+    dom_items = await extract_items_from_dom(page)
+
+    if captured_responses:
+        last_cap = captured_responses[-1]
+        all_edges = await fetch_remaining_pages_in_browser(
+            page,
+            last_cap["url"],
+            last_cap["headers"],
+            last_cap["postData"],
+            last_cap["edges"],
+            last_cap["endCursor"] if last_cap["hasNextPage"] else None,
+        )
+        gql_items = parse_graphql_edges(all_edges)
+        if len(gql_items) >= len(dom_items) and len(gql_items) > 0:
+            return gql_items
+
+    return dom_items
+
+
 async def scrape_account(context, account: dict) -> dict:
-    """
-    Открывает страницу аккаунта, перехватывает официальный запрос Senkuro `fetchUserCards`
-    и за 1–2 секунды выкачивает абсолютно все карточки (modifier=0) и осколки (modifier=1)
-    по всем страницам пагинации без пропуска!
-    """
+    """Последовательно открывает профиль и собирает все Карты и Осколки с двойной проверкой (GraphQL + DOM)."""
     page = await context.new_page()
     print(f"Проверка {account['label']} -> {account['url']}")
 
-    captured_req = {}
+    card_responses = []
+    shard_responses = []
+    current_mode = "cards"
 
-    def on_request(request):
-        if "graphql" in request.url and request.method == "POST":
+    async def on_response(response):
+        if "graphql" in response.url and response.request.method == "POST":
             try:
-                post_json = request.post_data_json
-                if isinstance(post_json, dict) and post_json.get("operationName") == "fetchUserCards":
-                    if not captured_req:
-                        captured_req["url"] = request.url
-                        captured_req["headers"] = request.headers
-                        captured_req["postData"] = post_json
+                post_str = response.request.post_data or ""
+                if not post_str:
+                    return
+                post_json = json.loads(post_str)
+                if not isinstance(post_json, dict) or post_json.get("operationName") != "fetchUserCards":
+                    return
+                resp_json = await response.json()
+                uc = (resp_json.get("data") or {}).get("userCards")
+                if not uc:
+                    return
+                entry = {
+                    "url": response.url,
+                    "headers": response.request.headers,
+                    "postData": post_json,
+                    "edges": uc.get("edges") or [],
+                    "hasNextPage": bool((uc.get("pageInfo") or {}).get("hasNextPage")),
+                    "endCursor": (uc.get("pageInfo") or {}).get("endCursor"),
+                }
+                if current_mode == "cards":
+                    card_responses.append(entry)
+                else:
+                    shard_responses.append(entry)
             except Exception:
                 pass
 
-    page.on("request", on_request)
+    page.on("response", on_response)
 
     try:
         await page.goto(account["url"], wait_until="domcontentloaded", timeout=35000)
+        try:
+            await page.wait_for_selector(".card-collect-preview, a.card-collect", timeout=7000)
+        except Exception:
+            await page.wait_for_timeout(2500)
 
-        # Ждем до 8 секунд, пока страница сама отправит первый запрос fetchUserCards
-        for _ in range(16):
-            if captured_req:
-                break
-            await page.wait_for_timeout(500)
+        await page.wait_for_timeout(1200)
+        cards = await collect_tab_items(page, card_responses)
+        print(f"  Итог карт у {account['id']}: {len(cards)}")
 
-        if captured_req:
-            cards = await fetch_all_pages_via_graphql(page, captured_req, modifier_val=0)
-            shards = await fetch_all_pages_via_graphql(page, captured_req, modifier_val=1)
-            print(f"  [GraphQL API] {account['id']}: карт = {len(cards)}, осколков = {len(shards)}")
-            return {"cards": cards, "shards": shards, "error": None}
-
-        # Резервный вариант через DOM, если GraphQL не перехватился
-        await page.wait_for_timeout(2500)
-        cards = await extract_items_from_dom(page)
+        # Переключаемся на вкладку «Осколки»
         shards = []
         shard_tab = page.locator("text=/Осколки/i").first
         if await shard_tab.count() > 0:
+            current_mode = "shards"
             await shard_tab.click()
             await page.wait_for_timeout(2000)
-            shards = await extract_items_from_dom(page)
-        print(f"  [DOM Fallback] {account['id']}: карт = {len(cards)}, осколков = {len(shards)}")
+            shards = await collect_tab_items(page, shard_responses)
+            print(f"  Итог осколков у {account['id']}: {len(shards)}")
+
         return {"cards": cards, "shards": shards, "error": None}
     except Exception as e:
         print(f"Ошибка при проверке {account['id']}: {e}")
@@ -267,7 +320,7 @@ async def scrape_account(context, account: dict) -> dict:
 
 
 def format_rank_breakdown(items: list[dict]) -> str:
-    """Форматирует краткую сводку по рангам: например '3 🟥 S  |  3 🟪 B  |  7 🟦 C'."""
+    """Форматирует краткую сводку по рангам: например '3 🟥 S  |  1 🟨 A  |  2 🟪 B'."""
     if not items:
         return "нет"
     counts = Counter(x["rank"] for x in items)
@@ -300,7 +353,7 @@ def build_account_message(account: dict, current: dict) -> tuple[str, list[str]]
 
     full_text = "\n".join(lines)
 
-    # Прикрепляем фотографии ВСЕХ целых карт (отсортированных от высшего ранга R/S к низшему F)
+    # Прикрепляем фотографии ВСЕХ целых карт (отсортированных от высшего ранга R/S/A/B к низшему F)
     card_photos = [c["img"] for c in cards if c.get("img", "").startswith("http")]
     return full_text, card_photos
 
@@ -308,8 +361,7 @@ def build_account_message(account: dict, current: dict) -> tuple[str, list[str]]
 def send_account_report(text: str, photo_urls: list[str], add_reply_button: bool = False):
     """
     Отправляет отчёт и картинки ВСЕХ целых карт по аккаунту.
-    Если карт больше 10 (например, 33 штуки на основе), разбивает фотографии на альбомы по 10 штук,
-    чтобы Telegram показал абсолютно все карты без урезания!
+    Если карт больше 10, разбивает фотографии на альбомы по 10 штук.
     """
     chunks = [photo_urls[i : i + 10] for i in range(0, len(photo_urls), 10)]
 
@@ -339,8 +391,6 @@ def send_account_report(text: str, photo_urls: list[str], add_reply_button: bool
             if res.get("ok"):
                 return
 
-    # Если альбомов несколько (>10 карт) или это последний аккаунт с кнопкой:
-    # отправляем все пачки фотографий по 10 штук, а следом — итоговое сообщение с текстом (и кнопкой)
     for chunk in chunks:
         if len(chunk) == 1:
             tg_request("sendPhoto", {"chat_id": TELEGRAM_CHAT_ID, "photo": chunk[0]})
