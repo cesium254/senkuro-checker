@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v12.0 (100% TELEGRAM -> CLOUDFLARE -> GITHUB)
+SENKURO FULL AUTOMATION COMBINE v13.0 (100% TELEGRAM -> CLOUDFLARE -> GITHUB)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -63,6 +63,11 @@ from playwright.async_api import async_playwright, BrowserContext, Page
 # 1. КОНФИГУРАЦИЯ TELEGRAM, АККАУНТОВ И КАНАЛА СИНХРОНИЗАЦИИ СТАТУСА ФАРМА
 # ==============================================================================
 
+# Флаг отладки: пока мы тестируем бота = True (включает кнопки «📸 Посмотреть экран» и «📜 Полный лог»,
+# авто-загрузку полного лога на GitHub и авто-скриншоты при ошибках).
+# Когда всё протестируем, достаточно поменять True на False — и отладка скроется без риска сломать код!
+DEBUG_MODE = True
+
 TELEGRAM_BOT_TOKEN = (
     os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     or "8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4"
@@ -71,6 +76,26 @@ TELEGRAM_CHAT_ID = (
     os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     or "457787014"
 )
+GITHUB_REPO_FULL = os.environ.get("GITHUB_REPOSITORY", "cesium254/senkuro-checker").strip() or "cesium254/senkuro-checker"
+GITHUB_PAT_TOKEN = (
+    os.environ.get("GITHUB_PAT", "").strip()
+    or os.environ.get("GITHUB_TOKEN", "").strip()
+    or "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"
+)
+
+DEBUG_LOG_FILE = Path("/tmp/senkuro_full_debug.log")
+ACTIVE_BROWSER_PAGES: dict[str, Page] = {}
+
+
+def log_debug(msg: str) -> None:
+    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{ts}] {msg}"
+    print(line, flush=True)
+    try:
+        with open(DEBUG_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
 
 FARM_STATE_SYNC_TOPIC = "senkuro_cesium254_v8_state_sync"
 
@@ -210,31 +235,60 @@ OPERA_244_CANDIDATE_POOL = [
 
 def get_main_inline_keyboard() -> dict:
     """
-    Базовая панель кнопок, которая прикрепляется после завершения любой задачи.
-    Никаких вложенных подменю — каждая кнопка сразу запускает свою задачу!
+    Базовая панель кнопок (в режиме DEBUG_MODE добавляет ряд «📸 Посмотреть экран» и «📜 Полный лог»).
     """
-    return {
-        "inline_keyboard": [
+    rows = [
+        [
+            {"text": "▶️ Запустить фарм (8 ч)", "callback_data": "start_farm_8h"},
+            {"text": "📊 Проверить статус фарма", "callback_data": "check_farm_status"},
+        ],
+        [
+            {"text": "🎟 Ввести промокод", "callback_data": "prompt_promo"},
+            {"text": "🪙 Баланс монет (4 акка)", "callback_data": "check_balance"},
+        ],
+        [
+            {"text": "🎴 Крутить паки Хардкор", "callback_data": "roll_packs"},
+            {"text": "⚒️ Переплавка + Трейд", "callback_data": "run_forge"},
+        ],
+        [
+            {"text": "🔄 Проверить 5 аккаунтов", "callback_data": "check_senkuro"},
+            {"text": "🚀 Сделать ВСЁ (Паки+Кузня)", "callback_data": "run_all"},
+        ],
+    ]
+    if DEBUG_MODE:
+        rows.append(
             [
-                {"text": "▶️ Запустить фарм (8 ч)", "callback_data": "start_farm_8h"},
-                {"text": "📊 Проверить статус фарма", "callback_data": "check_farm_status"},
-            ],
-            [
-                {"text": "🎟 Ввести промокод", "callback_data": "prompt_promo"},
-                {"text": "🪙 Баланс монет (4 акка)", "callback_data": "check_balance"},
-            ],
-            [
-                {"text": "🎴 Крутить паки Хардкор", "callback_data": "roll_packs"},
-                {"text": "⚒️ Переплавка + Трейд", "callback_data": "run_forge"},
-            ],
-            [
-                {"text": "🔄 Проверить 5 аккаунтов", "callback_data": "check_senkuro"},
-                {"text": "🚀 Сделать ВСЁ (Паки+Кузня)", "callback_data": "run_all"},
-            ],
-            [
-                {"text": "🛑 ОСТАНОВИТЬ ФАРМ / ВСЕ ЗАДАЧИ", "callback_data": "stop_all_farm"},
-            ],
+                {"text": "📸 Посмотреть экран", "callback_data": "view_screen"},
+                {"text": "📜 Полный лог (Файл+GitHub)", "callback_data": "dump_full_log"},
+            ]
+        )
+    rows.append(
+        [
+            {"text": "🛑 ОСТАНОВИТЬ ФАРМ / ВСЕ ЗАДАЧИ", "callback_data": "stop_all_farm"},
         ]
+    )
+    return {"inline_keyboard": rows}
+
+
+def get_collapsible_reply_keyboard() -> dict:
+    """
+    Современная сворачиваемая нижняя клавиатура Telegram (справа в поле ввода появляется значок 🎛,
+    позволяющий в 1 клик прятать и открывать меню кнопок, чтобы оно не занимало место в чате!).
+    """
+    rows = [
+        [{"text": "🔄 Проверить 5 аккаунтов"}, {"text": "🪙 Баланс монет (4 акка)"}],
+        [{"text": "▶️ Запустить фарм (8 ч)"}, {"text": "📊 Проверить статус фарма"}],
+        [{"text": "🎴 Крутить паки Хардкор"}, {"text": "⚒️ Переплавка + Трейд"}],
+        [{"text": "🎟 Ввести промокод"}, {"text": "🚀 Сделать ВСЁ (Паки+Кузня)"}],
+    ]
+    if DEBUG_MODE:
+        rows.append([{"text": "📸 Посмотреть экран"}, {"text": "📜 Полный лог"}])
+    rows.append([{"text": "🛑 ОСТАНОВИТЬ ФАРМ / ВСЕ ЗАДАЧИ"}])
+    return {
+        "keyboard": rows,
+        "resize_keyboard": True,
+        "is_persistent": True,
+        "input_field_placeholder": "Отправьте промокод или откройте меню 🎛 👇",
     }
 
 
@@ -271,6 +325,155 @@ def send_tg_message(text: str, add_keyboard: bool = True) -> dict:
     return tg_request("sendMessage", payload)
 
 
+def send_tg_multipart(method: str, file_field: str, filename: str, file_bytes: bytes, mime_type: str, extra_fields: dict[str, str]) -> dict:
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return {"ok": False}
+    boundary = f"----SenkuroBoundary{int(time.time() * 1000)}"
+    body = bytearray()
+    for k, v in extra_fields.items():
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(f'Content-Disposition: form-data; name="{k}"\r\n\r\n'.encode("utf-8"))
+        body.extend(f"{v}\r\n".encode("utf-8"))
+    body.extend(f"--{boundary}\r\n".encode("utf-8"))
+    body.extend(f'Content-Disposition: form-data; name="{file_field}"; filename="{filename}"\r\n'.encode("utf-8"))
+    body.extend(f"Content-Type: {mime_type}\r\n\r\n".encode("utf-8"))
+    body.extend(file_bytes)
+    body.extend(f"\r\n--{boundary}--\r\n".encode("utf-8"))
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
+    req = urllib.request.Request(
+        url,
+        data=bytes(body),
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=35) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        log_debug(f"[TG MULTIPART ERROR] {method}: {e}")
+        return {"ok": False, "error": str(e)}
+
+
+def send_tg_photo_bytes(png_bytes: bytes, caption: str = "", add_keyboard: bool = False) -> dict:
+    fields = {"chat_id": str(TELEGRAM_CHAT_ID), "parse_mode": "HTML"}
+    if caption:
+        fields["caption"] = caption[:1000]
+    if add_keyboard:
+        fields["reply_markup"] = json.dumps(get_main_inline_keyboard(), ensure_ascii=False)
+    return send_tg_multipart("sendPhoto", "photo", "screen.png", png_bytes, "image/png", fields)
+
+
+def upload_debug_log_to_github(reason: str = "task") -> Optional[str]:
+    """
+    Автоматически загружает полный файл лога /tmp/senkuro_full_debug.log в ваш репозиторий
+    cesium254/senkuro-checker по пути logs/senkuro_debug.log с тегом [skip ci], чтобы вы или ИИ
+    всегда могли открыть полный лог по прямой ссылке!
+    """
+    if not DEBUG_LOG_FILE.exists() or not GITHUB_PAT_TOKEN:
+        return None
+    import base64
+    try:
+        raw_bytes = DEBUG_LOG_FILE.read_bytes()
+        # Ограничим последними 450 КБ, если лог огромный
+        if len(raw_bytes) > 450_000:
+            raw_bytes = raw_bytes[-450_000:]
+        b64_content = base64.b64encode(raw_bytes).decode("ascii")
+        api_url = f"https://api.github.com/repos/{GITHUB_REPO_FULL}/contents/logs/senkuro_debug.log"
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {GITHUB_PAT_TOKEN}",
+            "User-Agent": "SenkuroBot/13.0",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "Content-Type": "application/json",
+        }
+        sha_val = None
+        try:
+            get_req = urllib.request.Request(api_url, headers=headers, method="GET")
+            with urllib.request.urlopen(get_req, timeout=10) as g_resp:
+                g_data = json.loads(g_resp.read().decode("utf-8"))
+                sha_val = g_data.get("sha")
+        except Exception:
+            pass
+
+        put_payload: dict[str, Any] = {
+            "message": f"Update full debug log ({reason}) [skip ci]",
+            "content": b64_content,
+            "branch": "main",
+        }
+        if sha_val:
+            put_payload["sha"] = sha_val
+
+        put_req = urllib.request.Request(
+            api_url,
+            data=json.dumps(put_payload).encode("utf-8"),
+            headers=headers,
+            method="PUT",
+        )
+        with urllib.request.urlopen(put_req, timeout=15) as p_resp:
+            if p_resp.status in (200, 201):
+                return f"https://github.com/{GITHUB_REPO_FULL}/blob/main/logs/senkuro_debug.log"
+    except Exception as e:
+        log_debug(f"[GH LOG UPLOAD WARNING] {e}")
+    return None
+
+
+def send_full_debug_log_to_user(reason_title: str = "Полный лог работы") -> None:
+    if not DEBUG_LOG_FILE.exists():
+        send_tg_message("ℹ️ Файл лога пока пуст.", add_keyboard=True)
+        return
+    gh_url = upload_debug_log_to_github(reason_title)
+    raw_bytes = DEBUG_LOG_FILE.read_bytes()
+    gh_line = f'\n🔗 <b>Также сохранено на GitHub:</b> <a href="{gh_url}">logs/senkuro_debug.log</a>' if gh_url else ""
+    caption = (
+        f"📜 <b>{reason_title}</b> (размер: {len(raw_bytes) // 1024} КБ){gh_line}\n\n"
+        "Вы можете просто переслать или закинуть этот файл <code>senkuro_debug_log.txt</code> в чат с ИИ для полного анализа!"
+    )
+    fields = {
+        "chat_id": str(TELEGRAM_CHAT_ID),
+        "caption": caption[:1000],
+        "parse_mode": "HTML",
+        "reply_markup": json.dumps(get_main_inline_keyboard(), ensure_ascii=False),
+    }
+    send_tg_multipart("sendDocument", "document", "senkuro_debug_log.txt", raw_bytes, "text/plain", fields)
+
+
+async def send_live_screen_snapshot(custom_caption: str = "") -> None:
+    """
+    Делает моментальный скриншот открытых вкладок браузера (или виртуального экрана Xvfb)
+    и отправляет фотографию прямо в Telegram!
+    """
+    sent_any = False
+    for label, pg in list(ACTIVE_BROWSER_PAGES.items()):
+        try:
+            if pg.is_closed():
+                ACTIVE_BROWSER_PAGES.pop(label, None)
+                continue
+            png_data = await pg.screenshot(full_page=False, timeout=8000)
+            try:
+                t_str = await pg.title()
+            except Exception:
+                t_str = ""
+            cap = (
+                f"📸 <b>Экран браузера: {label}</b>\n"
+                f"🌐 URL: <code>{pg.url[:120]}</code>\n"
+                f"📄 Заголовок: <i>{t_str[:80]}</i>"
+            )
+            if custom_caption:
+                cap = f"{custom_caption}\n\n" + cap
+            send_tg_photo_bytes(png_data, cap, add_keyboard=True)
+            sent_any = True
+        except Exception as e:
+            log_debug(f"[SCREENSHOT WARNING] {label}: {e}")
+
+    if not sent_any:
+        send_tg_message(
+            "⚪ <b>Сейчас ни одно окно браузера не открыто</b> (сервер ждёт вашу команду).\n\n"
+            "Нажмите любую задачу (например, «🪙 Баланс монет» или «▶️ Запустить фарм»), и прямо во время её выполнения жмите <b>«📸 Посмотреть экран»</b>!",
+            add_keyboard=True,
+        )
+
+
 WORKER_PUBLIC_URL = "https://sparkling-meadow-68b3.ev20291.workers.dev/"
 INSTANT_CMD_QUEUE_TOPIC = "senkuro_cesium254_v11_cmd_queue"
 INSTANT_CMD_ACK_TOPIC = "senkuro_cesium254_v11_cmd_ack"
@@ -297,16 +500,19 @@ def configure_telegram_bot_profile() -> None:
         tg_request("setMyShortDescription", short_payload)
 
     commands = [
-        {"command": "menu", "description": "📋 Открыть базовую панель кнопок"},
-        {"command": "farm", "description": "▶️ Запустить 8-часовой фарм манги"},
-        {"command": "status", "description": "📊 Проверить статус фарма (читают или нет)"},
+        {"command": "menu", "description": "📋 Открыть панель управления"},
+        {"command": "check", "description": "🔄 Проверить карты и осколки (5 аккаунтов)"},
         {"command": "balance", "description": "🪙 Баланс монет на 4 аккаунтах"},
         {"command": "packs", "description": "🎴 Крутить паки Хардкор (480 монет)"},
         {"command": "forge", "description": "⚒️ Переплавка карт до S + трейд на основу"},
-        {"command": "check", "description": "🔄 Проверить карты и осколки (5 аккаунтов)"},
+        {"command": "farm", "description": "▶️ Запустить 8-часовой фарм манги"},
+        {"command": "status", "description": "📊 Статус фарма (читают или нет)"},
+        {"command": "screen", "description": "📸 Посмотреть экран браузера (Скриншот)"},
+        {"command": "log", "description": "📜 Скачать полный лог (Файл + GitHub)"},
         {"command": "stop", "description": "🛑 Остановить фарм и все задачи"},
     ]
     tg_request("setMyCommands", {"commands": commands})
+    tg_request("setChatMenuButton", {"menu_button": {"type": "commands"}})
 
 
 def ack_instant_command(cmd_id: str) -> None:
@@ -657,7 +863,7 @@ mutation redeemRedemption($input: RedeemRedemptionInput!) {
       type
       titles {
         lang
-        content
+        text
       }
     }
   }
@@ -698,7 +904,7 @@ query fetchPackAndPending($slug: String!) {
       animated
       titles {
         lang
-        content
+        text
       }
     }
   }
@@ -723,7 +929,7 @@ mutation openCardPack($input: OpenCardPackInput!) {
         animated
         titles {
           lang
-          content
+          text
         }
       }
     }
@@ -765,7 +971,7 @@ mutation forgeCards($input: ForgeCardInput!) {
         rank
         titles {
           lang
-          content
+          text
         }
       }
     }
@@ -782,7 +988,7 @@ mutation forgeCards($input: ForgeCardInput!) {
         rank
         titles {
           lang
-          content
+          text
         }
       }
     }
@@ -821,7 +1027,7 @@ query fetchUserCards($userId: ID!, $after: String, $modifier: UserCardModifierFi
           explicit
           titles {
             lang
-            content
+            text
           }
           image {
             original {
@@ -876,7 +1082,7 @@ query fetchCardTrades($userId: ID!, $status: CardTradeStatus, $after: String) {
             rank
             titles {
               lang
-              content
+              text
             }
           }
         }
@@ -918,54 +1124,187 @@ mutation acceptCardTrade($input: AcceptCardTradeInput!) {
 """
 
 
-async def gql_call(page: Page, query: str, variables: Optional[dict] = None, operation_name: Optional[str] = None) -> dict:
-    payload: dict[str, Any] = {"query": query, "variables": variables or {}}
-    if operation_name:
-        payload["operationName"] = operation_name
+def _strip_bad_gql_field(query_str: str, bad_field: str) -> str:
+    pattern_block = re.compile(r"\b" + re.escape(bad_field) + r"\s*\{")
+    m = pattern_block.search(query_str)
+    if m:
+        start_idx = m.start()
+        brace_open = query_str.find("{", m.start())
+        depth = 0
+        end_idx = brace_open
+        for i in range(brace_open, len(query_str)):
+            if query_str[i] == "{":
+                depth += 1
+            elif query_str[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    end_idx = i + 1
+                    break
+        return query_str[:start_idx] + query_str[end_idx:]
+    return re.sub(r"\b" + re.escape(bad_field) + r"\b", "", query_str)
 
-    result = await page.evaluate(
-        """async ({ apiUrl, appVersion, bodyPayload }) => {
-            function getCookie(name) {
-                const m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/([.$?*|{}()\\[\\]\\\\/+^])/g, '\\\\$1') + '=([^;]*)'));
-                return m ? decodeURIComponent(m[1]) : '';
-            }
-            const token = getCookie('access_token');
-            const headers = {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json',
-                'App-Version': appVersion,
-                'Cache-Control': 'no-cache'
-            };
-            if (token) {
-                headers['Authorization'] = 'Bearer ' + token;
-            }
-            try {
-                const resp = await fetch(apiUrl + '?_t=' + Date.now(), {
-                    method: 'POST',
-                    headers: headers,
-                    cache: 'no-store',
-                    body: JSON.stringify(bodyPayload)
-                });
-                const json = await resp.json();
-                return json;
-            } catch (err) {
-                return { errors: [{ message: String(err) }] };
-            }
-        }""",
-        {"apiUrl": GRAPHQL_API_URL, "appVersion": APP_VERSION, "bodyPayload": payload},
+
+async def gql_call(page: Page, query: str, variables: Optional[dict] = None, operation_name: Optional[str] = None) -> dict:
+    cur_query = query
+    for attempt in range(6):
+        payload: dict[str, Any] = {"query": cur_query, "variables": variables or {}}
+        if operation_name:
+            payload["operationName"] = operation_name
+
+        result = await page.evaluate(
+            """async ({ apiUrl, appVersion, bodyPayload }) => {
+                function getCookie(name) {
+                    const m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/([.$?*|{}()\[\]\\/+^])/g, '\\$1') + '=([^;]*)'));
+                    return m ? decodeURIComponent(m[1]) : '';
+                }
+                let token = getCookie('access_token') || getCookie('token') || '';
+                if (!token) {
+                    try {
+                        for (let i = 0; i < localStorage.length; i++) {
+                            const k = localStorage.key(i) || '';
+                            const v = localStorage.getItem(k) || '';
+                            if (k.toLowerCase().includes('token') && v.length > 20 && !v.startsWith('{')) {
+                                token = v.replace(/^"|"$/g, '');
+                                break;
+                            }
+                        }
+                    } catch (e) {}
+                }
+                const headers = {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'App-Version': appVersion,
+                    'Cache-Control': 'no-cache'
+                };
+                if (token) {
+                    headers['Authorization'] = token.startsWith('Bearer ') ? token : ('Bearer ' + token);
+                }
+                try {
+                    const resp = await fetch(apiUrl + '?_t=' + Date.now(), {
+                        method: 'POST',
+                        headers: headers,
+                        credentials: 'include',
+                        cache: 'no-store',
+                        body: JSON.stringify(bodyPayload)
+                    });
+                    const json = await resp.json();
+                    return json;
+                } catch (err) {
+                    return { errors: [{ message: String(err) }] };
+                }
+            }""",
+            {"apiUrl": GRAPHQL_API_URL, "appVersion": APP_VERSION, "bodyPayload": payload},
+        )
+        res = result or {}
+        errs = res.get("errors") or []
+        if not errs:
+            log_debug(f"[GQL OK] op={operation_name} -> keys={list((res.get('data') or {}).keys())}")
+            return res
+
+        err_msgs = " | ".join(str(e.get("message") or "") for e in errs if isinstance(e, dict))
+        log_debug(f"[GQL WARN #{attempt+1}] op={operation_name} errors={err_msgs[:300]}")
+        m_bad = re.search(r'Cannot query field "([A-Za-z0-9_]+)"', err_msgs)
+        if m_bad:
+            bad_f = m_bad.group(1)
+            new_q = _strip_bad_gql_field(cur_query, bad_f)
+            if new_q != cur_query:
+                log_debug(f"[GQL AUTO-HEAL] Удалено неподдерживаемое поле '{bad_f}' из {operation_name}, повтор...")
+                cur_query = new_q
+                continue
+        break
+    return res
+
+
+async def launch_senkuro_browser(playwright_obj):
+    has_display = bool(os.environ.get("DISPLAY"))
+    return await playwright_obj.chromium.launch(
+        headless=not has_display,
+        args=[
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-blink-features=AutomationControlled",
+            "--disable-background-timer-throttling",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+        ],
     )
-    return result or {}
 
 
 async def get_fresh_points_balance(page: Page, slug: str) -> int:
+    # 1. Пробуем через GQL_FETCH_VIEWER (с поддержкой как viewer.user.points, так и viewer.points)
     v_res = await gql_call(page, GQL_FETCH_VIEWER, {}, "fetchViewer")
-    v_user = ((v_res.get("data") or {}).get("viewer") or {}).get("user") or {}
-    if v_user.get("points") is not None:
-        return int(v_user["points"])
+    v_data = (v_res.get("data") or {}).get("viewer") or {}
+    v_user = v_data.get("user") if isinstance(v_data.get("user"), dict) else v_data
+    if isinstance(v_user, dict) and v_user.get("points") is not None:
+        pts = int(v_user["points"])
+        log_debug(f"[BALANCE] {slug}: получено через fetchViewer = {pts}")
+        return pts
 
+    # 2. Пробуем через fetchUserBySlug
     u_res = await gql_call(page, GQL_FETCH_USER_BY_SLUG, {"slug": slug}, "fetchUserBySlug")
     u_obj = (u_res.get("data") or {}).get("user") or {}
-    return int(u_obj.get("points") or 0)
+    if isinstance(u_obj, dict) and u_obj.get("points") is not None:
+        pts = int(u_obj["points"])
+        log_debug(f"[BALANCE] {slug}: получено через fetchUserBySlug = {pts}")
+        return pts
+
+    # 3. Открываем страницу пака «Для хардкорщиков», перехватываем реальные ответы GraphQL и проверяем DOM
+    intercepted_pts: list[int] = []
+
+    async def on_pack_resp(resp):
+        if "graphql" in resp.url and resp.request.method == "POST":
+            try:
+                j = await resp.json()
+                raw_s = json.dumps(j)
+                for m_p in re.finditer(r'"points"\s*:\s*(\d+)', raw_s):
+                    val = int(m_p.group(1))
+                    if val != 480:
+                        intercepted_pts.append(val)
+            except Exception:
+                pass
+
+    page.on("response", on_pack_resp)
+    try:
+        if "/packs/for-hardcore-gamers" not in page.url:
+            await page.goto("https://senkuro.com/packs/for-hardcore-gamers", wait_until="domcontentloaded", timeout=35000)
+        for _ in range(12):
+            await page.wait_for_timeout(600)
+            body_t = await page.evaluate("() => document.body ? (document.body.innerText || '') : ''")
+            if "Приготовьтесь к приключениям" not in body_t:
+                break
+        await page.wait_for_timeout(1500)
+        if intercepted_pts:
+            log_debug(f"[BALANCE] {slug}: перехвачено из трафика паков = {intercepted_pts[-1]}")
+            return intercepted_pts[-1]
+
+        dom_pts = await page.evaluate(
+            """() => {
+                // Ищем баланс монет в шапке или на странице пака
+                const candidates = Array.from(document.querySelectorAll('[class*="point"], [class*="coin"], [class*="balance"], [class*="currency"], header span, header div'));
+                for (const el of candidates) {
+                    if (el.children.length === 0) {
+                        const txt = (el.innerText || el.textContent || '').trim().replace(/\s+/g, '');
+                        if (/^\d{1,7}$/.test(txt) && txt !== '480') {
+                            return parseInt(txt, 10);
+                        }
+                    }
+                }
+                return null;
+            }"""
+        )
+        if dom_pts is not None:
+            log_debug(f"[BALANCE] {slug}: считано из DOM = {dom_pts}")
+            return int(dom_pts)
+    except Exception as e:
+        log_debug(f"[BALANCE ERROR] {slug}: {e}")
+    finally:
+        try:
+            page.remove_listener("response", on_pack_resp)
+        except Exception:
+            pass
+
+    return 0
 
 
 def get_session_file(acc_id: str) -> Path:
@@ -978,106 +1317,288 @@ async def create_account_context(playwright_browser, acc: dict, proxy_url: Optio
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
         "viewport": {"width": 1280, "height": 900},
         "locale": "ru-RU",
+        "service_workers": "block",
     }
     if proxy_url:
         ctx_kwargs["proxy"] = {"server": proxy_url}
     if sess_file.exists():
         try:
             ctx_kwargs["storage_state"] = str(sess_file)
-            print(f"[SESSION] Загружена сохраненная сессия для {acc['id']}")
-        except Exception:
-            pass
-    return await playwright_browser.new_context(**ctx_kwargs)
+            log_debug(f"[SESSION] Загружена сохраненная сессия для {acc['id']}")
+        except Exception as e:
+            log_debug(f"[SESSION WARN] {acc['id']}: {e}")
+    ctx = await playwright_browser.new_context(**ctx_kwargs)
+    await ctx.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
+    return ctx
+
+
+def build_kaggle_v65_autologin_init_js(login_val: str, pass_val: str, uname: str) -> str:
+    """
+    Проверенный боевой авто-логин из Senkuro_Kaggle_Server_v6_5_Ready.ipynb:
+    ждёт исчезновения экрана «Приготовьтесь к приключениям», кликает «Войти»,
+    на sso.senkuro.org ждёт появления поля пароля и вводит логин/пароль через нативный сеттер.
+    """
+    return f"""
+    (() => {{
+        const LOGIN_STR = {json.dumps(login_val)};
+        const PASS_STR = {json.dumps(pass_val)};
+        const MY_UNAME = {json.dumps(uname)};
+
+        function setNativeVal(el, val) {{
+            if (!el) return;
+            el.focus();
+            const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+            const setter = Object.getOwnPropertyDescriptor(proto, 'value') ? Object.getOwnPropertyDescriptor(proto, 'value').set : null;
+            if (setter) setter.call(el, val);
+            else el.value = val;
+            el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+            el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+        }}
+
+        function tickAutoLogin() {{
+            const host = window.location.hostname || '';
+            const path = window.location.pathname || '';
+            const bodyTxt = document.body ? (document.body.innerText || '') : '';
+            if (!document.body || bodyTxt.includes('Приготовьтесь к приключениям')) return;
+
+            if (host.includes('sso.senkuro.org')) {{
+                const passInput = document.querySelector('input[type="password"]');
+                if (passInput) {{
+                    const allInputs = Array.from(document.querySelectorAll('input:not([type="hidden"]):not([type="password"]):not([type="checkbox"])'));
+                    const userInput = allInputs[0];
+                    if (userInput && userInput.value !== LOGIN_STR) setNativeVal(userInput, LOGIN_STR);
+                    if (passInput.value !== PASS_STR) setNativeVal(passInput, PASS_STR);
+                    const lastSub = parseInt(sessionStorage.getItem('senkuro_sso_submit_ts') || '0', 10);
+                    if (Date.now() - lastSub > 6500) {{
+                        sessionStorage.setItem('senkuro_sso_submit_ts', String(Date.now()));
+                        setTimeout(() => {{
+                            if (userInput && userInput.value !== LOGIN_STR) setNativeVal(userInput, LOGIN_STR);
+                            if (passInput && passInput.value !== PASS_STR) setNativeVal(passInput, PASS_STR);
+                            const submitBtn = document.querySelector('button[type="submit"]') ||
+                                Array.from(document.querySelectorAll('button')).find(b => {{
+                                    const t = (b.innerText || b.textContent || '').trim().toLowerCase();
+                                    return t.includes('продолжить') || t.includes('войти') || t.includes('вход') || t.includes('login') || t.includes('sign in');
+                                }});
+                            if (submitBtn) submitBtn.click();
+                        }}, 500);
+                    }}
+                    return;
+                }}
+                if (path.includes('/account') || bodyTxt.includes('Популярные действия') || bodyTxt.includes('Выйти')) {{
+                    window.location.href = 'https://senkuro.com/users/' + MY_UNAME + '/bookmarks';
+                }}
+            }}
+        }}
+
+        if (!window.__senkuroV13AutoLogin) {{
+            window.__senkuroV13AutoLogin = true;
+            setInterval(tickAutoLogin, 1200);
+            setTimeout(tickAutoLogin, 400);
+        }}
+    }})();
+    """
+
+
+async def check_is_authenticated_on_senkuro(page: Page, acc_slug: str, intercepted_user: dict) -> Optional[dict]:
+    """
+    Комплексная проверка входа:
+    1) Перехваченные ответы GraphQL от самого сайта Senkuro
+    2) Самовосстанавливающийся запрос fetchViewer / fetchUserBySlug
+    3) Проверка реального DOM (исчезла ли кнопка «Войти» и появился ли токен/аватарка профиля)
+    """
+    if intercepted_user.get("id"):
+        return intercepted_user
+
+    try:
+        dom_state = await page.evaluate(
+            """(slug) => {
+                const bodyTxt = document.body ? (document.body.innerText || '') : '';
+                if (!document.body || bodyTxt.includes('Приготовьтесь к приключениям')) {
+                    return { loading: true };
+                }
+                const loginBtn = Array.from(document.querySelectorAll('a, button')).find(el => {
+                    const t = (el.innerText || el.textContent || '').trim();
+                    return t === 'Войти' || t === 'Вход';
+                });
+                const hasTokenCookie = document.cookie.includes('access_token') || document.cookie.includes('refresh_token');
+                let hasLocalToken = false;
+                try {
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const k = (localStorage.key(i) || '').toLowerCase();
+                        if (k.includes('token') || k.includes('auth') || k.includes('user')) {
+                            hasLocalToken = true;
+                            break;
+                        }
+                    }
+                } catch (e) {}
+                const profileLink = document.querySelector(`header a[href*="/users/${slug}"], nav a[href*="/users/${slug}"], a[href="/users/${slug}"]`);
+                return {
+                    loading: false,
+                    hasLoginBtn: !!loginBtn,
+                    hasTokenCookie,
+                    hasLocalToken,
+                    hasProfileLink: !!profileLink,
+                    url: window.location.href,
+                    title: document.title
+                };
+            }""",
+            acc_slug,
+        )
+    except Exception as e:
+        log_debug(f"[DOM AUTH CHECK WARN] {acc_slug}: {e}")
+        dom_state = {"loading": True}
+
+    if dom_state.get("loading"):
+        return None
+
+    # Пробуем получить объект пользователя через GraphQL
+    v_res = await gql_call(page, GQL_FETCH_VIEWER, {}, "fetchViewer")
+    v_data = (v_res.get("data") or {}).get("viewer") or {}
+    v_user = v_data.get("user") if isinstance(v_data.get("user"), dict) else v_data
+    if isinstance(v_user, dict) and v_user.get("id"):
+        return v_user
+
+    # Если на сайте НЕТ кнопки «Войти» (или есть кука access_token / ссылка на профиль в шапке), значит мы УЖЕ ВОШЛИ!
+    if not dom_state.get("hasLoginBtn") and "senkuro.com" in str(dom_state.get("url", "")) and "/auth/" not in str(dom_state.get("url", "")):
+        u_res = await gql_call(page, GQL_FETCH_USER_BY_SLUG, {"slug": acc_slug}, "fetchUserBySlug")
+        u_obj = (u_res.get("data") or {}).get("user") or {}
+        if isinstance(u_obj, dict) and u_obj.get("id"):
+            log_debug(f"[AUTH DOM+SLUG OK] {acc_slug}: вход подтвержден по отсутствию кнопки 'Войти' (id={u_obj['id']})")
+            return u_obj
+        if dom_state.get("hasTokenCookie") or dom_state.get("hasProfileLink"):
+            log_debug(f"[AUTH DOM OK] {acc_slug}: вход подтвержден по куке/профилю в шапке")
+            return {"id": acc_slug, "slug": acc_slug, "points": 0}
+
+    return None
 
 
 async def ensure_logged_in(context: BrowserContext, acc: dict) -> tuple[Page, Optional[dict]]:
-    page = await context.new_page()
-    await page.goto("https://senkuro.com/", wait_until="domcontentloaded", timeout=40000)
-    await page.wait_for_timeout(1500)
+    if acc.get("login") and acc.get("password"):
+        await context.add_init_script(build_kaggle_v65_autologin_init_js(acc["login"], acc["password"], acc["id"]))
 
-    viewer_res = await gql_call(page, GQL_FETCH_VIEWER, {}, "fetchViewer")
-    user_obj = ((viewer_res.get("data") or {}).get("viewer") or {}).get("user")
-    if user_obj and user_obj.get("id"):
-        print(f"[AUTH OK] {acc['id']}: уже авторизован (id={user_obj['id']}, points={user_obj.get('points', 0)})")
+    page = await context.new_page()
+    ACTIVE_BROWSER_PAGES[acc["id"]] = page
+    intercepted_user: dict[str, Any] = {}
+
+    async def on_gql_resp(resp):
+        if "graphql" in resp.url and resp.request.method == "POST":
+            try:
+                j = await resp.json()
+                d = j.get("data") or {}
+                vw = d.get("viewer") or {}
+                u = vw.get("user") if isinstance(vw.get("user"), dict) else (vw if isinstance(vw, dict) and vw.get("id") else None)
+                if isinstance(u, dict) and u.get("id"):
+                    intercepted_user.update(u)
+            except Exception:
+                pass
+
+    page.on("response", on_gql_resp)
+
+    target_start_url = acc.get("bookmarks_url") or f"https://senkuro.com/users/{acc['id']}/bookmarks"
+    log_debug(f"[AUTH START] {acc['id']}: открываю {target_start_url}")
+    try:
+        await page.goto(target_start_url, wait_until="domcontentloaded", timeout=40000)
+    except Exception as e:
+        log_debug(f"[AUTH GOTO WARN] {acc['id']}: {e}")
+
+    # Ждём до 12 секунд, пока исчезнет заставка «Приготовьтесь к приключениям»
+    for _ in range(15):
+        await page.wait_for_timeout(800)
+        try:
+            b_txt = await page.evaluate("() => document.body ? (document.body.innerText || '') : ''")
+            if b_txt and "Приготовьтесь к приключениям" not in b_txt:
+                break
+        except Exception:
+            pass
+
+    user_obj = await check_is_authenticated_on_senkuro(page, acc["id"], intercepted_user)
+    if user_obj:
+        log_debug(f"[AUTH ALREADY OK] {acc['id']}: уже авторизован (id={user_obj.get('id')})")
         await context.storage_state(path=str(get_session_file(acc["id"])))
         return page, user_obj
 
     if not acc.get("login") or not acc.get("password"):
         return page, None
 
-    print(f"[AUTH] Выполняем автоматический вход для {acc['id']} ({acc['login']})...")
+    log_debug(f"[AUTH LOGIN] {acc['id']}: выполняю вход через SSO ({acc['login']})...")
 
-    for attempt in range(3):
+    for attempt in range(1, 3):
         try:
-            login_btn = page.locator("a:has-text('Войти'), button:has-text('Войти')").first
-            if await login_btn.count() > 0:
-                await login_btn.click(timeout=8000)
-            else:
-                await page.evaluate(
+            # Кликаем кнопку «Войти» на senkuro.com
+            if "senkuro.com" in page.url and "sso.senkuro" not in page.url:
+                clicked = await page.evaluate(
                     """() => {
                         const btn = Array.from(document.querySelectorAll('a, button')).find(el => {
                             const t = (el.innerText || el.textContent || '').trim();
                             return t === 'Войти' || t === 'Вход';
                         });
-                        if (btn) btn.click();
+                        if (btn) { btn.click(); return true; }
+                        return false;
                     }"""
                 )
+                log_debug(f"[AUTH] {acc['id']} (попытка #{attempt}): клик 'Войти' = {clicked} (url={page.url})")
         except Exception as e:
-            print(f"[AUTH] Попытка клика Войти #{attempt+1}: {e}")
+            log_debug(f"[AUTH CLICK WARN] {acc['id']}: {e}")
 
-        for _ in range(25):
-            await page.wait_for_timeout(600)
-            if "sso.senkuro." in page.url:
-                break
+        # Ждем перехода на sso.senkuro.org И реального появления поля пароля (или завершения авто-логина)
+        for step_w in range(35):
+            await page.wait_for_timeout(900)
+            cur_u = page.url
 
-        if "sso.senkuro." in page.url:
-            await page.wait_for_timeout(1200)
-            await page.evaluate(
-                """({ loginStr, passStr }) => {
-                    function setNativeVal(el, val) {
-                        if (!el) return;
-                        el.focus();
-                        const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
-                        const desc = Object.getOwnPropertyDescriptor(proto, 'value');
-                        if (desc && desc.set) desc.set.call(el, val);
-                        else el.value = val;
-                        el.dispatchEvent(new Event('input', { bubbles: true }));
-                        el.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
-                    const passInput = document.querySelector('input[type="password"]');
-                    const allInputs = Array.from(document.querySelectorAll('input:not([type="hidden"]):not([type="password"]):not([type="checkbox"])'));
-                    const userInput = allInputs[0];
-                    if (userInput) setNativeVal(userInput, loginStr);
-                    if (passInput) setNativeVal(passInput, passStr);
-                    setTimeout(() => {
-                        const submitBtn = document.querySelector('button[type="submit"]') ||
-                            Array.from(document.querySelectorAll('button')).find(b => {
-                                const t = (b.innerText || b.textContent || '').trim().toLowerCase();
-                                return t.includes('продолжить') || t.includes('войти') || t.includes('вход') || t.includes('login');
-                            });
-                        if (submitBtn) submitBtn.click();
-                    }, 350);
-                }""",
-                {"loginStr": acc["login"], "passStr": acc["password"]},
+            if "sso.senkuro." in cur_u:
+                try:
+                    pass_loc = page.locator('input[type="password"]')
+                    if await pass_loc.count() > 0:
+                        user_loc = page.locator('input:not([type="hidden"]):not([type="password"]):not([type="checkbox"])').first
+                        if await user_loc.count() > 0:
+                            await user_loc.fill(acc["login"])
+                        await pass_loc.first.fill(acc["password"])
+                        await page.wait_for_timeout(400)
+                        sub_loc = page.locator('button[type="submit"], button:has-text("Продолжить"), button:has-text("Войти")').first
+                        if await sub_loc.count() > 0:
+                            await sub_loc.click()
+                            log_debug(f"[AUTH SSO] {acc['id']}: логин и пароль введены, нажата кнопка входа на {cur_u}")
+                            await page.wait_for_timeout(2500)
+                except Exception as sso_e:
+                    log_debug(f"[AUTH SSO FILL WARN] {acc['id']}: {sso_e}")
+                continue
+
+            if "senkuro.com" in cur_u and "/auth/" not in cur_u and step_w >= 3:
+                u_now = await check_is_authenticated_on_senkuro(page, acc["id"], intercepted_user)
+                if u_now:
+                    log_debug(f"[AUTH SUCCESS] {acc['id']}: вход успешно выполнен (id={u_now.get('id')})")
+                    await context.storage_state(path=str(get_session_file(acc["id"])))
+                    return page, u_now
+
+        # Если после ожидания мы застряли, возвращаемся на закладки и проверяем ещё раз
+        try:
+            await page.goto(target_start_url, wait_until="domcontentloaded", timeout=35000)
+            await page.wait_for_timeout(2500)
+            u_final = await check_is_authenticated_on_senkuro(page, acc["id"], intercepted_user)
+            if u_final:
+                log_debug(f"[AUTH SUCCESS AFTER RELOAD] {acc['id']}: вход выполнен!")
+                await context.storage_state(path=str(get_session_file(acc["id"])))
+                return page, u_final
+        except Exception as e:
+            log_debug(f"[AUTH RELOAD WARN] {acc['id']}: {e}")
+
+    # Если войти всё равно не удалось — записываем подробную диагностику в лог и присылаем авто-скриншот!
+    try:
+        diag_info = await page.evaluate(
+            "() => ({ url: location.href, title: document.title, text: (document.body ? document.body.innerText : '').slice(0, 600) })"
+        )
+        log_debug(f"[AUTH FAILED DIAG] {acc['id']}: {json.dumps(diag_info, ensure_ascii=False)}")
+        if DEBUG_MODE:
+            png_err = await page.screenshot(full_page=False, timeout=8000)
+            send_tg_photo_bytes(
+                png_err,
+                f"⚠️ <b>Авто-скриншот ошибки входа ({acc['id']}):</b>\n"
+                f"🌐 URL: <code>{page.url[:120]}</code>\n"
+                f"📄 Текст на экране: <code>{str(diag_info.get('text', ''))[:250]}</code>",
+                add_keyboard=False,
             )
-
-            for _ in range(35):
-                await page.wait_for_timeout(700)
-                if "senkuro.com" in page.url and "/auth/" not in page.url:
-                    viewer_res = await gql_call(page, GQL_FETCH_VIEWER, {}, "fetchViewer")
-                    user_obj = ((viewer_res.get("data") or {}).get("viewer") or {}).get("user")
-                    if user_obj and user_obj.get("id"):
-                        print(f"[AUTH SUCCESS] {acc['id']}: вход выполнен! Баланс: {user_obj.get('points', 0)} сенкоинов")
-                        await context.storage_state(path=str(get_session_file(acc["id"])))
-                        return page, user_obj
-
-        await page.goto("https://senkuro.com/", wait_until="domcontentloaded", timeout=35000)
-        await page.wait_for_timeout(1500)
-        viewer_res = await gql_call(page, GQL_FETCH_VIEWER, {}, "fetchViewer")
-        user_obj = ((viewer_res.get("data") or {}).get("viewer") or {}).get("user")
-        if user_obj and user_obj.get("id"):
-            await context.storage_state(path=str(get_session_file(acc["id"])))
-            return page, user_obj
+    except Exception as e:
+        log_debug(f"[AUTH DIAG SCREENSHOT ERR] {acc['id']}: {e}")
 
     return page, None
 
@@ -1146,10 +1667,12 @@ async def run_promo_code_activation(promo_code: str) -> None:
 
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await launch_senkuro_browser(p)
             for acc in FARM_ACCOUNTS:
                 proxy_url = proxy_mgr.start_account_proxy(acc)
                 ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
+                log_debug(f"[BALANCE STEP] #{acc['idx']}/4 {acc['id']} -> IP: {ip_used}")
+                send_tg_message(f"⏳ <b>[{acc['idx']}/4] {acc['id']}</b> (IP: <code>{ip_used}</code>): проверяю вход и баланс...", add_keyboard=False)
                 context = await create_account_context(browser, acc, proxy_url)
                 try:
                     page, user_obj = await ensure_logged_in(context, acc)
@@ -1245,7 +1768,7 @@ async def run_check_coins_balance() -> None:
 
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await launch_senkuro_browser(p)
             for acc in FARM_ACCOUNTS:
                 proxy_url = proxy_mgr.start_account_proxy(acc)
                 ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
@@ -1270,7 +1793,12 @@ async def run_check_coins_balance() -> None:
         proxy_mgr.stop_all()
 
     lines.append(f"\n💰 <b>Всего монет на 4 аккаунтах:</b> {total_coins} 🪙 (доступно прокруток Хардкор: <b>{total_packs_possible}</b>)")
-    send_tg_message("\n".join(lines), add_keyboard=True)
+    full_msg = "\n".join(lines)
+    send_tg_message(full_msg, add_keyboard=True)
+    if DEBUG_MODE:
+        upload_debug_log_to_github("balance_check")
+        if "не удалось войти" in full_msg:
+            send_full_debug_log_to_user("Авто-лог диагностики входа (Баланс)")
 
 
 def choose_best_unlocked_card_index(result_cards: list[dict], has_premium: bool = False) -> tuple[int, dict]:
@@ -1414,7 +1942,7 @@ async def run_all_packs_opening() -> None:
 
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await launch_senkuro_browser(p)
             for acc in FARM_ACCOUNTS:
                 proxy_url = proxy_mgr.start_account_proxy(acc)
                 ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
@@ -1622,7 +2150,7 @@ async def run_smart_forge_and_trade_pipeline() -> None:
 
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await launch_senkuro_browser(p)
             contexts: list[BrowserContext] = []
 
             for acc in FARM_ACCOUNTS:
@@ -2375,10 +2903,15 @@ async def run_farm_segment(part_mode: str = "farm_part1") -> None:
 # 10. СЦЕНАРИЙ 5: КЛАССИЧЕСКИЙ ЧЕКЕР КАРТ И ОСКОЛКОВ ПО ВСЕМ 5 АККАУНТАМ (С ФОТО)
 # ==============================================================================
 
+CACHED_FETCH_USER_CARDS_TEMPLATE: dict[str, Any] = {}
+
+
 def parse_graphql_edges(edges: list[dict]) -> list[dict]:
     parsed = []
     for edge in edges:
         node = edge.get("node") or edge
+        if not isinstance(node, dict):
+            continue
         card = node.get("card") or {}
         qty = int(node.get("quantity") or 1)
         rank = str(card.get("rank") or "?").upper()
@@ -2405,9 +2938,60 @@ def parse_graphql_edges(edges: list[dict]) -> list[dict]:
     return parsed
 
 
-async def fetch_all_pages_via_graphql(page: Page, captured_req: dict, modifier_val: int) -> list[dict]:
+def extract_rank_dom(slug: str, style_attr: str, text_content: str) -> str:
+    if style_attr:
+        m = re.search(r"#rank-([RSABCDF])", style_attr, re.IGNORECASE)
+        if m:
+            return m.group(1).upper()
+    if slug:
+        m = re.search(r"-([rsabcdf])$", slug.strip("/"), re.IGNORECASE)
+        if m:
+            return m.group(1).upper()
+    if text_content:
+        for r in ["R", "S", "A", "B", "C", "D", "F"]:
+            if re.search(rf"\b{r}\b", text_content):
+                return r
+    return "?"
+
+
+async def extract_items_from_dom(page: Page) -> list[dict]:
+    """Надёжное резервное извлечение карточек прямо из DOM страницы (как в оригинальном чекере)."""
+    raw_items = await page.evaluate(
+        """() => {
+        const results = [];
+        let elements = Array.from(document.querySelectorAll('.card-collect-preview'));
+        if (elements.length === 0) {
+            elements = Array.from(document.querySelectorAll('a.card-collect, a[href*="/cards/"]'));
+        }
+        elements.forEach(el => {
+            const linkEl = el.tagName === 'A' ? el : el.querySelector('a.card-collect, a[href*="/cards/"]');
+            const href = linkEl ? (linkEl.getAttribute('href') || '') : '';
+            if (!href || !href.includes('/cards/')) return;
+            const style = linkEl ? (linkEl.getAttribute('style') || '') : '';
+            const imgEl = el.querySelector('img.card-collect__img, img');
+            const name = imgEl ? (imgEl.getAttribute('alt') || '').trim() : '';
+            const img = imgEl ? (imgEl.getAttribute('src') || '').trim() : '';
+            const infoEl = el.querySelector('.card-collect-preview__info, .card-collect-preview__title');
+            const titleText = infoEl ? infoEl.innerText.trim() : (el.innerText || '').trim();
+            results.push({ href, style, name: name || 'Карта', img, titleText });
+        });
+        return results;
+    }"""
+    )
+    parsed = []
+    for item in raw_items or []:
+        href = item["href"]
+        full_url = f"https://senkuro.com{href}" if href.startswith("/") else href
+        rank = extract_rank_dom(href, item["style"], item["titleText"])
+        parsed.append({"slug": href, "url": full_url, "name": item["name"], "rank": rank, "img": item["img"]})
+    rank_idx = {r: i for i, r in enumerate(RANK_ORDER)}
+    parsed.sort(key=lambda x: (rank_idx.get(x["rank"], 9), x["name"]))
+    return parsed
+
+
+async def fetch_all_pages_via_graphql(page: Page, captured_req: dict, modifier_val: int, override_user_id: Optional[str] = None) -> list[dict]:
     raw_edges = await page.evaluate(
-        """async ({ reqInfo, modifierVal }) => {
+        """async ({ reqInfo, modifierVal, overrideUserId }) => {
         const allEdges = [];
         let afterCursor = null;
         const seenCursors = new Set();
@@ -2424,6 +3008,9 @@ async def fetch_all_pages_via_graphql(page: Page, captured_req: dict, modifier_v
         for (let pageNum = 0; pageNum < 50; pageNum++) {
             const bodyObj = JSON.parse(JSON.stringify(reqInfo.postData));
             bodyObj.variables = bodyObj.variables || {};
+            if (overrideUserId) {
+                bodyObj.variables.userId = overrideUserId;
+            }
             bodyObj.variables.modifier = { include: [modifierVal] };
             if (afterCursor) {
                 bodyObj.variables.after = afterCursor;
@@ -2454,33 +3041,53 @@ async def fetch_all_pages_via_graphql(page: Page, captured_req: dict, modifier_v
         }
         return allEdges;
     }""",
-        {"reqInfo": captured_req, "modifierVal": modifier_val},
+        {"reqInfo": captured_req, "modifierVal": modifier_val, "overrideUserId": override_user_id},
     )
     return parse_graphql_edges(raw_edges or [])
 
 
-async def scrape_account_cards_public(context: BrowserContext, account: dict) -> dict:
+async def scrape_account_cards_public(browser, account: dict) -> dict:
+    """
+    Для КАЖДОГО из 5 аккаунтов создаёт свежий изолированный BrowserContext с service_workers='block',
+    чтобы Service Worker от 1-го аккаунта НИКОГДА не блокировал перехват запросов на 2..5 аккаунтах!
+    """
+    context = await browser.new_context(
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        viewport={"width": 1280, "height": 900},
+        locale="ru-RU",
+        service_workers="block",
+    )
     page = await context.new_page()
-    print(f"Проверка {account['label']} -> {account['url']}")
+    ACTIVE_BROWSER_PAGES[f"check_{account['id']}"] = page
+    log_debug(f"[CHECK 5] Проверка {account['label']} -> {account['url']}")
     captured_req: dict[str, Any] = {}
+    intercepted_user_id: list[str] = []
 
     def on_request(request):
         if "graphql" in request.url and request.method == "POST":
             try:
                 post_json = request.post_data_json
-                if isinstance(post_json, dict) and post_json.get("operationName") == "fetchUserCards":
-                    if not captured_req:
-                        captured_req["url"] = request.url
-                        captured_req["headers"] = request.headers
-                        captured_req["postData"] = post_json
+                items = post_json if isinstance(post_json, list) else [post_json]
+                for item in items:
+                    if isinstance(item, dict) and item.get("operationName") == "fetchUserCards":
+                        if not captured_req:
+                            captured_req["url"] = request.url
+                            captured_req["headers"] = request.headers
+                            captured_req["postData"] = item
+                            CACHED_FETCH_USER_CARDS_TEMPLATE.update(captured_req)
+                            uid_v = (item.get("variables") or {}).get("userId")
+                            if uid_v:
+                                intercepted_user_id.append(str(uid_v))
             except Exception:
                 pass
 
     page.on("request", on_request)
 
     try:
-        await page.goto(account["url"], wait_until="domcontentloaded", timeout=35000)
-        for _ in range(16):
+        await page.goto(account["url"], wait_until="domcontentloaded", timeout=40000)
+
+        # Ждем до 12 секунд перехвата fetchUserCards и завершения заставки «Приготовьтесь к приключениям»
+        for _ in range(24):
             if captured_req:
                 break
             await page.wait_for_timeout(500)
@@ -2488,20 +3095,49 @@ async def scrape_account_cards_public(context: BrowserContext, account: dict) ->
         if captured_req:
             cards = await fetch_all_pages_via_graphql(page, captured_req, modifier_val=0)
             shards = await fetch_all_pages_via_graphql(page, captured_req, modifier_val=1)
-            return {"cards": cards, "shards": shards, "error": None}
+            log_debug(f"[CHECK 5 GQL CAPTURED] {account['id']}: карт={len(cards)}, осколков={len(shards)}")
+            if cards or shards:
+                return {"cards": cards, "shards": shards, "error": None}
 
+        # Резерв 1: если есть сохраненный шаблон fetchUserCards от предыдущего аккаунта + узнаём userId по slug
         u_res = await gql_call(page, GQL_FETCH_USER_BY_SLUG, {"slug": account["id"]}, "fetchUserBySlug")
-        uid = ((u_res.get("data") or {}).get("user") or {}).get("id")
+        uid = ((u_res.get("data") or {}).get("user") or {}).get("id") or (intercepted_user_id[0] if intercepted_user_id else None)
+        log_debug(f"[CHECK 5 FALLBACK] {account['id']}: uid={uid}, has_cached_tpl={bool(CACHED_FETCH_USER_CARDS_TEMPLATE)}")
+
+        if uid and CACHED_FETCH_USER_CARDS_TEMPLATE:
+            cards = await fetch_all_pages_via_graphql(page, CACHED_FETCH_USER_CARDS_TEMPLATE, modifier_val=0, override_user_id=uid)
+            shards = await fetch_all_pages_via_graphql(page, CACHED_FETCH_USER_CARDS_TEMPLATE, modifier_val=1, override_user_id=uid)
+            log_debug(f"[CHECK 5 CACHED TPL] {account['id']}: карт={len(cards)}, осколков={len(shards)}")
+            if cards or shards:
+                return {"cards": cards, "shards": shards, "error": None}
+
         if uid:
             c_nodes = await fetch_all_user_cards_gql(page, uid, modifier_val=0)
             s_nodes = await fetch_all_user_cards_gql(page, uid, modifier_val=1)
-            return {"cards": parse_graphql_edges(c_nodes), "shards": parse_graphql_edges(s_nodes), "error": None}
+            cards = parse_graphql_edges(c_nodes)
+            shards = parse_graphql_edges(s_nodes)
+            log_debug(f"[CHECK 5 DIRECT GQL] {account['id']}: карт={len(cards)}, осколков={len(shards)}")
+            if cards or shards:
+                return {"cards": cards, "shards": shards, "error": None}
 
-        return {"cards": [], "shards": [], "error": None}
+        # Резерв 2 (из оригинального рабочего check_orig.py): прямое считывание карточек и вкладки «Осколки» из DOM!
+        await page.wait_for_timeout(2500)
+        cards = await extract_items_from_dom(page)
+        shards = []
+        shard_tab = page.locator("text=/Осколки/i").first
+        if await shard_tab.count() > 0:
+            await shard_tab.click()
+            await page.wait_for_timeout(2000)
+            shards = await extract_items_from_dom(page)
+        log_debug(f"[CHECK 5 DOM FALLBACK] {account['id']}: карт={len(cards)}, осколков={len(shards)}")
+        return {"cards": cards, "shards": shards, "error": None}
     except Exception as e:
+        log_debug(f"[CHECK 5 ERROR] {account['id']}: {e}")
         return {"cards": [], "shards": [], "error": str(e)}
     finally:
+        ACTIVE_BROWSER_PAGES.pop(f"check_{account['id']}", None)
         await page.close()
+        await context.close()
 
 
 def format_rank_breakdown(items: list[dict]) -> str:
@@ -2580,15 +3216,11 @@ def send_account_report(text: str, photo_urls: list[str], add_reply_button: bool
 
 
 async def run_check_all_5_accounts() -> None:
+    log_debug("[TASK START] Запуск проверки всех 5 аккаунтов (поочерёдно с изолированными контекстами)...")
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-            viewport={"width": 1280, "height": 900},
-            locale="ru-RU",
-        )
+        browser = await launch_senkuro_browser(p)
         for idx, acc in enumerate(ALL_CHECK_ACCOUNTS):
-            acc_data = await scrape_account_cards_public(context, acc)
+            acc_data = await scrape_account_cards_public(browser, acc)
             is_last = idx == len(ALL_CHECK_ACCOUNTS) - 1
             if acc_data["error"]:
                 err_msg = f"⚠️ <b><a href=\"{acc['url']}\">{acc['label']}</a></b>: ошибка загрузки ({acc_data['error']})"
@@ -2596,12 +3228,14 @@ async def run_check_all_5_accounts() -> None:
                 continue
             text, card_photos = build_account_message(acc, acc_data)
             send_account_report(text, card_photos, add_reply_button=is_last)
-            await asyncio.sleep(2.5)
+            await asyncio.sleep(2.0)
         await browser.close()
+    if DEBUG_MODE:
+        upload_debug_log_to_github("check_5_accounts")
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v12.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v13.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -2851,7 +3485,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     global ACTIVE_FARM_TASK, FARM_STOP_FLAG
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v12.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v13.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -2926,6 +3560,16 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             )
             return
 
+        if data == "view_screen":
+            tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📸 Делаю снимок экрана..."})
+            await send_live_screen_snapshot()
+            return
+
+        if data == "dump_full_log":
+            tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
+            send_full_debug_log_to_user("Полный лог работы комбайна v13.0")
+            return
+
         if data == "check_farm_status":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "Проверяю статус фарма..."})
             if CURRENT_FARM_STATUS.get("active"):
@@ -2982,14 +3626,31 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
         lower = raw_text.lower()
 
         if lower in ("/start", "/menu", "/help", "меню"):
+            tg_request(
+                "sendMessage",
+                {
+                    "chat_id": TELEGRAM_CHAT_ID,
+                    "text": "🎛 <b>Сворачиваемое нижнее меню подключено!</b> Вы можете прятать и открывать кнопки значком 🎛 справа в строке ввода (или через синюю кнопку «Меню» слева).",
+                    "parse_mode": "HTML",
+                    "reply_markup": get_collapsible_reply_keyboard(),
+                },
+            )
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v12.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v13.0</b>\n\n"
                 "Выберите нужную задачу одним нажатием кнопки ниже (или просто отправьте промокод одним словом в чат):",
                 add_keyboard=True,
             )
             return
 
-        if lower in ("/stop", "стоп"):
+        if lower in ("/screen", "📸 посмотреть экран", "экран", "скрин"):
+            await send_live_screen_snapshot()
+            return
+
+        if lower in ("/log", "📜 полный лог", "лог", "логи"):
+            send_full_debug_log_to_user("Полный лог работы комбайна v13.0")
+            return
+
+        if lower in ("/stop", "стоп", "🛑 остановить фарм / все задачи"):
             FARM_STOP_FLAG = True
             if FARM_RESUME_FILE.exists():
                 FARM_RESUME_FILE.unlink(missing_ok=True)
@@ -2999,19 +3660,42 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             send_tg_message("🛑 <b>Фарм и все активные задачи остановлены!</b>", add_keyboard=True)
             return
 
-        if lower == "/status":
+        if lower in ("/status", "📊 проверить статус фарма"):
             if CURRENT_FARM_STATUS.get("active"):
                 send_tg_message(format_farm_status_message(CURRENT_FARM_STATUS), add_keyboard=True)
             else:
                 await run_check_farm_status()
             return
 
-        if lower == "/farm":
+        if lower in ("/farm", "▶️ запустить фарм (8 ч)"):
             await execute_single_action("farm", "")
             return
 
-        if lower in ("/balance", "/packs", "/forge", "/check"):
-            act_c = lower.lstrip("/")
+        if lower == "🎟 ввести промокод":
+            tg_request(
+                "sendMessage",
+                {
+                    "chat_id": TELEGRAM_CHAT_ID,
+                    "text": "🎟 <b>Отправьте промокод одним словом в этот чат:</b>",
+                    "parse_mode": "HTML",
+                    "reply_markup": {"force_reply": True, "selective": True, "input_field_placeholder": "Введите промокод..."},
+                },
+            )
+            return
+
+        text_btn_map = {
+            "/balance": "balance",
+            "🪙 баланс монет (4 акка)": "balance",
+            "/packs": "packs",
+            "🎴 крутить паки хардкор": "packs",
+            "/forge": "forge",
+            "⚒️ переплавка + трейд": "forge",
+            "/check": "check",
+            "🔄 проверить 5 аккаунтов": "check",
+            "🚀 сделать всё (паки+кузня)": "all",
+        }
+        if lower in text_btn_map:
+            act_c = text_btn_map[lower]
             send_tg_message(f"⏳ Запускаю задачу <code>{act_c}</code>...", add_keyboard=True)
             await task_queue.put((act_c, ""))
             return
@@ -3084,7 +3768,7 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v12.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v13.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",
