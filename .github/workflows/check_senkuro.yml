@@ -1,12 +1,14 @@
-name: Senkuro Full Automation Bot
+name: Senkuro Full Automation Combine v11.0
 
 on:
   push:
     branches: [ main, master ]
+  schedule:
+    - cron: '25 */3 * * *'
   workflow_dispatch:
     inputs:
       action:
-        description: "Задача (check | menu | promo | balance | packs | forge | farm | farm_status | all)"
+        description: "Задача (check | menu | daemon | promo | balance | packs | forge | farm | farm_status | all)"
         required: false
         default: "check"
       promo_code:
@@ -18,13 +20,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: senkuro-bot-${{ github.event.inputs.action || 'push' }}
+  group: senkuro-combine-${{ github.event.inputs.action || github.event_name }}
   cancel-in-progress: false
 
 jobs:
   run-senkuro-bot:
     runs-on: ubuntu-latest
     timeout-minutes: 280
+    outputs:
+      continue_farm: ${{ steps.run_bot.outputs.continue_farm }}
 
     steps:
       - name: Checkout repository
@@ -41,11 +45,12 @@ jobs:
           path: |
             .sessions
             bin
-          key: senkuro-sessions-v9-${{ github.run_id }}
+          key: senkuro-sessions-v11-${{ github.run_id }}
           restore-keys: |
+            senkuro-sessions-v11-
+            senkuro-sessions-v10-
             senkuro-sessions-v9-
             senkuro-sessions-v8-
-            senkuro-sessions-v7-
 
       - name: Install Playwright, Chromium & Virtual Display (Xvfb)
         run: |
@@ -62,17 +67,18 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v9.0
+      - name: Run Senkuro Automation Combine v11.0
+        id: run_bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
-          SENKURO_ACTION: ${{ github.event_name == 'push' && 'menu' || (github.event.inputs.action == 'farm' && 'farm_part1' || github.event.inputs.action || 'check') }}
+          SENKURO_ACTION: ${{ github.event_name == 'push' && 'menu' || (github.event_name == 'schedule' && 'daemon' || (github.event.inputs.action == 'farm' && 'farm_part1' || github.event.inputs.action || 'check')) }}
           SENKURO_PROMO_CODE: ${{ github.event.inputs.promo_code || '' }}
         run: |
           xvfb-run -a --server-args="-screen 0 1280x900x24" python check_senkuro.py --action "${SENKURO_ACTION}" --promo-code "${SENKURO_PROMO_CODE}"
 
       - name: Save Sessions Artifact for 8-Hour Farm Continuation
-        if: github.event.inputs.action == 'farm'
+        if: steps.run_bot.outputs.continue_farm == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: senkuro-farm-sessions-${{ github.run_id }}
@@ -81,7 +87,7 @@ jobs:
 
   continue-farm-second-half:
     needs: run-senkuro-bot
-    if: github.event.inputs.action == 'farm'
+    if: needs.run-senkuro-bot.outputs.continue_farm == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 280
 
@@ -106,9 +112,9 @@ jobs:
           path: |
             .sessions
             bin
-          key: senkuro-sessions-v9-part2-${{ github.run_id }}
+          key: senkuro-sessions-v11-part2-${{ github.run_id }}
           restore-keys: |
-            senkuro-sessions-v9-
+            senkuro-sessions-v11-
 
       - name: Install Playwright, Chromium & Virtual Display (Xvfb)
         run: |
