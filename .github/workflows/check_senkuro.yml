@@ -1,16 +1,16 @@
-name: Senkuro Full Automation Combine v11.0
+name: Senkuro Full Automation Combine v12.0
 
 on:
   push:
     branches: [ main, master ]
   schedule:
-    - cron: '25 */3 * * *'
+    - cron: '15 */3 * * *'
   workflow_dispatch:
     inputs:
       action:
-        description: "Задача (check | menu | daemon | promo | balance | packs | forge | farm | farm_status | all)"
+        description: "Задача (daemon | check | menu | promo | balance | packs | forge | farm | farm_status | all)"
         required: false
-        default: "check"
+        default: "daemon"
       promo_code:
         description: "Промокод (для режима promo)"
         required: false
@@ -20,17 +20,182 @@ permissions:
   contents: read
 
 concurrency:
-  group: senkuro-combine-${{ github.event.inputs.action || github.event_name }}
-  cancel-in-progress: false
+  group: senkuro-direct-telegram-bot
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   run-senkuro-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 280
+    timeout-minutes: 270
     outputs:
-      continue_farm: ${{ steps.run_bot.outputs.continue_farm }}
+      continue_bot: ${{ steps.run_bot.outputs.continue_bot }}
 
     steps:
+      - name: Instant Telegram Direct Connect & Early Responder (Runs in 3 Seconds)
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
+          GH_EVENT_NAME: ${{ github.event_name }}
+        run: |
+          cat << 'EOF' > /tmp/early_poller.py
+          import json
+          import os
+          import re
+          import time
+          import urllib.request
+
+          TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4").strip()
+          CHAT_ID = str(os.environ.get("TELEGRAM_CHAT_ID", "457787014")).strip()
+          EVENT_NAME = os.environ.get("GH_EVENT_NAME", "push").strip()
+          OFFSET_FILE = "/tmp/tg_offset.txt"
+          QUEUE_FILE = "/tmp/senkuro_early_queue.jsonl"
+
+          KEYBOARD = {
+              "inline_keyboard": [
+                  [
+                      {"text": "▶️ Запустить фарм (8 ч)", "callback_data": "start_farm_8h"},
+                      {"text": "📊 Проверить статус фарма", "callback_data": "check_farm_status"},
+                  ],
+                  [
+                      {"text": "🎟 Ввести промокод", "callback_data": "prompt_promo"},
+                      {"text": "🪙 Баланс монет (4 акка)", "callback_data": "check_balance"},
+                  ],
+                  [
+                      {"text": "🎴 Крутить паки Хардкор", "callback_data": "roll_packs"},
+                      {"text": "⚒️ Переплавка + Трейд", "callback_data": "run_forge"},
+                  ],
+                  [
+                      {"text": "🔄 Проверить 5 аккаунтов", "callback_data": "check_senkuro"},
+                      {"text": "🚀 Сделать ВСЁ (Паки+Кузня)", "callback_data": "run_all"},
+                  ],
+                  [
+                      {"text": "🛑 ОСТАНОВИТЬ ФАРМ / ВСЕ ЗАДАЧИ", "callback_data": "stop_all_farm"},
+                  ],
+              ]
+          }
+
+          def tg_call(method, payload, timeout=10):
+              url = f"https://api.telegram.org/bot{TOKEN}/{method}"
+              req = urllib.request.Request(
+                  url,
+                  data=json.dumps(payload).encode("utf-8"),
+                  headers={"Content-Type": "application/json"},
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=timeout) as r:
+                      return json.loads(r.read().decode("utf-8"))
+              except Exception:
+                  return {}
+
+          def send_msg(text, markup=None):
+              body = {
+                  "chat_id": CHAT_ID,
+                  "text": text,
+                  "parse_mode": "HTML",
+                  "disable_web_page_preview": True,
+                  "reply_markup": markup if markup is not None else KEYBOARD,
+              }
+              tg_call("sendMessage", body)
+
+          def append_queue(action, promo=""):
+              with open(QUEUE_FILE, "a", encoding="utf-8") as f:
+                  f.write(json.dumps({"action": action, "promo_code": promo}) + "\n")
+
+          # 1. Мгновенно отключаем старый вебхук Cloudflare и стираем чужую спам-рекламу из описания бота!
+          tg_call("deleteWebhook", {"drop_pending_updates": False})
+          clean_desc = "Личный бот автоматизации Senkuro (проверка 5 аккаунтов, паки Хардкор, Переплавка, промокоды и фарм)."
+          for lang in ("", "ru", "uk", "en", "be", "kk"):
+              dp = {"description": clean_desc}
+              sp = {"short_description": "Автоматизация Senkuro"}
+              if lang:
+                  dp["language_code"] = lang
+                  sp["language_code"] = lang
+              tg_call("setMyDescription", dp)
+              tg_call("setMyShortDescription", sp)
+
+          # 2. Фиксируем текущий offset
+          offset = 0
+          res = tg_call("getUpdates", {"offset": -1, "timeout": 1})
+          if res.get("ok") and res.get("result"):
+              offset = int(res["result"][-1]["update_id"]) + 1
+          with open(OFFSET_FILE, "w", encoding="utf-8") as f:
+              f.write(str(offset))
+
+          # 3. При сохранении кода (push) сразу через 3 секунды присылаем новую панель с красной кнопкой СТОП!
+          if EVENT_NAME == "push":
+              send_msg(
+                  "✅ <b>Единый комбайн Senkuro v12.0 запущен (Прямая связь — без Cloudflare)!</b>\n\n"
+                  "Старый сбойный вебхук отключён. Можете прямо сейчас нажимать любую кнопку ниже "
+                  "(пока браузер докачивается ~35 сек, ваша задача сразу встанет первой в очередь и пришлёт отчёт):"
+              )
+
+          # 4. Слушаем нажатия кнопок, пока устанавливается браузер Chromium
+          while True:
+              res = tg_call("getUpdates", {"offset": offset, "timeout": 2}, timeout=6)
+              for upd in res.get("result") or []:
+                  uid = int(upd.get("update_id") or 0)
+                  if uid >= offset:
+                      offset = uid + 1
+                      with open(OFFSET_FILE, "w", encoding="utf-8") as f:
+                          f.write(str(offset))
+                  cb = upd.get("callback_query")
+                  if cb:
+                      cb_id = cb.get("id")
+                      data = str(cb.get("data") or "").strip()
+                      if data == "stop_all_farm":
+                          if os.path.exists(QUEUE_FILE):
+                              os.remove(QUEUE_FILE)
+                          tg_call("answerCallbackQuery", {"callback_query_id": cb_id, "text": "🛑 Все задачи остановлены!"})
+                          send_msg("🛑 <b>Очередь и все активные задачи остановлены!</b>\nВыберите нужную задачу кнопкой ниже:")
+                      elif data == "check_farm_status":
+                          tg_call("answerCallbackQuery", {"callback_query_id": cb_id, "text": "Проверяю статус фарма..."})
+                          send_msg(
+                              "⚪ <b>Сейчас 8-часовой фарм манги не запущен.</b>\n\n"
+                              "Нажмите <b>«▶️ Запустить фарм (8 ч)»</b> ниже, чтобы запустить чтение манги на всех 4 аккаунтах!"
+                          )
+                      elif data == "prompt_promo":
+                          tg_call("answerCallbackQuery", {"callback_query_id": cb_id, "text": "Введите промокод в чат 👇"})
+                          send_msg(
+                              "🎟 <b>Отправьте промокод одним словом в этот чат:</b>\n\n"
+                              "Сервер откроет 4 уникальных IP, зайдёт на каждый из 4 аккаунтов, введёт промокод и проверит увеличение баланса!",
+                              markup={"force_reply": True, "selective": True, "input_field_placeholder": "Введите промокод..."},
+                          )
+                      else:
+                          amap = {
+                              "start_farm_8h": ("farm", "▶️ Запускаю 8-часовой фарм манги на 4 аккаунтах!"),
+                              "check_balance": ("balance", "🪙 Проверка баланса монет (4 акка) принята!"),
+                              "roll_packs": ("packs", "🎴 Прокрутка паков «Хардкор» (480 🪙) принята!"),
+                              "run_forge": ("forge", "⚒️ Переплавка + Трейд на основу приняты!"),
+                              "check_senkuro": ("check", "🔄 Проверка карт и осколков (5 аккаунтов) принята!"),
+                              "run_all": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
+                          }
+                          act_c, lbl = amap.get(data, ("check", "🔄 Проверка 5 аккаунтов принята!"))
+                          tg_call("answerCallbackQuery", {"callback_query_id": cb_id, "text": lbl})
+                          append_queue(act_c, "")
+                          send_msg(f"⏳ <b>{lbl}</b>\nДогружаю браузер (~20–30 сек) и сразу пришлю полный отчёт в этот чат!")
+                  msg = upd.get("message")
+                  if msg and msg.get("text"):
+                      txt = str(msg.get("text") or "").strip()
+                      low = txt.lower()
+                      if low in ("/start", "/menu", "/help", "меню"):
+                          send_msg("🤖 <b>Панель управления фермой Senkuro v12.0</b>\n\nВыберите задачу одним нажатием кнопки ниже:")
+                      elif low in ("/stop", "стоп"):
+                          if os.path.exists(QUEUE_FILE):
+                              os.remove(QUEUE_FILE)
+                          send_msg("🛑 <b>Все задачи остановлены!</b>")
+                      elif low == "/status":
+                          send_msg("⚪ <b>Сейчас 8-часовой фарм манги не запущен.</b>")
+                      else:
+                          pcode = txt[7:].strip().upper() if low.startswith("/promo ") else (txt.upper() if not txt.startswith("/") and re.match(r"^[A-Za-z0-9_-]{4,32}$", txt) else "")
+                          if pcode:
+                              append_queue("promo", pcode)
+                              send_msg(f"🎟 Принят промокод <code>{pcode}</code>!\n⏳ Догружаю браузер (~20–30 сек) и сразу проверяю начисление монет на 4 аккаунтах...")
+              time.sleep(0.5)
+          EOF
+          nohup python3 /tmp/early_poller.py >/tmp/early_poller.log 2>&1 &
+          echo $! > /tmp/early_poller.pid
+          sleep 3
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -45,12 +210,12 @@ jobs:
           path: |
             .sessions
             bin
-          key: senkuro-sessions-v11-${{ github.run_id }}
+          key: senkuro-sessions-v12-${{ github.run_id }}
           restore-keys: |
+            senkuro-sessions-v12-
             senkuro-sessions-v11-
             senkuro-sessions-v10-
             senkuro-sessions-v9-
-            senkuro-sessions-v8-
 
       - name: Install Playwright, Chromium & Virtual Display (Xvfb)
         run: |
@@ -67,31 +232,41 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v11.0
+      - name: Run Senkuro Automation Combine v12.0 (Direct Telegram Engine)
         id: run_bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
-          SENKURO_ACTION: ${{ github.event_name == 'push' && 'menu' || (github.event_name == 'schedule' && 'daemon' || (github.event.inputs.action == 'farm' && 'farm_part1' || github.event.inputs.action || 'check')) }}
+          SENKURO_ACTION: ${{ github.event.inputs.action || 'daemon' }}
           SENKURO_PROMO_CODE: ${{ github.event.inputs.promo_code || '' }}
         run: |
+          if [ -f /tmp/early_poller.pid ]; then
+            kill $(cat /tmp/early_poller.pid) 2>/dev/null || true
+            sleep 1
+          fi
           xvfb-run -a --server-args="-screen 0 1280x900x24" python check_senkuro.py --action "${SENKURO_ACTION}" --promo-code "${SENKURO_PROMO_CODE}"
 
-      - name: Save Sessions Artifact for 8-Hour Farm Continuation
-        if: steps.run_bot.outputs.continue_farm == 'true'
+      - name: Save Sessions & State Artifact for Part 2 Continuation
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: senkuro-farm-sessions-${{ github.run_id }}
-          path: .sessions/
+          path: .sessions/sessions/
           retention-days: 1
 
-  continue-farm-second-half:
+  continue-bot-second-half:
     needs: run-senkuro-bot
-    if: needs.run-senkuro-bot.outputs.continue_farm == 'true'
+    if: needs.run-senkuro-bot.outputs.continue_bot == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 280
+    timeout-minutes: 270
 
     steps:
+      - name: Instant Early Poller for Part 2 Handoff
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
+        run: |
+          curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteWebhook" -H "Content-Type: application/json" -d '{"drop_pending_updates":false}' || true
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -101,6 +276,7 @@ jobs:
           python-version: "3.11"
 
       - name: Restore Login Sessions from Part 1
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: senkuro-farm-sessions-${{ github.run_id }}
@@ -112,9 +288,9 @@ jobs:
           path: |
             .sessions
             bin
-          key: senkuro-sessions-v11-part2-${{ github.run_id }}
+          key: senkuro-sessions-v12-part2-${{ github.run_id }}
           restore-keys: |
-            senkuro-sessions-v11-
+            senkuro-sessions-v12-
 
       - name: Install Playwright, Chromium & Virtual Display (Xvfb)
         run: |
@@ -131,9 +307,9 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run 8-Hour Farm Part 2 (Hours 4 to 8 + Final Report)
+      - name: Run Senkuro Automation Combine v12.0 (Part 2 — Hours 4 to 8)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
         run: |
-          xvfb-run -a --server-args="-screen 0 1280x900x24" python check_senkuro.py --action "farm_part2"
+          xvfb-run -a --server-args="-screen 0 1280x900x24" python check_senkuro.py --action "daemon"
