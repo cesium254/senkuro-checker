@@ -1,0 +1,133 @@
+name: Senkuro Full Automation Bot
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Задача (check | menu | promo | balance | packs | forge | farm | farm_status | all)"
+        required: false
+        default: "check"
+      promo_code:
+        description: "Промокод (для режима promo)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: senkuro-bot-${{ github.event.inputs.action || 'push' }}
+  cancel-in-progress: false
+
+jobs:
+  run-senkuro-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 280
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Restore Login Sessions (.sessions) & Opera Proxy
+        uses: actions/cache@v4
+        with:
+          path: |
+            .sessions
+            bin
+          key: senkuro-sessions-v9-${{ github.run_id }}
+          restore-keys: |
+            senkuro-sessions-v9-
+            senkuro-sessions-v8-
+            senkuro-sessions-v7-
+
+      - name: Install Playwright, Chromium & Virtual Display (Xvfb)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb
+          pip install --upgrade pip
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: Download Opera VPN Proxy (for 4 unique IPs)
+        run: |
+          mkdir -p bin .sessions
+          if [ ! -f bin/opera-proxy ]; then
+            curl -L -sS https://github.com/Alexey71/opera-proxy/releases/latest/download/opera-proxy.linux-amd64 -o bin/opera-proxy
+            chmod +x bin/opera-proxy
+          fi
+
+      - name: Run Senkuro Automation Combine v9.0
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
+          SENKURO_ACTION: ${{ github.event_name == 'push' && 'menu' || (github.event.inputs.action == 'farm' && 'farm_part1' || github.event.inputs.action || 'check') }}
+          SENKURO_PROMO_CODE: ${{ github.event.inputs.promo_code || '' }}
+        run: |
+          xvfb-run -a --server-args="-screen 0 1280x900x24" python check_senkuro.py --action "${SENKURO_ACTION}" --promo-code "${SENKURO_PROMO_CODE}"
+
+      - name: Save Sessions Artifact for 8-Hour Farm Continuation
+        if: github.event.inputs.action == 'farm'
+        uses: actions/upload-artifact@v4
+        with:
+          name: senkuro-farm-sessions-${{ github.run_id }}
+          path: .sessions/
+          retention-days: 1
+
+  continue-farm-second-half:
+    needs: run-senkuro-bot
+    if: github.event.inputs.action == 'farm'
+    runs-on: ubuntu-latest
+    timeout-minutes: 280
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Restore Login Sessions from Part 1
+        uses: actions/download-artifact@v4
+        with:
+          name: senkuro-farm-sessions-${{ github.run_id }}
+          path: .sessions/
+
+      - name: Cache Updated Login Sessions (.sessions) & Opera Proxy
+        uses: actions/cache@v4
+        with:
+          path: |
+            .sessions
+            bin
+          key: senkuro-sessions-v9-part2-${{ github.run_id }}
+          restore-keys: |
+            senkuro-sessions-v9-
+
+      - name: Install Playwright, Chromium & Virtual Display (Xvfb)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb
+          pip install --upgrade pip
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: Download Opera VPN Proxy (for 4 unique IPs)
+        run: |
+          mkdir -p bin .sessions
+          if [ ! -f bin/opera-proxy ]; then
+            curl -L -sS https://github.com/Alexey71/opera-proxy/releases/latest/download/opera-proxy.linux-amd64 -o bin/opera-proxy
+            chmod +x bin/opera-proxy
+          fi
+
+      - name: Run 8-Hour Farm Part 2 (Hours 4 to 8 + Final Report)
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
+        run: |
+          xvfb-run -a --server-args="-screen 0 1280x900x24" python check_senkuro.py --action "farm_part2"

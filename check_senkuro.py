@@ -231,6 +231,9 @@ def get_main_inline_keyboard() -> dict:
                 {"text": "🔄 Проверить 5 аккаунтов", "callback_data": "check_senkuro"},
                 {"text": "🚀 Сделать ВСЁ (Паки+Кузня)", "callback_data": "run_all"},
             ],
+            [
+                {"text": "🛑 ОСТАНОВИТЬ ФАРМ / ВСЕ ЗАДАЧИ", "callback_data": "stop_all_farm"},
+            ],
         ]
     }
 
@@ -297,6 +300,24 @@ def publish_live_farm_status(status_dict: dict) -> None:
         urllib.request.urlopen(req, timeout=5)
     except Exception:
         pass
+
+
+FARM_CONTROL_SYNC_TOPIC = "senkuro_cesium254_v8_ctrl_sync"
+
+
+def check_remote_stop_signal(since_ts: int) -> bool:
+    """Проверяет, нажал ли пользователь кнопку 🛑 ОСТАНОВИТЬ ФАРМ в Telegram."""
+    try:
+        url = f"https://ntfy.sh/{FARM_CONTROL_SYNC_TOPIC}/json?poll=1&since={since_ts}"
+        req = urllib.request.Request(url, headers={"User-Agent": "SenkuroBot/9.5"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            lines = resp.read().decode("utf-8", errors="ignore").strip().splitlines()
+        for line in lines:
+            if "STOP_NOW" in line:
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def fetch_latest_farm_status() -> Optional[dict]:
@@ -2192,8 +2213,13 @@ async def run_farm_segment(part_mode: str = "farm_part1") -> None:
                         pass
 
                 now = time.time()
-                if now - last_sync_ts >= 45:
+                if now - last_sync_ts >= 30:
                     last_sync_ts = now
+                    if check_remote_stop_signal(int(start_ts)):
+                        print("[FARM STOP] Получен сигнал остановки из Telegram! Сохраняем сессии и выходим...")
+                        stopped_snap = await enrich_titles(collect_snapshot(False))
+                        publish_live_farm_status(stopped_snap)
+                        break
                     snap = await enrich_titles(collect_snapshot(True))
                     publish_live_farm_status(snap)
 
