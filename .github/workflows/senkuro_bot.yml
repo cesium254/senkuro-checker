@@ -1,0 +1,67 @@
+name: Senkuro Full Automation Bot
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Режим работы (check | promo | packs | forge | trades | all)"
+        required: false
+        default: "check"
+      promo_code:
+        description: "Промокод для активации на 4 аккаунтах (только для режима promo)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: senkuro-automation-${{ github.event.inputs.action || 'check' }}
+  cancel-in-progress: false
+
+jobs:
+  run-senkuro-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache Senkuro Login Sessions (.sessions) & Opera Proxy
+        uses: actions/cache@v4
+        with:
+          path: |
+            .sessions
+            bin
+          key: senkuro-sessions-v7-${{ github.run_id }}
+          restore-keys: |
+            senkuro-sessions-v7-
+
+      - name: Install Playwright & Chromium
+        run: |
+          pip install --upgrade pip
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: Download Opera VPN Proxy (for unique per-account IPs)
+        run: |
+          mkdir -p bin .sessions
+          if [ ! -f bin/opera-proxy ]; then
+            curl -L -sS https://github.com/Alexey71/opera-proxy/releases/latest/download/opera-proxy.linux-amd64 -o bin/opera-proxy
+            chmod +x bin/opera-proxy
+          fi
+
+      - name: Run Senkuro Automation Suite v7.0
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
+          SENKURO_ACTION: ${{ github.event.inputs.action || 'check' }}
+          SENKURO_PROMO_CODE: ${{ github.event.inputs.promo_code || '' }}
+        run: |
+          python check_senkuro.py --action "${SENKURO_ACTION}" --promo-code "${SENKURO_PROMO_CODE}"
