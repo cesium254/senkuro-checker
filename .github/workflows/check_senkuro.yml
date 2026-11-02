@@ -1,8 +1,10 @@
-name: Senkuro Full Automation Combine v12.0
+name: Senkuro Full Automation Combine v13.0
 
 on:
   push:
     branches: [ main, master ]
+    paths-ignore:
+      - 'logs/**'
   schedule:
     - cron: '15 */3 * * *'
   workflow_dispatch:
@@ -69,6 +71,10 @@ jobs:
                       {"text": "🚀 Сделать ВСЁ (Паки+Кузня)", "callback_data": "run_all"},
                   ],
                   [
+                      {"text": "📸 Посмотреть экран", "callback_data": "view_screen"},
+                      {"text": "📜 Полный лог (Файл+GitHub)", "callback_data": "dump_full_log"},
+                  ],
+                  [
                       {"text": "🛑 ОСТАНОВИТЬ ФАРМ / ВСЕ ЗАДАЧИ", "callback_data": "stop_all_farm"},
                   ],
               ]
@@ -124,7 +130,7 @@ jobs:
           # 3. При сохранении кода (push) сразу через 3 секунды присылаем новую панель с красной кнопкой СТОП!
           if EVENT_NAME == "push":
               send_msg(
-                  "✅ <b>Единый комбайн Senkuro v12.0 запущен (Прямая связь — без Cloudflare)!</b>\n\n"
+                  "✅ <b>Единый комбайн Senkuro v13.0 запущен (Прямая связь — без Cloudflare)!</b>\n\n"
                   "Старый сбойный вебхук отключён. Можете прямо сейчас нажимать любую кнопку ниже "
                   "(пока браузер докачивается ~35 сек, ваша задача сразу встанет первой в очередь и пришлёт отчёт):"
               )
@@ -178,7 +184,7 @@ jobs:
                       txt = str(msg.get("text") or "").strip()
                       low = txt.lower()
                       if low in ("/start", "/menu", "/help", "меню"):
-                          send_msg("🤖 <b>Панель управления фермой Senkuro v12.0</b>\n\nВыберите задачу одним нажатием кнопки ниже:")
+                          send_msg("🤖 <b>Панель управления фермой Senkuro v13.0</b>\n\nВыберите задачу одним нажатием кнопки ниже:")
                       elif low in ("/stop", "стоп"):
                           if os.path.exists(QUEUE_FILE):
                               os.remove(QUEUE_FILE)
@@ -232,7 +238,7 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v12.0 (Direct Telegram Engine)
+      - name: Run Senkuro Automation Combine v13.0 (Direct Telegram Engine)
         id: run_bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
@@ -307,7 +313,7 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v12.0 (Part 2 — Hours 4 to 8)
+      - name: Run Senkuro Automation Combine v13.0 (Part 2 — Hours 4 to 8)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
