@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v19.0 (100% TELEGRAM -> CLOUDFLARE -> GITHUB)
+SENKURO FULL AUTOMATION COMBINE v20.0 (100% TELEGRAM -> CLOUDFLARE -> GITHUB)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -360,7 +360,7 @@ def upload_debug_log_to_github_noop(reason: str = "task") -> Optional[str]:
         headers = {
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {GITHUB_PAT_TOKEN}",
-            "User-Agent": "SenkuroBot/19.0",
+            "User-Agent": "SenkuroBot/20.0",
             "X-GitHub-Api-Version": "2022-11-28",
             "Content-Type": "application/json",
         }
@@ -464,7 +464,7 @@ def _stitch_screens_2x2_png(screens: list[tuple[str, bytes]]) -> Optional[bytes]
         import io
         from PIL import Image, ImageDraw
 
-        tile_w, tile_h = 640, 450
+        tile_w, tile_h = 1280, 900
         canvas = Image.new("RGB", (tile_w * 2, tile_h * 2), (18, 18, 22))
         positions = [(0, 0), (tile_w, 0), (0, tile_h), (tile_w, tile_h)]
         draw = ImageDraw.Draw(canvas)
@@ -2815,13 +2815,14 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                         main_by_rank = expand_craftable_cards_by_rank(main_cards_nodes)
                         borrow_units: list[dict] = []
                         borrow_desc_parts: list[str] = []
-                        # Берем с основы только карты рангов F, D, C, B (ниже A!), если они есть и дополняют крафт
+                        # Проверяем с учётом каскадной переплавки (F->D->C->B), какие карты рангов F, D, C, B с основы помогут сделать крафт
+                        carry_up = 0
                         for low_r in ("F", "D", "C", "B"):
                             m_pool = main_by_rank.get(low_r, [])
-                            if not m_pool:
-                                continue
                             farm_cnt = sum(len(st["craftable_by_rank"].get(low_r, [])) for st in state_map.values())
-                            if farm_cnt + len(m_pool) >= 3:
+                            total_this_rank = farm_cnt + len(m_pool) + carry_up
+                            carry_up = total_this_rank // 3
+                            if m_pool and total_this_rank >= 3:
                                 take_m = m_pool[:50 - len(borrow_units)]
                                 if take_m:
                                     borrow_units.extend(take_m)
@@ -2839,7 +2840,7 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                                         "userId": main_uid,
                                         "offer": [],
                                         "request": req_payload,
-                                        "description": [random.choice(TRADE_RANDOM_MESSAGES)],
+                                        "description": [],
                                     }
                                 },
                                 "suggestCardTrade",
@@ -2850,20 +2851,24 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                                     f"🤝 <b>Запрос карт с основы <a href='{MAIN_ACCOUNT_URL}'>{MAIN_ACCOUNT_SLUG}</a> для переплавки!</b>\n\n"
                                     f"Аккаунт <b>{best_rec['acc']['id']}</b> (свободно слотов кузни: {best_rec['available_slots']}/5) "
                                     f"запросил с вашей основы карты B-ранга и ниже ({b_summary}), чтобы переплавить их на ферме.\n"
-                                    "👉 <b>Пожалуйста, подтвердите входящий обмен на сайте (ожидаю до 2.5 минут)...</b>",
+                                    "👉 <b>Пожалуйста, подтвердите входящий обмен на сайте (проверяю каждые 15 сек., жду до 2.5 минут)...</b>",
                                     add_keyboard=False,
                                 )
                                 prev_total_cards = sum(int(n.get("quantity") or 1) for n in best_rec["cards_nodes"])
-                                for _ in range(25):
+                                for _ in range(10):
                                     if FARM_STOP_FLAG:
                                         break
-                                    await asyncio.sleep(6.0)
+                                    await asyncio.sleep(15.0)
                                     cur_nodes = await fetch_all_user_cards_gql(best_rec["page"], best_rec["user_id"], modifier_val=0)
                                     cur_total = sum(int(n.get("quantity") or 1) for n in cur_nodes)
                                     if cur_total > prev_total_cards:
                                         best_rec["logs"].append(f"📥 Получены карты с основы {MAIN_ACCOUNT_SLUG} ({b_summary}) для крафта")
-                                        send_tg_message("✅ <b>Обмен с основы подтверждён!</b> Продолжаю переплавку...", add_keyboard=False)
+                                        send_tg_message("✅ <b>Обмен с основы подтверждён!</b> Сразу приступаю к переплавке...", add_keyboard=False)
                                         break
+                            else:
+                                b_errs = b_res.get("errors") or []
+                                if b_errs:
+                                    best_rec["logs"].append(f"⚠️ Не удалось запросить карты с основы: {b_errs[0].get('message')}")
 
                 # 3. Межаккаунтный обмен и переплавка между 4 фарм-аккаунтами (с человеческими паузами!)
                 for _ in range(15):
@@ -2922,7 +2927,7 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                                     "userId": rec_uid,
                                     "offer": offer_payload,
                                     "request": [],
-                                    "description": [random.choice(TRADE_RANDOM_MESSAGES)],
+                                    "description": [],
                                 }
                             },
                             "suggestCardTrade",
@@ -2936,6 +2941,10 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                             await asyncio.sleep(random.uniform(2.5, 4.0))
                             acc_logs = await accept_whitelisted_incoming_trades(receiver["page"], rec_id, rec_uid)
                             receiver["logs"].extend(acc_logs)
+                        else:
+                            t_errs = tr_res.get("errors") or []
+                            if t_errs:
+                                donor["logs"].append(f"⚠️ Ошибка отправки трейда на {rec_id}: {t_errs[0].get('message')}")
 
                     if not transferred_any:
                         break
@@ -3016,7 +3025,7 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                                         "userId": main_uid,
                                         "offer": chunk,
                                         "request": [],
-                                        "description": [random.choice(TRADE_RANDOM_MESSAGES)],
+                                        "description": [],
                                     }
                                 },
                                 "suggestCardTrade",
@@ -3283,12 +3292,19 @@ FULL_FARM_USERSCRIPT_V9 = r"""
         if (path.startsWith('/users/') && path.includes('/bookmarks')) {
             try { localStorage.setItem('senkuro_my_bookmarks_url', window.location.href); } catch (e) {}
             const step = parseInt(sessionStorage.getItem('senkuro_bm_scroll_step') || '0', 10);
-            if (step < 4) {
+            const prevH = parseInt(sessionStorage.getItem('senkuro_bm_prev_h') || '0', 10);
+            const curH = document.documentElement.scrollHeight || 0;
+            const sameHCount = parseInt(sessionStorage.getItem('senkuro_bm_same_h') || '0', 10);
+            if (step < 4 || (step < 15 && (curH > prevH + 50 || sameHCount < 1))) {
                 sessionStorage.setItem('senkuro_bm_scroll_step', String(step + 1));
-                window.scrollTo({ top: Math.max(0, document.documentElement.scrollHeight - 450), behavior: 'smooth' });
+                sessionStorage.setItem('senkuro_bm_prev_h', String(curH));
+                sessionStorage.setItem('senkuro_bm_same_h', curH <= prevH + 50 ? String(sameHCount + 1) : '0');
+                window.scrollTo({ top: Math.max(0, curH - 350), behavior: 'smooth' });
                 return;
             }
             sessionStorage.setItem('senkuro_bm_scroll_step', '0');
+            sessionStorage.setItem('senkuro_bm_prev_h', '0');
+            sessionStorage.setItem('senkuro_bm_same_h', '0');
 
             const nowTs = Date.now();
             let cdMap = {};
@@ -3922,7 +3938,7 @@ async def run_check_all_5_accounts() -> None:
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v19.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v20.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -3960,7 +3976,7 @@ def fetch_tg_updates_sync(offset_val: int, timeout_sec: int = 4) -> list[dict]:
         time.sleep(2)
         return []
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={offset_val}&timeout={timeout_sec}"
-    req = urllib.request.Request(url, headers={"User-Agent": "SenkuroDirectBot/19.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "SenkuroDirectBot/20.0"})
     try:
         with urllib.request.urlopen(req, timeout=timeout_sec + 6) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -4172,7 +4188,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     FARM_STOP_FLAG = False
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v19.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v20.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -4256,7 +4272,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            send_full_debug_log_to_user("Полный лог работы комбайна v19.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v20.0")
             return
 
         if data == "check_farm_status":
@@ -4305,7 +4321,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if lower in ("/start", "/menu", "/help", "меню"):
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v19.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v20.0</b>\n\n"
                 "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
                 "или просто напишите промокод одним словом в чат:",
                 add_keyboard=True,
@@ -4318,7 +4334,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
-            send_full_debug_log_to_user("Полный лог работы комбайна v19.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v20.0")
             return
 
         if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
@@ -4417,7 +4433,7 @@ async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: fl
     log_debug(f"[DAEMON READY] Прямой Telegram Long Polling запущен (offset={offset}) — сервер 100% готов!")
     if os.environ.get("GH_EVENT_NAME") == "push":
         send_tg_message(
-            "🟢 <b>Сервер полностью запущен и готов к работе (v19.0)!</b>\n\n"
+            "🟢 <b>Сервер полностью запущен и готов к работе (v20.0)!</b>\n\n"
             "Браузер Google Chrome и виртуальный экран готовы — теперь любая кнопка сработает сразу 👇:",
             add_keyboard=True,
         )
@@ -4466,7 +4482,7 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v19.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v20.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",

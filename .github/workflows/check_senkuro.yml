@@ -1,4 +1,4 @@
-name: Senkuro Full Automation Combine v19.0
+name: Senkuro Full Automation Combine v20.0
 
 on:
   push:
@@ -186,7 +186,7 @@ jobs:
                           "🚀 сделать всё (паки+кузня)": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                       }
                       if low in ("/start", "/menu", "/help", "меню"):
-                          send_msg("🤖 <b>Панель управления фермой Senkuro v19.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
+                          send_msg("🤖 <b>Панель управления фермой Senkuro v20.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
                       elif low in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
                           if os.path.exists(QUEUE_FILE):
                               os.remove(QUEUE_FILE)
@@ -247,7 +247,7 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v19.0 (Direct Telegram Engine)
+      - name: Run Senkuro Automation Combine v20.0 (Direct Telegram Engine)
         id: run_bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
@@ -324,7 +324,7 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v19.0 (Part 2 — Hours 4 to 8)
+      - name: Run Senkuro Automation Combine v20.0 (Part 2 — Hours 4 to 8)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
