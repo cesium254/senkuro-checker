@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v16.0 (100% TELEGRAM -> CLOUDFLARE -> GITHUB)
+SENKURO FULL AUTOMATION COMBINE v17.0 (100% TELEGRAM -> CLOUDFLARE -> GITHUB)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -252,7 +252,7 @@ def get_collapsible_reply_keyboard() -> dict:
     return {
         "keyboard": rows,
         "resize_keyboard": True,
-        "is_persistent": True,
+        "is_persistent": False,
         "input_field_placeholder": "Промокод или меню 🎛 👇",
     }
 
@@ -353,7 +353,7 @@ def upload_debug_log_to_github_noop(reason: str = "task") -> Optional[str]:
         headers = {
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {GITHUB_PAT_TOKEN}",
-            "User-Agent": "SenkuroBot/16.0",
+            "User-Agent": "SenkuroBot/17.0",
             "X-GitHub-Api-Version": "2022-11-28",
             "Content-Type": "application/json",
         }
@@ -433,12 +433,54 @@ async def capture_page_png_fast(pg: Page) -> Optional[bytes]:
         return None
 
 
+def is_local_port_open(port: int) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", int(port)), timeout=0.25):
+            return True
+    except Exception:
+        return False
+
+
+is_port_open = is_local_port_open
+
+
 async def send_live_screen_snapshot(custom_caption: str = "") -> None:
     """
-    Делает моментальный скриншот открытых вкладок браузера через CDP за 0.05 сек
-    и отправляет фотографию прямо в Telegram без блокировки потока!
+    Делает моментальный скриншот открытых вкладок браузера (включая нативные окна входа Chrome на портах 26411..26414
+    и вкладки Playwright) через CDP за 0.05 сек и отправляет фотографию прямо в Telegram!
     """
+    import base64
     sent_any = False
+    # 1. Проверяем открытые нативные окна Chrome (порты 26411..26414)
+    for acc_item in FARM_ACCOUNTS:
+        c_port = 26410 + int(acc_item["idx"])
+        if is_local_port_open(c_port):
+            try:
+                def _grab_nat(p_num: int):
+                    with urllib.request.urlopen(f"http://127.0.0.1:{p_num}/json/list", timeout=1.0) as r:
+                        t_list = json.loads(r.read().decode("utf-8", errors="ignore"))
+                    p_tabs = [t for t in t_list if t.get("type") == "page" and t.get("webSocketDebuggerUrl")]
+                    if not p_tabs:
+                        return None, "", ""
+                    ws_u = p_tabs[0]["webSocketDebuggerUrl"]
+                    sc = _cdp_ws_call_sync(ws_u, "Page.captureScreenshot", {"format": "png"}, timeout_sec=3.5)
+                    if sc.get("data"):
+                        return base64.b64decode(sc["data"]), str(p_tabs[0].get("url") or ""), str(p_tabs[0].get("title") or "")
+                    return None, "", ""
+                nat_png, nat_url, nat_title = await asyncio.to_thread(_grab_nat, c_port)
+                if nat_png:
+                    cap = (
+                        custom_caption
+                        or f"🖥 <b>Экран нативного Chrome: {acc_item['id']}</b>\n"
+                        f"🌐 URL: <code>{nat_url[:110]}</code>\n"
+                        f"📄 Статус: <code>{nat_title[:140]}</code>"
+                    )
+                    await asyncio.to_thread(send_tg_photo_bytes, nat_png, cap, True)
+                    sent_any = True
+            except Exception as e:
+                log_debug(f"[NAT SNAPSHOT WARN] {acc_item['id']}: {e}")
+
+    # 2. Проверяем открытые вкладки Playwright
     for label, pg in list(ACTIVE_BROWSER_PAGES.items()):
         try:
             if pg.is_closed():
@@ -446,6 +488,7 @@ async def send_live_screen_snapshot(custom_caption: str = "") -> None:
                 continue
             png_data = await capture_page_png_fast(pg)
             if not png_data:
+                ACTIVE_BROWSER_PAGES.pop(label, None)
                 continue
             try:
                 t_str = await pg.title()
@@ -1547,10 +1590,17 @@ def login_via_native_chrome_sync(acc: dict, proxy_url: Optional[str]) -> tuple[O
 
     aid = acc["id"]
     cdp_port = 26410 + int(acc.get("idx", 1))
-    prof_dir = Path(tempfile.gettempdir()) / f"senkuro_nat_prof_{aid}_{int(time.time())}"
+    prof_dir = SESSIONS_DIR / f"chrome_profile_{aid}"
     ext_dir = Path(tempfile.gettempdir()) / f"senkuro_nat_ext_{aid}"
     prof_dir.mkdir(parents=True, exist_ok=True)
     ext_dir.mkdir(parents=True, exist_ok=True)
+    for lock_name in ("SingletonLock", "SingletonCookie", "SingletonSocket", "lockfile"):
+        lp = prof_dir / lock_name
+        if lp.exists() or lp.is_symlink():
+            try:
+                lp.unlink()
+            except Exception:
+                pass
 
     manifest = {
         "manifest_version": 3,
@@ -1944,7 +1994,6 @@ def login_via_native_chrome_sync(acc: dict, proxy_url: Optional[str]) -> tuple[O
                 proc.kill()
             except Exception:
                 pass
-        shutil.rmtree(prof_dir, ignore_errors=True)
 
     return access_token_found, cdp_cookies, err_png, last_diag_str
 
@@ -1995,7 +2044,7 @@ async def ensure_logged_in(context: BrowserContext, acc: dict) -> tuple[Page, Op
         return page, None
 
     proxy_port = 25340 + int(acc.get("idx", 1))
-    proxy_url = f"http://127.0.0.1:{proxy_port}" if is_port_open(proxy_port) else None
+    proxy_url = f"http://127.0.0.1:{proxy_port}" if is_local_port_open(proxy_port) else None
     log_debug(f"[AUTH LOGIN] {acc['id']}: выполняю нативный вход без Playwright ({acc['login']})...")
 
     token_val, native_cookies, err_png, sso_diag = await asyncio.to_thread(login_via_native_chrome_sync, acc, proxy_url)
@@ -3695,7 +3744,7 @@ async def run_check_all_5_accounts() -> None:
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v16.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v17.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -3733,7 +3782,7 @@ def fetch_tg_updates_sync(offset_val: int, timeout_sec: int = 4) -> list[dict]:
         time.sleep(2)
         return []
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={offset_val}&timeout={timeout_sec}"
-    req = urllib.request.Request(url, headers={"User-Agent": "SenkuroDirectBot/16.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "SenkuroDirectBot/17.0"})
     try:
         with urllib.request.urlopen(req, timeout=timeout_sec + 6) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -3937,7 +3986,11 @@ async def run_background_8h_farm(base_elapsed_minutes: int = 0, segment_hours: f
         CURRENT_FARM_STATUS = {"active": False, "accounts": []}
         if FARM_RESUME_FILE.exists():
             FARM_RESUME_FILE.unlink(missing_ok=True)
+    except Exception as e:
+        log_debug(f"[FARM FATAL ERROR] {e}")
+        send_tg_message(f"⚠️ Ошибка при запуске фарма: <code>{e}</code>", add_keyboard=True)
     finally:
+        ACTIVE_BROWSER_PAGES.clear()
         proxy_mgr.stop_all()
 
 
@@ -3945,7 +3998,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     global ACTIVE_FARM_TASK, FARM_STOP_FLAG
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v16.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v17.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -4027,7 +4080,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            send_full_debug_log_to_user("Полный лог работы комбайна v16.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v17.0")
             return
 
         if data == "check_farm_status":
@@ -4076,7 +4129,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if lower in ("/start", "/menu", "/help", "меню"):
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v16.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v17.0</b>\n\n"
                 "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
                 "или просто напишите промокод одним словом в чат:",
                 add_keyboard=True,
@@ -4089,7 +4142,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
-            send_full_debug_log_to_user("Полный лог работы комбайна v16.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v17.0")
             return
 
         if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
@@ -4202,16 +4255,17 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
         except asyncio.CancelledError:
             print(f"🛑 [EXECUTOR] Задача {act_code} отменена пользователем.")
         except Exception as e:
-            print(f"⚠️ [EXECUTOR ERROR] {act_code}: {e}")
+            log_debug(f"[EXECUTOR ERROR] {act_code}: {e}")
             send_tg_message(f"⚠️ Ошибка при выполнении задачи <code>{act_code}</code>: {e}", add_keyboard=True)
         finally:
+            ACTIVE_BROWSER_PAGES.clear()
             ACTIVE_JOB_TASK = None
             task_queue.task_done()
 
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v16.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v17.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",

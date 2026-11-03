@@ -1,4 +1,4 @@
-name: Senkuro Full Automation Combine v16.0
+name: Senkuro Full Automation Combine v17.0
 
 on:
   push:
@@ -52,7 +52,7 @@ jobs:
           OFFSET_FILE = "/tmp/tg_offset.txt"
           QUEUE_FILE = "/tmp/senkuro_early_queue.jsonl"
 
-          # Единая постоянная нижняя клавиатура (is_persistent=True не даёт ей пропадать, а значок [v] / 🎛 сворачивает её в любой момент!)
+          # is_persistent=False возвращает треугольную кнопку сворачивания меню [v] / 🎛 справа в строке ввода!
           REPLY_KEYBOARD = {
               "keyboard": [
                   [{"text": "▶️ Фарм (8 ч)"}, {"text": "📊 Статус фарма"}],
@@ -62,7 +62,7 @@ jobs:
                   [{"text": "📸 Экран"}, {"text": "📜 Лог"}, {"text": "🛑 СТОП"}],
               ],
               "resize_keyboard": True,
-              "is_persistent": True,
+              "is_persistent": False,
               "input_field_placeholder": "Промокод или меню 🎛 👇",
           }
 
@@ -113,12 +113,12 @@ jobs:
           with open(OFFSET_FILE, "w", encoding="utf-8") as f:
               f.write(str(offset))
 
-          # 3. При сохранении кода (push) сразу через 3 секунды присылаем компактную нижнюю панель v16.0!
+          # 3. При сохранении кода (push) сразу через 3 секунды присылаем компактную нижнюю панель v17.0!
           if EVENT_NAME == "push":
               send_msg(
-                  "✅ <b>Единый комбайн Senkuro v16.0 запущен!</b>\n\n"
-                  "• Нижнее меню 🎛 закреплено (больше никогда не пропадает и не сбивается старыми верхними кнопками).\n"
-                  "• Вход в аккаунты вынесен в чистый Google Chrome + X11 (xdotool) с обходом закрытого Shadow DOM Cloudflare Turnstile.\n\n"
+                  "✅ <b>Единый комбайн Senkuro v17.0 запущен!</b>\n\n"
+                  "• Возвращена кнопка сворачивания меню [v] / 🎛 в строке ввода.\n"
+                  "• Исправлен запуск изолированных профилей Chrome с индивидуальными IP.\n\n"
                   "Нажимайте любую кнопку внизу 👇:"
               )
 
@@ -183,7 +183,7 @@ jobs:
                           "🚀 сделать всё (паки+кузня)": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                       }
                       if low in ("/start", "/menu", "/help", "меню"):
-                          send_msg("🤖 <b>Панель управления фермой Senkuro v16.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
+                          send_msg("🤖 <b>Панель управления фермой Senkuro v17.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
                       elif low in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
                           if os.path.exists(QUEUE_FILE):
                               os.remove(QUEUE_FILE)
@@ -223,10 +223,10 @@ jobs:
           path: |
             .sessions
             bin
-          key: senkuro-sessions-v16-${{ github.run_id }}
+          key: senkuro-sessions-v17-${{ github.run_id }}
           restore-keys: |
+            senkuro-sessions-v17-
             senkuro-sessions-v16-
-            senkuro-sessions-v15-
 
       - name: Install Playwright, Chromium, Xvfb, xdotool & Openbox
         run: |
@@ -243,7 +243,7 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v16.0 (Direct Telegram Engine)
+      - name: Run Senkuro Automation Combine v17.0 (Direct Telegram Engine)
         id: run_bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
@@ -299,9 +299,9 @@ jobs:
           path: |
             .sessions
             bin
-          key: senkuro-sessions-v16-part2-${{ github.run_id }}
+          key: senkuro-sessions-v17-part2-${{ github.run_id }}
           restore-keys: |
-            senkuro-sessions-v16-
+            senkuro-sessions-v17-
 
       - name: Install Playwright, Chromium, Xvfb, xdotool & Openbox
         run: |
@@ -318,7 +318,7 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v16.0 (Part 2 — Hours 4 to 8)
+      - name: Run Senkuro Automation Combine v17.0 (Part 2 — Hours 4 to 8)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
