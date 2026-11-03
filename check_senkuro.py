@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v15.0 (100% TELEGRAM -> CLOUDFLARE -> GITHUB)
+SENKURO FULL AUTOMATION COMBINE v16.0 (100% TELEGRAM -> CLOUDFLARE -> GITHUB)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -233,48 +233,11 @@ OPERA_244_CANDIDATE_POOL = [
 # 2. ЕДИНАЯ БАЗОВАЯ ПАНЕЛЬ КНОПОК TELEGRAM (БЕЗ ПОДПУНКТОВ, 1 КНОПКА = 1 ЗАДАЧА)
 # ==============================================================================
 
-def get_main_inline_keyboard() -> dict:
-    """
-    Базовая панель кнопок (в режиме DEBUG_MODE добавляет ряд «📸 Посмотреть экран» и «📜 Полный лог»).
-    """
-    rows = [
-        [
-            {"text": "▶️ Запустить фарм (8 ч)", "callback_data": "start_farm_8h"},
-            {"text": "📊 Проверить статус фарма", "callback_data": "check_farm_status"},
-        ],
-        [
-            {"text": "🎟 Ввести промокод", "callback_data": "prompt_promo"},
-            {"text": "🪙 Баланс монет (4 акка)", "callback_data": "check_balance"},
-        ],
-        [
-            {"text": "🎴 Крутить паки Хардкор", "callback_data": "roll_packs"},
-            {"text": "⚒️ Переплавка + Трейд", "callback_data": "run_forge"},
-        ],
-        [
-            {"text": "🔄 Проверить 5 аккаунтов", "callback_data": "check_senkuro"},
-            {"text": "🚀 Сделать ВСЁ (Паки+Кузня)", "callback_data": "run_all"},
-        ],
-    ]
-    if DEBUG_MODE:
-        rows.append(
-            [
-                {"text": "📸 Посмотреть экран", "callback_data": "view_screen"},
-                {"text": "📜 Полный лог (Файл+GitHub)", "callback_data": "dump_full_log"},
-            ]
-        )
-    rows.append(
-        [
-            {"text": "🛑 ОСТАНОВИТЬ ФАРМ / ВСЕ ЗАДАЧИ", "callback_data": "stop_all_farm"},
-        ]
-    )
-    return {"inline_keyboard": rows}
-
-
 def get_collapsible_reply_keyboard() -> dict:
     """
-    Компактная сворачиваемая нижняя клавиатура Telegram (значок 🎛 справа в поле ввода
-    позволяет свободно сворачивать и разворачивать панель, а короткие подписи полностью
-    помещаются на экране любого телефона без обрезки!).
+    Единая компактная сворачиваемая нижняя клавиатура Telegram (is_persistent=True гарантирует,
+    что меню никогда само не пропадает из строки ввода, а кнопка [v] / 🎛 справа в строке ввода
+    позволяет в любой момент свернуть и развернуть плитки!).
     """
     rows = [
         [{"text": "▶️ Фарм (8 ч)"}, {"text": "📊 Статус фарма"}],
@@ -289,9 +252,14 @@ def get_collapsible_reply_keyboard() -> dict:
     return {
         "keyboard": rows,
         "resize_keyboard": True,
-        "is_persistent": False,
+        "is_persistent": True,
         "input_field_placeholder": "Промокод или меню 🎛 👇",
     }
+
+
+def get_main_inline_keyboard() -> dict:
+    # Полностью отключено старое верхнее inline-меню, чтобы оно никогда не дублировалось и не сбивало нижнюю панель!
+    return get_collapsible_reply_keyboard()
 
 
 def tg_request(method: str, payload: dict) -> dict:
@@ -315,21 +283,15 @@ def tg_request(method: str, payload: dict) -> dict:
         return {"ok": False, "error": str(e)}
 
 
-_REPLY_KB_INITIALIZED: bool = False
-
-
 def send_tg_message(text: str, add_keyboard: bool = True, force_reply_kb: bool = False) -> dict:
-    global _REPLY_KB_INITIALIZED
     payload: dict[str, Any] = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": text,
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }
-    # Прикрепляем только нижнюю сворачиваемую клавиатуру (без дублирования гигантских верхних inline-кнопок!)
-    if force_reply_kb or (add_keyboard and not _REPLY_KB_INITIALIZED):
+    if add_keyboard or force_reply_kb:
         payload["reply_markup"] = get_collapsible_reply_keyboard()
-        _REPLY_KB_INITIALIZED = True
     return tg_request("sendMessage", payload)
 
 
@@ -367,7 +329,7 @@ def send_tg_photo_bytes(png_bytes: bytes, caption: str = "", add_keyboard: bool 
     fields = {"chat_id": str(TELEGRAM_CHAT_ID), "parse_mode": "HTML"}
     if caption:
         fields["caption"] = caption[:1000]
-    if add_keyboard and not _REPLY_KB_INITIALIZED:
+    if add_keyboard:
         fields["reply_markup"] = json.dumps(get_collapsible_reply_keyboard(), ensure_ascii=False)
     return send_tg_multipart("sendPhoto", "photo", "screen.png", png_bytes, "image/png", fields)
 
@@ -391,7 +353,7 @@ def upload_debug_log_to_github_noop(reason: str = "task") -> Optional[str]:
         headers = {
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {GITHUB_PAT_TOKEN}",
-            "User-Agent": "SenkuroBot/15.0",
+            "User-Agent": "SenkuroBot/16.0",
             "X-GitHub-Api-Version": "2022-11-28",
             "Content-Type": "application/json",
         }
@@ -1380,9 +1342,8 @@ def get_session_file(acc_id: str) -> Path:
 
 async def create_account_context(playwright_browser, acc: dict, proxy_url: Optional[str]) -> BrowserContext:
     sess_file = get_session_file(acc["id"])
-    # ВАЖНО: НЕ подменяем user_agent на Windows внутри Linux и НЕ блокируем service_workers!
-    # На сервере Kaggle использовался родной User-Agent Google Chrome для Linux — именно из-за несовпадения
-    # Windows User-Agent и navigator.platform=="Linux x86_64" капча на sso.senkuro.org выдавала ошибку!
+    # ВАЖНО: Никаких add_init_script с Object.defineProperty(navigator, "webdriver")!
+    # Флаг --disable-blink-features=AutomationControlled уже делает navigator.webdriver === false нативно в C++ движке Chrome.
     ctx_kwargs: dict[str, Any] = {
         "viewport": {"width": 1280, "height": 900},
         "locale": "ru-RU",
@@ -1396,12 +1357,6 @@ async def create_account_context(playwright_browser, acc: dict, proxy_url: Optio
         except Exception as e:
             log_debug(f"[SESSION WARN] {acc['id']}: {e}")
     ctx = await playwright_browser.new_context(**ctx_kwargs)
-    await ctx.add_init_script(
-        """
-        Object.defineProperty(navigator, webdriver, {get: () => false});
-        if (!window.chrome) { window.chrome = { runtime: {} }; }
-        """
-    )
     return ctx
 
 
@@ -1459,6 +1414,541 @@ async def check_is_authenticated_on_senkuro(page: Page, acc_slug: str, intercept
     return None
 
 
+def _cdp_ws_call_sync(ws_url: str, method: str, params: Optional[dict] = None, timeout_sec: float = 4.0) -> dict:
+    """
+    Выполняет одиночный CDP-запрос по WebSocket (используется ТОЛЬКО после завершения входа
+    для чтения кук или финального скриншота, чтобы во время прохождения Turnstile на sso.senkuro.org
+    к браузеру НЕ был подключен ни один отладчик CDP!).
+    """
+    import base64
+    import struct
+    from urllib.parse import urlparse
+
+    u = urlparse(ws_url)
+    host = u.hostname or "127.0.0.1"
+    port = u.port or 80
+    path = u.path
+    try:
+        with socket.create_connection((host, port), timeout=timeout_sec) as s:
+            s.settimeout(timeout_sec)
+            key = base64.b64encode(os.urandom(16)).decode("ascii")
+            req = (
+                f"GET {path} HTTP/1.1\r\n"
+                f"Host: {host}:{port}\r\n"
+                f"Upgrade: websocket\r\n"
+                f"Connection: Upgrade\r\n"
+                f"Sec-WebSocket-Key: {key}\r\n"
+                f"Sec-WebSocket-Version: 13\r\n\r\n"
+            )
+            s.sendall(req.encode("ascii"))
+            resp = b""
+            while b"\r\n\r\n" not in resp:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                resp += chunk
+            if b"101" not in resp.split(b"\r\n", 1)[0]:
+                return {}
+
+            cmd_id = 777
+            payload = json.dumps({"id": cmd_id, "method": method, "params": params or {}}, ensure_ascii=False).encode("utf-8")
+            length = len(payload)
+            mask_key = os.urandom(4)
+            header = bytearray([0x81])
+            if length < 126:
+                header.append(0x80 | length)
+            elif length < 65536:
+                header.append(0x80 | 126)
+                header.extend(struct.pack("!H", length))
+            else:
+                header.append(0x80 | 127)
+                header.extend(struct.pack("!Q", length))
+            header.extend(mask_key)
+            masked = bytearray(payload[i] ^ mask_key[i % 4] for i in range(length))
+            s.sendall(header + masked)
+
+            buf = bytearray(resp.split(b"\r\n\r\n", 1)[1])
+            deadline = time.time() + timeout_sec
+            while time.time() < deadline:
+                while len(buf) < 2:
+                    chunk = s.recv(65536)
+                    if not chunk:
+                        return {}
+                    buf.extend(chunk)
+                b1 = buf[1]
+                plen = b1 & 0x7F
+                hlen = 2
+                if plen == 126:
+                    hlen = 4
+                    while len(buf) < hlen:
+                        buf.extend(s.recv(65536))
+                    plen = struct.unpack("!H", buf[2:4])[0]
+                elif plen == 127:
+                    hlen = 10
+                    while len(buf) < hlen:
+                        buf.extend(s.recv(65536))
+                    plen = struct.unpack("!Q", buf[2:10])[0]
+                if b1 & 0x80:
+                    hlen += 4
+                while len(buf) < hlen + plen:
+                    chunk = s.recv(65536)
+                    if not chunk:
+                        break
+                    buf.extend(chunk)
+                frame_data = bytes(buf[hlen : hlen + plen])
+                del buf[: hlen + plen]
+                try:
+                    msg_obj = json.loads(frame_data.decode("utf-8", errors="ignore"))
+                    if msg_obj.get("id") == cmd_id:
+                        return msg_obj.get("result") or {}
+                except Exception:
+                    pass
+    except Exception as e:
+        log_debug(f"[CDP WS WARN] {method}: {e}")
+    return {}
+
+
+def _run_xdotool(args_list: list[str]) -> None:
+    if not shutil.which("xdotool"):
+        return
+    try:
+        subprocess.run(["xdotool"] + args_list, timeout=3.0, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
+def login_via_native_chrome_sync(acc: dict, proxy_url: Optional[str]) -> tuple[Optional[str], list[dict], Optional[bytes], str]:
+    """
+    Запускает ЧИСТЫЙ нативный Google Chrome через subprocess.Popen (БЕЗ Playwright и БЕЗ подключения CDP-отладчика
+    во время нахождения на sso.senkuro.org!), точно как в рабочем ноутбуке Kaggle v6.5!
+    - Расширение работает ТОЛЬКО на senkuro.com и sso.senkuro.org (all_frames: false), поэтому iframe
+      Cloudflare Turnstile (challenges.cloudflare.com) остаётся на 100% девственно чистым!
+    - Перехватывает закрытый Shadow DOM (attachShadow) и turnstile.render на sso.senkuro.org, определяя
+      точные экранные координаты чекбокса Turnstile и кнопки «Войти».
+    - Кликает по полям, чекбоксу Turnstile (если он интерактивный) и кнопке «Войти» настоящей системной
+      мышью X11 (xdotool) на виртуальном экране Xvfb!
+    Возвращает: (access_token, cdp_cookies, err_screenshot_png, diag_summary)
+    """
+    chrome_bin = None
+    for cand in (
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/google-chrome",
+        shutil.which("google-chrome-stable"),
+        shutil.which("google-chrome"),
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+        shutil.which("chromium"),
+    ):
+        if cand and os.path.exists(cand):
+            chrome_bin = cand
+            break
+    if not chrome_bin:
+        return None, [], None, "Chrome binary not found"
+
+    aid = acc["id"]
+    cdp_port = 26410 + int(acc.get("idx", 1))
+    prof_dir = Path(tempfile.gettempdir()) / f"senkuro_nat_prof_{aid}_{int(time.time())}"
+    ext_dir = Path(tempfile.gettempdir()) / f"senkuro_nat_ext_{aid}"
+    prof_dir.mkdir(parents=True, exist_ok=True)
+    ext_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest = {
+        "manifest_version": 3,
+        "name": "Senkuro Native Auth Bridge",
+        "version": "16.0.0",
+        "content_scripts": [
+            {
+                "matches": [
+                    "*://senkuro.com/*",
+                    "*://*.senkuro.com/*",
+                    "*://sso.senkuro.org/*",
+                    "*://sso.senkuro.net/*",
+                ],
+                "js": ["sso_bridge.js"],
+                "run_at": "document_start",
+                "all_frames": False,
+                "world": "MAIN",
+            }
+        ],
+    }
+    (ext_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    sso_bridge_js = f"""
+    (function() {{
+        const LOGIN_STR = {json.dumps(acc["login"])};
+        const PASS_STR = {json.dumps(acc["password"])};
+        const SLUG_STR = {json.dumps(acc["id"])};
+
+        // На sso.senkuro.org (только в главном окне, НЕ в challenges.cloudflare.com!) запоминаем закрытый Shadow DOM Turnstile
+        window.__tsHosts = [];
+        window.__tsToken = '';
+        window.__tsErr = '';
+        window.__tsRenderEl = null;
+
+        if (location.hostname.includes('sso.senkuro.')) {{
+            try {{
+                const origAttach = Element.prototype.attachShadow;
+                Element.prototype.attachShadow = function(init) {{
+                    const sr = origAttach.call(this, init);
+                    try {{ window.__tsHosts.push({{ host: this, shadow: sr }}); }} catch (e) {{}}
+                    return sr;
+                }};
+            }} catch (e) {{}}
+
+            let _tsObj = window.turnstile;
+            const wrapTurnstile = (ts) => {{
+                if (!ts || ts.__senkuroWrapped) return ts;
+                ts.__senkuroWrapped = true;
+                const origRender = ts.render;
+                if (typeof origRender === 'function') {{
+                    ts.render = function(container, params) {{
+                        try {{
+                            window.__tsRenderEl = typeof container === 'string' ? document.querySelector(container) : container;
+                            if (params && typeof params === 'object') {{
+                                const origCb = params.callback;
+                                params.callback = function(token) {{
+                                    window.__tsToken = String(token || '');
+                                    if (typeof origCb === 'function') return origCb.apply(this, arguments);
+                                }};
+                                const origErr = params['error-callback'];
+                                params['error-callback'] = function(errCode) {{
+                                    window.__tsErr = String(errCode || 'err');
+                                    if (typeof origErr === 'function') return origErr.apply(this, arguments);
+                                }};
+                            }}
+                        }} catch (e) {{}}
+                        return origRender.apply(this, arguments);
+                    }};
+                }}
+                return ts;
+            }};
+            try {{
+                Object.defineProperty(window, 'turnstile', {{
+                    configurable: true,
+                    enumerable: true,
+                    get: function() {{ return _tsObj; }},
+                    set: function(v) {{ _tsObj = wrapTurnstile(v); }}
+                }});
+            }} catch (e) {{}}
+        }}
+
+        function getCookie(name) {{
+            const m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+            return m ? decodeURIComponent(m[1]) : '';
+        }}
+
+        function setNativeVal(el, val) {{
+            if (!el) return;
+            el.focus();
+            const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+            const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+            if (desc && desc.set) desc.set.call(el, val);
+            else el.value = val;
+            el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+            el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+        }}
+
+        function toX11(r, ox, oy) {{
+            const cTop = Math.max(0, (window.outerHeight || 900) - (window.innerHeight || 810));
+            const cLeft = Math.max(0, Math.round(((window.outerWidth || 1280) - (window.innerWidth || 1280)) / 2));
+            return {{
+                x: Math.round((window.screenX || 0) + cLeft + r.left + ox),
+                y: Math.round((window.screenY || 0) + cTop + r.top + oy),
+                w: Math.round(r.width),
+                h: Math.round(r.height)
+            }};
+        }}
+
+        function isVis(el) {{
+            if (!el) return false;
+            const r = el.getBoundingClientRect();
+            return r.width > 5 && r.height > 5 && window.getComputedStyle(el).visibility !== 'hidden';
+        }}
+
+        function tick() {{
+            const host = location.hostname;
+            const path = location.pathname;
+            const bodyTxt = document.body ? (document.body.innerText || '') : '';
+
+            if (host.includes('senkuro.com')) {{
+                const tok = getCookie('access_token');
+                if (tok && tok.length > 15 && !path.includes('/auth/')) {{
+                    document.title = 'SENKURO_TOKEN_OK|' + tok;
+                    return;
+                }}
+                if (!document.body || bodyTxt.includes('Приготовьтесь к приключениям') || path.includes('/auth/')) {{
+                    document.title = 'SENKURO_LOADING|' + path;
+                    return;
+                }}
+                const loginBtn = Array.from(document.querySelectorAll('a, button')).find(el => {{
+                    const t = (el.innerText || el.textContent || '').trim();
+                    return t === 'Войти' || t === 'Вход';
+                }});
+                if (loginBtn) {{
+                    const r = loginBtn.getBoundingClientRect();
+                    const bCoord = toX11(r, r.width / 2, r.height / 2);
+                    const lastClick = parseInt(sessionStorage.getItem('__sk_lclick') || '0', 10);
+                    if (Date.now() - lastClick > 10000) {{
+                        sessionStorage.setItem('__sk_lclick', String(Date.now()));
+                        loginBtn.click();
+                    }}
+                    document.title = 'SENKURO_NEED_LOGIN|' + JSON.stringify(bCoord);
+                    return;
+                }}
+                if (tok) {{
+                    document.title = 'SENKURO_TOKEN_OK|' + tok;
+                }}
+                return;
+            }}
+
+            if (host.includes('sso.senkuro.')) {{
+                if (path.includes('/oauth/') || path.includes('/account')) {{
+                    const allowBtn = Array.from(document.querySelectorAll('button, a')).find(el => {{
+                        const t = (el.innerText || '').trim().toLowerCase();
+                        return t.includes('разрешить') || t.includes('продолжить') || t.includes('авториз') || t.includes('allow');
+                    }});
+                    if (allowBtn) allowBtn.click();
+                    document.title = 'SENKURO_SSO_OAUTH|' + path;
+                    return;
+                }}
+
+                const allInputs = Array.from(document.querySelectorAll('input')).filter(isVis);
+                const passInput = allInputs.find(i => i.type === 'password');
+                const userInput = allInputs.find(i => i.type !== 'password' && i.type !== 'checkbox' && i.type !== 'hidden');
+
+                if (!passInput) {{
+                    document.title = 'SENKURO_SSO_WAIT_FORM|' + path;
+                    return;
+                }}
+
+                if (!window.__skEnterTs) window.__skEnterTs = Date.now();
+                if (Date.now() - window.__skEnterTs > 1500) {{
+                    if (userInput && userInput.value !== LOGIN_STR) setNativeVal(userInput, LOGIN_STR);
+                    if (passInput && passInput.value !== PASS_STR) setNativeVal(passInput, PASS_STR);
+                }}
+
+                const allBtns = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]')).filter(isVis);
+                const submitBtn = allBtns.find(b => {{
+                    const t = (b.innerText || b.value || '').trim().toLowerCase();
+                    return t === 'продолжить' || t === 'войти' || t === 'вход' || t === 'login' || t.includes('войти');
+                }});
+
+                let tsToken = window.__tsToken || '';
+                try {{
+                    if (!tsToken && window.turnstile && typeof window.turnstile.getResponse === 'function') {{
+                        tsToken = window.turnstile.getResponse() || '';
+                    }}
+                }} catch (e) {{}}
+
+                let tsRect = null;
+                for (const item of (window.__tsHosts || [])) {{
+                    try {{
+                        if (item.shadow) {{
+                            const inp = item.shadow.querySelector('input[name*="turnstile"], input[name*="response"], input[type="hidden"]');
+                            if (inp && inp.value && inp.value.length > 20) tsToken = inp.value;
+                            const ifr = item.shadow.querySelector('iframe');
+                            if (ifr) {{
+                                const ir = ifr.getBoundingClientRect();
+                                if (ir.width > 20 && ir.height > 20) tsRect = ir;
+                            }}
+                        }}
+                        if (!tsRect && item.host) {{
+                            const hr = item.host.getBoundingClientRect();
+                            if (hr.width > 20 && hr.height > 20) tsRect = hr;
+                        }}
+                    }} catch (e) {{}}
+                }}
+
+                if (!tsRect && window.__tsRenderEl) {{
+                    const rr = window.__tsRenderEl.getBoundingClientRect();
+                    if (rr.width > 20 && rr.height > 20) tsRect = rr;
+                }}
+
+                if (!tsRect) {{
+                    const cand = document.querySelector('.cf-turnstile, [id*="turnstile"], [class*="turnstile"], [class*="captcha"]');
+                    if (cand) {{
+                        const cr = cand.getBoundingClientRect();
+                        if (cr.width > 20 && cr.height > 20) tsRect = cr;
+                    }}
+                }}
+
+                const pr = passInput.getBoundingClientRect();
+                const br = submitBtn ? submitBtn.getBoundingClientRect() : null;
+                let gapBox = null;
+                if (br && (br.top - pr.bottom) >= 45) {{
+                    gapBox = toX11({{ left: pr.left, top: pr.bottom + 8, width: pr.width, height: br.top - pr.bottom - 16 }}, 28, (br.top - pr.bottom - 16) / 2);
+                }}
+
+                const tsLenVal = (tsToken || '').length;
+                // Если токен Turnstile получен (tsLenVal > 20) ИЛИ прошло > 6.5 сек — нажимаем кнопку Войти (с паузой 9 сек между попытками)
+                if (submitBtn && userInput && userInput.value === LOGIN_STR && passInput.value === PASS_STR) {{
+                    if (tsLenVal > 20 || (Date.now() - window.__skEnterTs > 6500)) {{
+                        const lastSub = parseInt(sessionStorage.getItem('__sk_sso_sub') || '0', 10);
+                        if (Date.now() - lastSub > 9500) {{
+                            sessionStorage.setItem('__sk_sso_sub', String(Date.now()));
+                            submitBtn.click();
+                        }}
+                    }}
+                }}
+
+                const state = {{
+                    uOk: !!(userInput && userInput.value === LOGIN_STR),
+                    pOk: !!(passInput && passInput.value === PASS_STR),
+                    uBox: userInput ? toX11(userInput.getBoundingClientRect(), 60, 18) : null,
+                    pBox: toX11(pr, 60, 18),
+                    btnBox: br ? toX11(br, br.width / 2, br.height / 2) : null,
+                    tsBox: tsRect ? toX11(tsRect, 28, tsRect.height / 2) : gapBox,
+                    tsLen: tsLenVal,
+                    tsErr: window.__tsErr || '',
+                    tsHostsCnt: (window.__tsHosts || []).length,
+                    hasErrTxt: bodyTxt.includes('Ошибка при прохождении капчи') || bodyTxt.includes('Что-то пошло не так'),
+                    txt: bodyTxt.replace(/\s+/g, ' ').trim().slice(0, 180)
+                }};
+                document.title = 'SENKURO_SSO|' + JSON.stringify(state);
+            }}
+        }}
+
+        setInterval(tick, 450);
+        setTimeout(tick, 200);
+    }})();
+    """
+    (ext_dir / "sso_bridge.js").write_text(sso_bridge_js.strip(), encoding="utf-8")
+
+    target_url = acc.get("bookmarks_url") or f"https://senkuro.com/users/{aid}/bookmarks"
+    args = [
+        chrome_bin,
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--test-type",
+        "--disable-dev-shm-usage",
+        "--disable-blink-features=AutomationControlled",
+        "--password-store=basic",
+        "--disable-save-password-bubble",
+        "--disable-features=PasswordManagerOnboarding,PasswordImport",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
+        f"--user-data-dir={prof_dir}",
+        f"--remote-debugging-port={cdp_port}",
+        "--remote-allow-origins=*",
+        f"--load-extension={ext_dir}",
+        "--window-position=0,0",
+        "--window-size=1280,900",
+    ]
+    if proxy_url:
+        args.extend([f"--proxy-server={proxy_url}", "--proxy-bypass-list=<-loopback>"])
+    args.append(target_url)
+
+    log_debug(f"[NATIVE CHROME] {aid}: старт чистого Google Chrome (CDP=:{cdp_port}, proxy={proxy_url}) -> {target_url}")
+    proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    access_token_found: Optional[str] = None
+    cdp_cookies: list[dict] = []
+    err_png: Optional[bytes] = None
+    last_diag_str = ""
+    last_ws_url = ""
+
+    clicked_inputs = False
+    last_ts_click_time = 0.0
+    last_submit_click_time = 0.0
+    sso_enter_time = 0.0
+
+    try:
+        start_t = time.time()
+        while time.time() - start_t < 42.0:
+            if proc.poll() is not None:
+                log_debug(f"[NATIVE CHROME] {aid}: процесс Chrome неожиданно завершился (код {proc.poll()})")
+                break
+            time.sleep(0.6)
+
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{cdp_port}/json/list", timeout=1.2) as r:
+                    tabs = json.loads(r.read().decode("utf-8", errors="ignore"))
+            except Exception:
+                continue
+
+            page_tabs = [t for t in tabs if t.get("type") == "page" and "senkuro" in str(t.get("url", ""))]
+            if not page_tabs:
+                page_tabs = [t for t in tabs if t.get("type") == "page"]
+            if not page_tabs:
+                continue
+
+            tab = page_tabs[0]
+            t_title = str(tab.get("title") or "")
+            t_url = str(tab.get("url") or "")
+            if tab.get("webSocketDebuggerUrl"):
+                last_ws_url = str(tab["webSocketDebuggerUrl"])
+
+            if t_title.startswith("SENKURO_TOKEN_OK|"):
+                access_token_found = t_title.split("|", 1)[1].strip()
+                log_debug(f"[NATIVE CHROME SUCCESS] {aid}: получен access_token (длина={len(access_token_found)})!")
+                break
+
+            if t_title.startswith("SENKURO_SSO|"):
+                if sso_enter_time == 0.0:
+                    sso_enter_time = time.time()
+                    _run_xdotool(["mousemove", "400", "300"])
+                raw_json = t_title.split("|", 1)[1]
+                if raw_json != last_diag_str:
+                    last_diag_str = raw_json
+                    log_debug(f"[NATIVE SSO] {aid}: {raw_json}")
+                try:
+                    st = json.loads(raw_json)
+                except Exception:
+                    continue
+
+                if not clicked_inputs and st.get("uBox") and st.get("pBox") and (time.time() - sso_enter_time > 1.8):
+                    clicked_inputs = True
+                    ub = st["uBox"]
+                    pb = st["pBox"]
+                    _run_xdotool(["mousemove", "--sync", str(ub["x"]), str(ub["y"]), "click", "1"])
+                    time.sleep(0.35)
+                    _run_xdotool(["mousemove", "--sync", str(pb["x"]), str(pb["y"]), "click", "1"])
+                    time.sleep(0.35)
+
+                ts_box = st.get("tsBox")
+                ts_len = int(st.get("tsLen") or 0)
+                if ts_box and ts_len == 0 and (time.time() - sso_enter_time > 2.8) and (time.time() - last_ts_click_time > 4.5):
+                    last_ts_click_time = time.time()
+                    log_debug(f"[NATIVE SSO] {aid}: X11-клик (xdotool) по чекбоксу Turnstile ({ts_box['x']}, {ts_box['y']})")
+                    _run_xdotool(["mousemove", "--sync", str(ts_box["x"]), str(ts_box["y"]), "sleep", "0.12", "click", "1"])
+                    time.sleep(1.5)
+
+                btn_box = st.get("btnBox")
+                ready_to_submit = st.get("uOk") and st.get("pOk") and (ts_len > 0 or (time.time() - sso_enter_time > 5.5))
+                if btn_box and ready_to_submit and (time.time() - last_submit_click_time > 8.5):
+                    last_submit_click_time = time.time()
+                    log_debug(f"[NATIVE SSO] {aid}: X11-клик (xdotool) по кнопке 'Войти' ({btn_box['x']}, {btn_box['y']}), tsLen={ts_len}")
+                    _run_xdotool(["mousemove", "--sync", str(btn_box["x"]), str(btn_box["y"]), "sleep", "0.12", "click", "1"])
+                    time.sleep(1.2)
+
+        if last_ws_url:
+            ck_res = _cdp_ws_call_sync(last_ws_url, "Network.getAllCookies", {}, timeout_sec=3.5)
+            cdp_cookies = ck_res.get("cookies") or []
+            for c in cdp_cookies:
+                if c.get("name") == "access_token" and c.get("value") and len(str(c["value"])) > 15:
+                    access_token_found = str(c["value"])
+            if not access_token_found:
+                import base64
+                sc_res = _cdp_ws_call_sync(last_ws_url, "Page.captureScreenshot", {"format": "png"}, timeout_sec=4.0)
+                if sc_res.get("data"):
+                    err_png = base64.b64decode(sc_res["data"])
+    finally:
+        try:
+            proc.terminate()
+            proc.wait(timeout=2.0)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        shutil.rmtree(prof_dir, ignore_errors=True)
+
+    return access_token_found, cdp_cookies, err_png, last_diag_str
+
+
 async def ensure_logged_in(context: BrowserContext, acc: dict) -> tuple[Page, Optional[dict]]:
     page = await context.new_page()
     ACTIVE_BROWSER_PAGES[acc["id"]] = page
@@ -1476,12 +1966,6 @@ async def ensure_logged_in(context: BrowserContext, acc: dict) -> tuple[Page, Op
                     intercepted_user.update(u)
             except Exception:
                 pass
-        elif "sso.senkuro.org" in u_str and (resp.request.method == "POST" or resp.status >= 400):
-            try:
-                body_preview = (await resp.text())[:300]
-            except Exception:
-                body_preview = ""
-            log_debug(f"[SSO HTTP] {acc['id']}: {resp.request.method} {u_str[:100]} -> status={resp.status} body={body_preview}")
 
     page.on("response", on_gql_or_sso_resp)
 
@@ -1510,232 +1994,81 @@ async def ensure_logged_in(context: BrowserContext, acc: dict) -> tuple[Page, Op
     if not acc.get("login") or not acc.get("password"):
         return page, None
 
-    log_debug(f"[AUTH LOGIN] {acc['id']}: выполняю вход через SSO ({acc['login']})...")
+    proxy_port = 25340 + int(acc.get("idx", 1))
+    proxy_url = f"http://127.0.0.1:{proxy_port}" if is_port_open(proxy_port) else None
+    log_debug(f"[AUTH LOGIN] {acc['id']}: выполняю нативный вход без Playwright ({acc['login']})...")
 
-    for attempt in range(1, 3):
-        try:
-            if "senkuro.com" in page.url and "sso.senkuro" not in page.url:
-                clicked = await page.evaluate(
-                    """() => {
-                        const btn = Array.from(document.querySelectorAll('a, button')).find(el => {
-                            const t = (el.innerText || el.textContent || '').trim();
-                            return t === 'Войти' || t === 'Вход';
-                        });
-                        if (btn) { btn.click(); return true; }
-                        return false;
-                    }"""
-                )
-                log_debug(f"[AUTH] {acc['id']} (попытка #{attempt}): клик 'Войти' = {clicked} (url={page.url})")
-        except Exception as e:
-            log_debug(f"[AUTH CLICK WARN] {acc['id']}: {e}")
+    token_val, native_cookies, err_png, sso_diag = await asyncio.to_thread(login_via_native_chrome_sync, acc, proxy_url)
 
-        # Ждем перехода на sso.senkuro.org (до 12 сек)
-        for _ in range(15):
-            await page.wait_for_timeout(800)
-            if "sso.senkuro." in page.url:
-                break
-
-        if "sso.senkuro." in page.url:
-            # 1. Ждем, пока форма на sso.senkuro.org полностью отрисуется (до 10 сек)
-            for _ in range(12):
-                await page.wait_for_timeout(800)
-                has_pass = await page.evaluate("() => !!document.querySelector('input[type=password]')")
-                if has_pass:
-                    break
-
-            # 2. ВАЖНО: Даем скрипту капчи на sso.senkuro.org спокойно докачаться через прокси (3.5 сек)
-            # и делаем плавные движения мышью, как живой пользователь (иначе капча выдает «Ошибка при прохождении капчи»!)
-            try:
-                await page.mouse.move(260, 240, steps=8)
-                await page.wait_for_timeout(1200)
-                await page.mouse.move(540, 380, steps=10)
-                await page.wait_for_timeout(2000)
-            except Exception:
-                await page.wait_for_timeout(3000)
-
-            # 3. Логируем информацию о капче и форме (и при попытке #1 заполняем ровно 1 раз методом Kaggle v6.5!)
-            sso_fill_info = await page.evaluate(
-                """({ loginStr, passStr, doNativeFill }) => {
-                    function isVis(el) {
-                        if (!el) return false;
-                        const r = el.getBoundingClientRect();
-                        return r.width > 5 && r.height > 5 && window.getComputedStyle(el).visibility !== 'hidden';
-                    }
-                    function setNativeVal(el, val) {
-                        if (!el) return;
-                        el.focus();
-                        const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
-                        const desc = Object.getOwnPropertyDescriptor(proto, 'value');
-                        if (desc && desc.set) desc.set.call(el, val);
-                        else el.value = val;
-                        el.dispatchEvent(new Event('input', { bubbles: true }));
-                        el.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
-
-                    const allInputs = Array.from(document.querySelectorAll('input')).filter(isVis);
-                    const passInput = allInputs.find(i => i.type === 'password');
-                    const userInput = allInputs.find(i => i.type !== 'password' && i.type !== 'checkbox' && i.type !== 'hidden');
-
-                    const scripts = Array.from(document.querySelectorAll('script[src]')).map(s => s.src).filter(u => /captcha|turnstile|recaptcha|hcaptcha|smart|cf|challenge/i.test(u));
-                    const iframes = Array.from(document.querySelectorAll('iframe')).map(f => ({
-                        src: (f.src || '').slice(0, 120),
-                        w: Math.round(f.getBoundingClientRect().width),
-                        h: Math.round(f.getBoundingClientRect().height),
-                        x: Math.round(f.getBoundingClientRect().left + f.getBoundingClientRect().width / 2),
-                        y: Math.round(f.getBoundingClientRect().top + f.getBoundingClientRect().height / 2)
-                    }));
-                    const hiddenInputs = Array.from(document.querySelectorAll('input[type="hidden"], textarea[name*="captcha"], textarea[name*="response"]')).map(i => ({
-                        name: i.name || i.id || '',
-                        valLen: (i.value || '').length
-                    }));
-
-                    if (doNativeFill) {
-                        if (userInput) setNativeVal(userInput, loginStr);
-                        if (passInput) setNativeVal(passInput, passStr);
-                    }
-
-                    const allBtns = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]')).filter(isVis);
-                    let targetBtn = allBtns.find(b => {
-                        const t = (b.innerText || b.value || '').trim().toLowerCase();
-                        return t === 'продолжить' || t === 'войти' || t === 'вход' || t === 'login' || t === 'sign in' ||
-                               t.includes('продолжить') || t.includes('войти');
-                    });
-
-                    return {
-                        foundUser: !!userInput,
-                        foundPass: !!passInput,
-                        targetBtnText: targetBtn ? (targetBtn.innerText || '').trim() : null,
-                        ua: navigator.userAgent,
-                        platform: navigator.platform,
-                        webdriver: navigator.webdriver,
-                        hasGrecaptcha: typeof window.grecaptcha !== 'undefined',
-                        hasTurnstile: typeof window.turnstile !== 'undefined',
-                        hasSmartCaptcha: typeof window.smartCaptcha !== 'undefined',
-                        scripts,
-                        iframes,
-                        hiddenInputs
-                    };
-                }""",
-                {"loginStr": acc["login"], "passStr": acc["password"], "doNativeFill": attempt == 1},
+    if token_val or native_cookies:
+        pw_cookies = []
+        if token_val:
+            pw_cookies.append(
+                {
+                    "name": "access_token",
+                    "value": token_val,
+                    "domain": "senkuro.com",
+                    "path": "/",
+                    "httpOnly": False,
+                    "secure": True,
+                    "sameSite": "Lax",
+                }
             )
-            log_debug(f"[SSO CAPTCHA DIAG] {acc['id']} (попытка #{attempt}): {json.dumps(sso_fill_info, ensure_ascii=False)}")
+            pw_cookies.append(
+                {
+                    "name": "access_token",
+                    "value": token_val,
+                    "domain": ".senkuro.com",
+                    "path": "/",
+                    "httpOnly": False,
+                    "secure": True,
+                    "sameSite": "Lax",
+                }
+            )
+        for c in native_cookies:
+            if c.get("name") and c.get("value") and c.get("domain"):
+                pw_cookies.append(
+                    {
+                        "name": str(c["name"]),
+                        "value": str(c["value"]),
+                        "domain": str(c["domain"]),
+                        "path": str(c.get("path") or "/"),
+                        "httpOnly": bool(c.get("httpOnly", False)),
+                        "secure": bool(c.get("secure", True)),
+                    }
+                )
+        try:
+            await context.add_cookies(pw_cookies)
+        except Exception as e:
+            log_debug(f"[ADD COOKIES WARN] {acc['id']}: {e}")
 
-            # Если на странице есть видимый iframe капчи (Turnstile / SmartCaptcha / reCAPTCHA checkbox) — кликаем по чекбоксу и ждем 2.5 сек
-            try:
-                for ifr in sso_fill_info.get("iframes") or []:
-                    if ifr.get("w", 0) >= 30 and ifr.get("h", 0) >= 25 and ifr.get("x", 0) > 0 and ifr.get("y", 0) > 0:
-                        click_x = int(ifr["x"]) - min(80, int(ifr["w"]) // 3)
-                        click_y = int(ifr["y"])
-                        log_debug(f"[SSO CAPTCHA CLICK] {acc['id']}: клик по чекбоксу капчи ({click_x}, {click_y})")
-                        await page.mouse.move(click_x, click_y, steps=6)
-                        await page.mouse.click(click_x, click_y)
-                        await page.wait_for_timeout(2500)
-            except Exception as e:
-                log_debug(f"[SSO CAPTCHA CLICK WARN] {e}")
-
-            try:
-                u_loc = page.locator('input:visible:not([type="password"]):not([type="checkbox"]):not([type="hidden"])').first
-                p_loc = page.locator('input[type="password"]:visible').first
-                if attempt >= 2:
-                    # На 2-й попытке вводим посимвольно с человеческой задержкой 50 мс между клавишами
-                    if await u_loc.count() > 0:
-                        await u_loc.click()
-                        await u_loc.fill("")
-                        await u_loc.press_sequentially(acc["login"], delay=50)
-                    await page.wait_for_timeout(400)
-                    if await p_loc.count() > 0:
-                        await p_loc.click()
-                        await p_loc.fill("")
-                        await p_loc.press_sequentially(acc["password"], delay=50)
-
-                # Пауза 1.2 сек после заполнения перед кликом «Войти» (как в Kaggle v6.5: setTimeout 650ms+)
-                await page.wait_for_timeout(1200)
-
-                btn_clicked = False
-                for btn_txt in ("Продолжить", "Войти", "Вход", "Login", "Sign in"):
-                    b_loc = page.locator(f'button:visible:has-text("{btn_txt}")').first
-                    if await b_loc.count() > 0:
-                        await b_loc.click()
-                        btn_clicked = True
-                        log_debug(f"[SSO SUBMIT] {acc['id']}: нажата кнопка '{btn_txt}'")
-                        break
-                if not btn_clicked and await p_loc.count() > 0:
-                    await p_loc.press("Enter")
-                    log_debug(f"[SSO SUBMIT] {acc['id']}: нажат Enter в поле пароля")
-            except Exception as e:
-                log_debug(f"[SSO PLAYWRIGHT SUBMIT WARN] {acc['id']}: {e}")
-
-            # СПОКОЙНО ждём до 18 секунд завершения входа и редиректа (без авто-спама вторым скриншотом!)
-            logged_6s_text = False
-            for wait_sec in range(18):
-                await page.wait_for_timeout(1000)
-                cur_u = page.url
-
-                # Если sso.senkuro.org перешёл на экран разрешения OAuth (/oauth/authorize) — нажимаем «Разрешить» / «Продолжить»
-                if "sso.senkuro.org" in cur_u and ("/oauth/" in cur_u or "/account" in cur_u):
-                    try:
-                        await page.evaluate(
-                            """() => {
-                                const b = Array.from(document.querySelectorAll('button, a')).find(el => {
-                                    const t = (el.innerText || '').trim().toLowerCase();
-                                    return t.includes('разрешить') || t.includes('продолжить') || t.includes('авториз') || t.includes('allow') || t.includes('continue');
-                                });
-                                if (b) b.click();
-                            }"""
-                        )
-                    except Exception:
-                        pass
-
-                if wait_sec == 6 and "sso.senkuro.org/auth/login" in cur_u and not logged_6s_text:
-                    logged_6s_text = True
-                    try:
-                        page_txt = await page.evaluate("() => (document.body ? document.body.innerText : '').trim().slice(0, 500)")
-                        log_debug(f"[SSO AFTER 6s] {acc['id']}: url={cur_u} | text={page_txt!r}")
-                        if "капч" in page_txt.lower() or "что-то пошло не так" in page_txt.lower():
-                            # Если на 1-й попытке выскочила ошибка капчи — не ждём лишние 12 сек, сразу переходим ко 2-й попытке с посимвольным вводом!
-                            break
-                    except Exception as e:
-                        log_debug(f"[SSO 6S DIAG ERR] {e}")
-
-                if "senkuro.com" in cur_u and "sso.senkuro" not in cur_u and "/auth/" not in cur_u:
-                    await page.wait_for_timeout(1500)
-                    u_now = await check_is_authenticated_on_senkuro(page, acc["id"], intercepted_user)
-                    if u_now:
-                        log_debug(f"[AUTH SUCCESS] {acc['id']}: вход успешно выполнен (id={u_now.get('id')})")
-                        await context.storage_state(path=str(get_session_file(acc["id"])))
-                        return page, u_now
-
-        # Проверяем на основной странице
         try:
             await page.goto(target_start_url, wait_until="domcontentloaded", timeout=35000)
-            await page.wait_for_timeout(2000)
+            for _ in range(12):
+                await page.wait_for_timeout(700)
+                b_t = await page.evaluate("() => document.body ? (document.body.innerText || '') : ''")
+                if b_t and "Приготовьтесь к приключениям" not in b_t:
+                    break
             u_final = await check_is_authenticated_on_senkuro(page, acc["id"], intercepted_user)
             if u_final:
-                log_debug(f"[AUTH SUCCESS AFTER RELOAD] {acc['id']}: вход выполнен!")
+                log_debug(f"[AUTH SUCCESS] {acc['id']}: вход успешно подтверждён (id={u_final.get('id')})!")
                 await context.storage_state(path=str(get_session_file(acc["id"])))
                 return page, u_final
         except Exception as e:
-            log_debug(f"[AUTH RELOAD WARN] {acc['id']}: {e}")
+            log_debug(f"[AUTH VERIFY WARN] {acc['id']}: {e}")
 
-    # Если войти не удалось — записываем финальную диагностику и делаем мгновенный CDP-скриншот
-    try:
-        diag_info = await page.evaluate(
-            "() => ({ url: location.href, title: document.title, text: (document.body ? document.body.innerText : '').slice(0, 600) })"
-        )
-        log_debug(f"[AUTH FAILED DIAG] {acc['id']}: {json.dumps(diag_info, ensure_ascii=False)}")
-        if DEBUG_MODE:
-            png_err = await capture_page_png_fast(page)
-            if png_err:
-                await asyncio.to_thread(
-                    send_tg_photo_bytes,
-                    png_err,
-                    f"⚠️ <b>Авто-скриншот ошибки входа ({acc['id']}):</b>\n"
-                    f"🌐 URL: <code>{page.url[:120]}</code>\n"
-                    f"📄 Текст на экране: <code>{str(diag_info.get('text', ''))[:250]}</code>",
-                    False,
-                )
-    except Exception as e:
-        log_debug(f"[AUTH DIAG SCREENSHOT ERR] {acc['id']}: {e}")
+    log_debug(f"[AUTH FAILED DIAG] {acc['id']}: sso_diag={sso_diag}")
+    if DEBUG_MODE and err_png:
+        try:
+            await asyncio.to_thread(
+                send_tg_photo_bytes,
+                err_png,
+                f"⚠️ <b>Скриншот экрана входа SSO ({acc['id']}):</b>\n"
+                f"📄 Диагностика: <code>{sso_diag[:260]}</code>",
+                False,
+            )
+        except Exception as e:
+            log_debug(f"[AUTH ERR PHOTO WARN] {e}")
 
     return page, None
 
@@ -3362,7 +3695,7 @@ async def run_check_all_5_accounts() -> None:
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v15.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v16.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -3400,7 +3733,7 @@ def fetch_tg_updates_sync(offset_val: int, timeout_sec: int = 4) -> list[dict]:
         time.sleep(2)
         return []
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={offset_val}&timeout={timeout_sec}"
-    req = urllib.request.Request(url, headers={"User-Agent": "SenkuroDirectBot/15.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "SenkuroDirectBot/16.0"})
     try:
         with urllib.request.urlopen(req, timeout=timeout_sec + 6) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -3612,7 +3945,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     global ACTIVE_FARM_TASK, FARM_STOP_FLAG
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v15.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v16.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -3694,7 +4027,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            send_full_debug_log_to_user("Полный лог работы комбайна v15.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v16.0")
             return
 
         if data == "check_farm_status":
@@ -3743,7 +4076,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if lower in ("/start", "/menu", "/help", "меню"):
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v15.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v16.0</b>\n\n"
                 "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
                 "или просто напишите промокод одним словом в чат:",
                 add_keyboard=True,
@@ -3756,7 +4089,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
-            send_full_debug_log_to_user("Полный лог работы комбайна v15.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v16.0")
             return
 
         if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
@@ -3878,7 +4211,7 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v15.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v16.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",

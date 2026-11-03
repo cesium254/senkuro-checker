@@ -1,4 +1,4 @@
-name: Senkuro Full Automation Combine v15.0
+name: Senkuro Full Automation Combine v16.0
 
 on:
   push:
@@ -52,7 +52,7 @@ jobs:
           OFFSET_FILE = "/tmp/tg_offset.txt"
           QUEUE_FILE = "/tmp/senkuro_early_queue.jsonl"
 
-          # Компактная сворачиваемая нижняя клавиатура (без дублирования верхних кнопок и с коротким текстом для телефона!)
+          # Единая постоянная нижняя клавиатура (is_persistent=True не даёт ей пропадать, а значок [v] / 🎛 сворачивает её в любой момент!)
           REPLY_KEYBOARD = {
               "keyboard": [
                   [{"text": "▶️ Фарм (8 ч)"}, {"text": "📊 Статус фарма"}],
@@ -62,7 +62,7 @@ jobs:
                   [{"text": "📸 Экран"}, {"text": "📜 Лог"}, {"text": "🛑 СТОП"}],
               ],
               "resize_keyboard": True,
-              "is_persistent": False,
+              "is_persistent": True,
               "input_field_placeholder": "Промокод или меню 🎛 👇",
           }
 
@@ -79,15 +79,14 @@ jobs:
               except Exception:
                   return {}
 
-          def send_msg(text, attach_kb=False):
+          def send_msg(text):
               body = {
                   "chat_id": CHAT_ID,
                   "text": text,
                   "parse_mode": "HTML",
                   "disable_web_page_preview": True,
+                  "reply_markup": REPLY_KEYBOARD,
               }
-              if attach_kb:
-                  body["reply_markup"] = REPLY_KEYBOARD
               tg_call("sendMessage", body)
 
           def append_queue(action, promo=""):
@@ -114,14 +113,13 @@ jobs:
           with open(OFFSET_FILE, "w", encoding="utf-8") as f:
               f.write(str(offset))
 
-          # 3. При сохранении кода (push) сразу через 3 секунды присылаем компактную нижнюю панель v15.0!
+          # 3. При сохранении кода (push) сразу через 3 секунды присылаем компактную нижнюю панель v16.0!
           if EVENT_NAME == "push":
               send_msg(
-                  "✅ <b>Единый комбайн Senkuro v15.0 запущен!</b>\n\n"
-                  "• Компактное нижнее меню обновлено (сворачивается и открывается значком 🎛 в поле ввода, без дублирования кнопок сверху).\n"
-                  "• Вход в аккаунты переведён на родной Google Chrome (без ошибки капчи SSO).\n\n"
-                  "Нажимайте любую кнопку внизу 👇:",
-                  attach_kb=True,
+                  "✅ <b>Единый комбайн Senkuro v16.0 запущен!</b>\n\n"
+                  "• Нижнее меню 🎛 закреплено (больше никогда не пропадает и не сбивается старыми верхними кнопками).\n"
+                  "• Вход в аккаунты вынесен в чистый Google Chrome + X11 (xdotool) с обходом закрытого Shadow DOM Cloudflare Turnstile.\n\n"
+                  "Нажимайте любую кнопку внизу 👇:"
               )
 
           # 4. Слушаем нажатия кнопок, пока подготавливается окружение (~25 сек)
@@ -185,7 +183,7 @@ jobs:
                           "🚀 сделать всё (паки+кузня)": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                       }
                       if low in ("/start", "/menu", "/help", "меню"):
-                          send_msg("🤖 <b>Панель управления фермой Senkuro v15.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:", attach_kb=True)
+                          send_msg("🤖 <b>Панель управления фермой Senkuro v16.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
                       elif low in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
                           if os.path.exists(QUEUE_FILE):
                               os.remove(QUEUE_FILE)
@@ -225,14 +223,14 @@ jobs:
           path: |
             .sessions
             bin
-          key: senkuro-sessions-v15-${{ github.run_id }}
+          key: senkuro-sessions-v16-${{ github.run_id }}
           restore-keys: |
+            senkuro-sessions-v16-
             senkuro-sessions-v15-
-            senkuro-sessions-v12-
 
-      - name: Install Playwright, Chromium & Virtual Display (Xvfb)
+      - name: Install Playwright, Chromium, Xvfb, xdotool & Openbox
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb
+          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb xdotool openbox
           pip install --upgrade pip
           pip install playwright
           playwright install --with-deps chromium
@@ -245,7 +243,7 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v15.0 (Direct Telegram Engine)
+      - name: Run Senkuro Automation Combine v16.0 (Direct Telegram Engine)
         id: run_bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
@@ -257,7 +255,7 @@ jobs:
             kill $(cat /tmp/early_poller.pid) 2>/dev/null || true
             sleep 1
           fi
-          xvfb-run -a --server-args="-screen 0 1280x900x24" python check_senkuro.py --action "${SENKURO_ACTION}" --promo-code "${SENKURO_PROMO_CODE}"
+          xvfb-run -a --server-args="-screen 0 1280x900x24" bash -c "openbox >/dev/null 2>&1 & sleep 1 && python check_senkuro.py --action '${SENKURO_ACTION}' --promo-code '${SENKURO_PROMO_CODE}'"
 
       - name: Save Sessions & State Artifact for Part 2 Continuation
         if: always()
@@ -301,13 +299,13 @@ jobs:
           path: |
             .sessions
             bin
-          key: senkuro-sessions-v15-part2-${{ github.run_id }}
+          key: senkuro-sessions-v16-part2-${{ github.run_id }}
           restore-keys: |
-            senkuro-sessions-v15-
+            senkuro-sessions-v16-
 
-      - name: Install Playwright, Chromium & Virtual Display (Xvfb)
+      - name: Install Playwright, Chromium, Xvfb, xdotool & Openbox
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb
+          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb xdotool openbox
           pip install --upgrade pip
           pip install playwright
           playwright install --with-deps chromium
@@ -320,9 +318,9 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v15.0 (Part 2 — Hours 4 to 8)
+      - name: Run Senkuro Automation Combine v16.0 (Part 2 — Hours 4 to 8)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
         run: |
-          xvfb-run -a --server-args="-screen 0 1280x900x24" python check_senkuro.py --action "daemon"
+          xvfb-run -a --server-args="-screen 0 1280x900x24" bash -c "openbox >/dev/null 2>&1 & sleep 1 && python check_senkuro.py --action 'daemon'"
