@@ -1,4 +1,4 @@
-name: Senkuro Full Automation Combine v18.0
+name: Senkuro Full Automation Combine v19.0
 
 on:
   push:
@@ -113,10 +113,10 @@ jobs:
           with open(OFFSET_FILE, "w", encoding="utf-8") as f:
               f.write(str(offset))
 
-          # 3. При сохранении кода (push) сразу через 3 секунды присылаем новую 4-рядную панель v18.0!
+          # 3. При сохранении кода (push) сразу через 3 секунды присылаем новую 4-рядную панель v19.0!
           if EVENT_NAME == "push":
               send_msg(
-                  "✅ <b>Единый комбайн Senkuro v18.0 запущен!</b>\n\n"
+                  "✅ <b>Единый комбайн Senkuro v19.0 запущен!</b>\n\n"
                   "• Кнопка <b>«🛑 СТОП»</b> вынесена в 1-й ряд справа (все 4 ряда помещаются на экран без прокрутки).\n"
                   "• Подключён рабочий CDP-инжектор входа из ноутбука Kaggle (4 изолированных профиля Chrome + 4 уникальных IP).\n\n"
                   "Нажимайте любую кнопку внизу 👇:"
@@ -188,7 +188,7 @@ jobs:
                           "🚀 сделать всё (паки+кузня)": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                       }
                       if low in ("/start", "/menu", "/help", "меню"):
-                          send_msg("🤖 <b>Панель управления фермой Senkuro v18.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
+                          send_msg("🤖 <b>Панель управления фермой Senkuro v19.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
                       elif low in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
                           if os.path.exists(QUEUE_FILE):
                               os.remove(QUEUE_FILE)
@@ -237,7 +237,7 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq xvfb xdotool openbox
           pip install --upgrade pip
-          pip install playwright
+          pip install playwright pillow
           playwright install --with-deps chromium
 
       - name: Download Opera VPN Proxy (for 4 unique IPs)
@@ -248,7 +248,7 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v18.0 (Direct Telegram Engine)
+      - name: Run Senkuro Automation Combine v19.0 (Direct Telegram Engine)
         id: run_bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
@@ -312,7 +312,7 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq xvfb xdotool openbox
           pip install --upgrade pip
-          pip install playwright
+          pip install playwright pillow
           playwright install --with-deps chromium
 
       - name: Download Opera VPN Proxy (for 4 unique IPs)
@@ -323,7 +323,7 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v18.0 (Part 2 — Hours 4 to 8)
+      - name: Run Senkuro Automation Combine v19.0 (Part 2 — Hours 4 to 8)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}

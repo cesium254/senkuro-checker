@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v18.0 (100% TELEGRAM -> CLOUDFLARE -> GITHUB)
+SENKURO FULL AUTOMATION COMBINE v19.0 (100% TELEGRAM -> CLOUDFLARE -> GITHUB)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -44,6 +44,7 @@ import asyncio
 import json
 import os
 import platform
+import random
 import re
 import shutil
 import socket
@@ -92,6 +93,9 @@ def log_debug(msg: str) -> None:
     line = f"[{ts}] {msg}"
     print(line, flush=True)
     try:
+        if DEBUG_LOG_FILE.exists() and DEBUG_LOG_FILE.stat().st_size > 250_000:
+            tail_bytes = DEBUG_LOG_FILE.read_bytes()[-140_000:]
+            DEBUG_LOG_FILE.write_bytes(tail_bytes)
         with open(DEBUG_LOG_FILE, "a", encoding="utf-8") as f:
             f.write(line + "\n")
     except Exception:
@@ -350,7 +354,7 @@ def upload_debug_log_to_github_noop(reason: str = "task") -> Optional[str]:
         headers = {
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {GITHUB_PAT_TOKEN}",
-            "User-Agent": "SenkuroBot/18.0",
+            "User-Agent": "SenkuroBot/19.0",
             "X-GitHub-Api-Version": "2022-11-28",
             "Content-Type": "application/json",
         }
@@ -441,13 +445,53 @@ def is_local_port_open(port: int) -> bool:
 is_port_open = is_local_port_open
 
 
+def _stitch_screens_2x2_png(screens: list[tuple[str, bytes]]) -> Optional[bytes]:
+    """
+    Склеивает от 2 до 4 скриншотов аккаунтов в ЕДИНУЮ картинку-плитку 2x2 (слева сверху #1, справа сверху #2,
+    слева снизу #3, справа снизу #4), чтобы кнопка «📸 Экран» присылала РОВНО 1 СООБЩЕНИЕ вместо 4 отдельных!
+    """
+    if not screens:
+        return None
+    if len(screens) == 1:
+        return screens[0][1]
+    try:
+        import io
+        from PIL import Image, ImageDraw
+
+        tile_w, tile_h = 640, 450
+        canvas = Image.new("RGB", (tile_w * 2, tile_h * 2), (18, 18, 22))
+        positions = [(0, 0), (tile_w, 0), (0, tile_h), (tile_w, tile_h)]
+        draw = ImageDraw.Draw(canvas)
+
+        for idx, (label_txt, png_b) in enumerate(screens[:4]):
+            px, py = positions[idx]
+            try:
+                im = Image.open(io.BytesIO(png_b)).convert("RGB")
+                im = im.resize((tile_w - 4, tile_h - 4))
+                canvas.paste(im, (px + 2, py + 2))
+                draw.rectangle([px + 8, py + 8, px + 230, py + 34], fill=(0, 0, 0))
+                draw.text((px + 14, py + 14), f"#{idx + 1} {label_txt}", fill=(80, 255, 120))
+            except Exception:
+                pass
+
+        out_buf = io.BytesIO()
+        canvas.save(out_buf, format="PNG", optimize=True)
+        return out_buf.getvalue()
+    except Exception as e:
+        log_debug(f"[GRID STITCH FALLBACK] {e}")
+        return screens[0][1]
+
+
 async def send_live_screen_snapshot(custom_caption: str = "") -> None:
     """
-    Делает моментальный скриншот открытых вкладок браузера (включая нативные окна входа Chrome на портах 26411..26414
-    и вкладки Playwright) через CDP за 0.05 сек и отправляет фотографию прямо в Telegram!
+    Собирает скриншоты всех открытых вкладок/окон (нативные окна Chrome 26411..26414 + вкладки Playwright),
+    объединяет их в ОДНУ общую плитку 2x2 и отправляет ОДНИМ сообщением в Telegram!
     """
     import base64
-    sent_any = False
+    collected_screens: list[tuple[str, bytes]] = []
+    caption_lines: list[str] = ["📸 <b>Снимок экранов фермы:</b>"]
+    seen_labels: set[str] = set()
+
     # 1. Проверяем открытые нативные окна Chrome (порты 26411..26414)
     for acc_item in FARM_ACCOUNTS:
         c_port = 26410 + int(acc_item["idx"])
@@ -466,19 +510,17 @@ async def send_live_screen_snapshot(custom_caption: str = "") -> None:
                     return None, "", ""
                 nat_png, nat_url, nat_title = await asyncio.to_thread(_grab_nat, c_port)
                 if nat_png:
-                    cap = (
-                        custom_caption
-                        or f"🖥 <b>Экран нативного Chrome: {acc_item['id']}</b>\n"
-                        f"🌐 URL: <code>{nat_url[:110]}</code>\n"
-                        f"📄 Статус: <code>{nat_title[:140]}</code>"
-                    )
-                    await asyncio.to_thread(send_tg_photo_bytes, nat_png, cap, True)
-                    sent_any = True
+                    aid = acc_item["id"]
+                    seen_labels.add(aid)
+                    collected_screens.append((aid, nat_png))
+                    caption_lines.append(f"• <b>#{acc_item['idx']} {aid}</b>: <code>{nat_url[:75]}</code>")
             except Exception as e:
                 log_debug(f"[NAT SNAPSHOT WARN] {acc_item['id']}: {e}")
 
     # 2. Проверяем открытые вкладки Playwright
     for label, pg in list(ACTIVE_BROWSER_PAGES.items()):
+        if label in seen_labels:
+            continue
         try:
             if pg.is_closed():
                 ACTIVE_BROWSER_PAGES.pop(label, None)
@@ -487,28 +529,24 @@ async def send_live_screen_snapshot(custom_caption: str = "") -> None:
             if not png_data:
                 ACTIVE_BROWSER_PAGES.pop(label, None)
                 continue
-            try:
-                t_str = await pg.title()
-            except Exception:
-                t_str = ""
-            cap = (
-                f"📸 <b>Экран браузера: {label}</b>\n"
-                f"🌐 URL: <code>{pg.url[:120]}</code>\n"
-                f"📄 Заголовок: <i>{t_str[:80]}</i>"
-            )
-            if custom_caption:
-                cap = f"{custom_caption}\n\n" + cap
-            await asyncio.to_thread(send_tg_photo_bytes, png_data, cap, True)
-            sent_any = True
+            seen_labels.add(label)
+            collected_screens.append((label, png_data))
+            caption_lines.append(f"• <b>{label}</b>: <code>{pg.url[:75]}</code>")
         except Exception as e:
             log_debug(f"[SCREENSHOT WARNING] {label}: {e}")
 
-    if not sent_any:
+    if not collected_screens:
         send_tg_message(
             "⚪ <b>Сейчас ни одно окно браузера не открыто</b> (сервер в режиме ожидания).\n\n"
-            "Запустите любую задачу (например, «🪙 Баланс монет» или «▶️ Запустить фарм»), и прямо во время её работы нажимайте <b>«📸 Посмотреть экран»</b>!",
+            "Запустите любую задачу (например, «▶️ Фарм (8 ч)», «🎴 Паки» или «⚒️ Кузня+Трейд»), и нажимайте <b>«📸 Экран»</b>!",
             add_keyboard=True,
         )
+        return
+
+    combined_png = await asyncio.to_thread(_stitch_screens_2x2_png, collected_screens)
+    if combined_png:
+        final_cap = (f"{custom_caption}\n\n" if custom_caption else "") + "\n".join(caption_lines)
+        await asyncio.to_thread(send_tg_photo_bytes, combined_png, final_cap[:1000], True)
 
 
 WORKER_PUBLIC_URL = "https://sparkling-meadow-68b3.ev20291.workers.dev/"
@@ -1783,7 +1821,8 @@ def login_via_native_chrome_sync(acc: dict, proxy_url: Optional[str]) -> tuple[O
     }})();
     """
 
-    target_url = acc.get("bookmarks_url") or f"https://senkuro.com/users/{aid}/bookmarks"
+    target_url = "https://senkuro.com/"
+    # Открываем сначала главную https://senkuro.com/ для чистого входа (без экрана 401!)
     # Флаги запуска один в один из рабочего Senkuro_Kaggle_Server_v6_5_Ready.ipynb!
     args = [
         chrome_bin,
@@ -1880,6 +1919,11 @@ def login_via_native_chrome_sync(acc: dict, proxy_url: Optional[str]) -> tuple[O
                 log_debug(f"[NATIVE CHROME SUCCESS] {aid}: вход выполнен, получен access_token (длина={len(access_token_found)})!")
                 break
 
+            if stage == "CLICK_LOGIN_BTN" and st.get("btnBox") and (time.time() - clicked_btn_time > 4.5):
+                clicked_btn_time = time.time()
+                lb = st["btnBox"]
+                _run_xdotool(["mousemove", "--sync", str(lb["x"]), str(lb["y"]), "sleep", "0.12", "click", "1"])
+
             if stage == "SSO_FORM":
                 # Если есть бокс капчи Turnstile — дополнительно кликаем системной мышью X11 (xdotool)
                 ts_box = st.get("tsBox")
@@ -1935,8 +1979,8 @@ async def ensure_logged_in(context: BrowserContext, acc: dict) -> tuple[Page, Op
 
     page.on("response", on_gql_or_sso_resp)
 
-    target_start_url = acc.get("bookmarks_url") or f"https://senkuro.com/users/{acc['id']}/bookmarks"
-    log_debug(f"[AUTH START] {acc['id']}: открываю {target_start_url}")
+    target_start_url = "https://senkuro.com/"
+    log_debug(f"[AUTH START] {acc['id']}: открываю главную {target_start_url} для проверки входа")
     try:
         await page.goto(target_start_url, wait_until="domcontentloaded", timeout=40000)
     except Exception as e:
@@ -2262,6 +2306,12 @@ def choose_best_unlocked_card_index(result_cards: list[dict], has_premium: bool 
 async def roll_hardcore_packs_for_account(page: Page, acc: dict, user_obj: dict) -> list[str]:
     logs: list[str] = []
     user_id = user_obj["id"]
+    try:
+        await page.goto("https://senkuro.com/packs/for-hardcore-gamers", wait_until="domcontentloaded", timeout=35000)
+    except Exception:
+        pass
+    await asyncio.sleep(random.uniform(2.5, 4.0))
+
     before_points = await get_fresh_points_balance(page, acc["id"])
     has_premium = int(user_obj.get("subscriptionTier") or 0) > 0
 
@@ -2297,12 +2347,14 @@ async def roll_hardcore_packs_for_account(page: Page, acc: dict, user_obj: dict)
             chosen_cards_summary.append(f"Забрал: <b>{r_badge} «{c_title}»</b> (из незавершенного открытия, слот #{best_idx + 1})")
 
         if opens_input:
+            await asyncio.sleep(random.uniform(2.2, 3.6))
             await gql_call(
                 page,
                 GQL_BULK_CHOOSE_PACK_OPEN,
                 {"input": {"opens": opens_input}},
                 "bulkChooseCardPackOpen",
             )
+            await asyncio.sleep(random.uniform(2.0, 3.2))
 
     rolls_available = before_points // pack_cost
     if rolls_available <= 0 and not chosen_cards_summary:
@@ -2310,6 +2362,12 @@ async def roll_hardcore_packs_for_account(page: Page, acc: dict, user_obj: dict)
         return logs
 
     for roll_num in range(1, rolls_available + 1):
+        if FARM_STOP_FLAG:
+            logs.append("🛑 Прокрутка остановлена пользователем")
+            break
+
+        # Человеческая пауза перед нажатием кнопки «Открыть пак за 480»
+        await asyncio.sleep(random.uniform(2.5, 4.2))
         open_res = await gql_call(
             page,
             GQL_OPEN_CARD_PACK,
@@ -2329,6 +2387,9 @@ async def roll_hardcore_packs_for_account(page: Page, acc: dict, user_obj: dict)
             if errs:
                 logs.append(f"остановка на крутке #{roll_num}: {errs[0].get('message')}")
             break
+
+        # Человеческая задержка (3.8–5.8 сек) на анимацию открытия пака и осмотр выпавших карт перед выбором!
+        await asyncio.sleep(random.uniform(3.8, 5.8))
 
         choose_payload = []
         for op in opens_list:
@@ -2361,8 +2422,10 @@ async def roll_hardcore_packs_for_account(page: Page, acc: dict, user_obj: dict)
                 {"input": {"opens": choose_payload}},
                 "bulkChooseCardPackOpen",
             )
+            # Пауза после выбора карты, как у живого человека
+            await asyncio.sleep(random.uniform(2.2, 3.8))
 
-    await page.wait_for_timeout(1000)
+    await page.wait_for_timeout(1200)
     after_points = await get_fresh_points_balance(page, acc["id"])
 
     if chosen_cards_summary:
@@ -2376,30 +2439,46 @@ async def roll_hardcore_packs_for_account(page: Page, acc: dict, user_obj: dict)
 
 
 async def run_all_packs_opening() -> None:
-    send_tg_message("🎰 Захожу на 4 фарм-аккаунта под своими IP и кручу паки «Хардкор» (480 🪙)...", add_keyboard=False)
+    send_tg_message(
+        "🎰 Открываю 4 изолированных профиля Chrome под своими IP и кручу паки «Хардкор» (480 🪙) с человеческими паузами...",
+        add_keyboard=False,
+    )
     proxy_mgr = AccountProxyManager()
     report_lines = ["🎴 <b>Статистика прокрутки паков «Для хардкорщиков» (480 🪙):</b>\n"]
 
     try:
         async with async_playwright() as p:
             browser = await launch_senkuro_browser(p)
-            for acc in FARM_ACCOUNTS:
-                proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
-                ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
-                log_debug(f"[PACKS STEP] #{acc['idx']}/4 {acc['id']} -> IP: {ip_used}")
-                send_tg_message(f"🎴 <b>[{acc['idx']}/4] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): проверяю монеты и кручу паки «Хардкор»...", add_keyboard=False)
-                context = await create_account_context(browser, acc, proxy_url)
-                try:
+            open_contexts: list[tuple[dict, BrowserContext, Page, Optional[dict], str]] = []
+            try:
+                for acc in FARM_ACCOUNTS:
+                    if FARM_STOP_FLAG:
+                        break
+                    proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
+                    ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
+                    log_debug(f"[PACKS STEP] #{acc['idx']}/4 {acc['id']} -> IP: {ip_used}")
+                    context = await create_account_context(browser, acc, proxy_url)
                     page, user_obj = await ensure_logged_in(context, acc)
+                    open_contexts.append((acc, context, page, user_obj, ip_used))
+
+                for acc, context, page, user_obj, ip_used in open_contexts:
+                    if FARM_STOP_FLAG:
+                        break
                     if not user_obj:
                         report_lines.append(f"❌ <b>{acc['id']}</b> (IP: <code>{ip_used}</code>): ошибка входа\n")
                         continue
+                    send_tg_message(f"🎴 <b>[{acc['idx']}/4] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): кручу паки «Хардкор»...", add_keyboard=False)
                     acc_logs = await roll_hardcore_packs_for_account(page, acc, user_obj)
                     report_lines.append(f"👤 <b>{acc['id']}</b> (IP: <code>{ip_used}</code>): " + "\n".join(acc_logs) + "\n")
                     await context.storage_state(path=str(get_session_file(acc["id"])))
-                finally:
-                    await context.close()
-                await asyncio.sleep(2.5)
+                    await asyncio.sleep(random.uniform(3.0, 4.8))
+            finally:
+                ACTIVE_BROWSER_PAGES.clear()
+                for _, context, _, _, _ in open_contexts:
+                    try:
+                        await context.close()
+                    except Exception:
+                        pass
             await browser.close()
     finally:
         proxy_mgr.stop_all()
@@ -2411,6 +2490,42 @@ async def run_all_packs_opening() -> None:
 # 8. СЦЕНАРИЙ 3: УМНАЯ ПЕРЕПЛАВКА (КУЗНЯ) + МЕЖАККАУНТНЫЙ ТРЕЙД + СБОР НА ОСНОВУ
 # ==============================================================================
 
+TRADE_RANDOM_MESSAGES = [
+    "gl hf",
+    "nice cards",
+    "thanks",
+    "for craft",
+    "gg wp",
+    "trade",
+    "ty bro",
+    "good luck",
+]
+
+
+def format_reset_at_human(reset_at_val: Any) -> str:
+    if not reset_at_val:
+        return "неизвестно"
+    try:
+        from datetime import datetime, timezone
+        s = str(reset_at_val).strip()
+        if s.isdigit():
+            ts = int(s)
+            if ts > 10_000_000_000:
+                ts = ts // 1000
+            diff_sec = max(0, int(ts - time.time()))
+        else:
+            s_iso = s.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(s_iso)
+            diff_sec = max(0, int(dt.timestamp() - time.time()))
+        h = diff_sec // 3600
+        m = (diff_sec % 3600) // 60
+        if h > 0:
+            return f"через {h} ч. {m} мин."
+        return f"через {max(1, m)} мин."
+    except Exception:
+        return str(reset_at_val)[:19]
+
+
 async def accept_whitelisted_incoming_trades(page: Page, acc_slug: str, user_id: str) -> list[str]:
     accepted_logs: list[str] = []
     res = await gql_call(
@@ -2421,6 +2536,8 @@ async def accept_whitelisted_incoming_trades(page: Page, acc_slug: str, user_id:
     )
     edges = ((res.get("data") or {}).get("cardTrades") or {}).get("edges") or []
     for edge in edges:
+        if FARM_STOP_FLAG:
+            break
         node = edge.get("node") or {}
         if node.get("status") != "PENDING" or not node.get("viewerCanAccept"):
             continue
@@ -2432,12 +2549,14 @@ async def accept_whitelisted_incoming_trades(page: Page, acc_slug: str, user_id:
         offer_items = node.get("offer") or []
 
         if source_slug not in ALLOWED_TRADE_SLUGS:
-            print(f"[SECURITY BLOCK] {acc_slug}: проигнорирован входящий трейд {trade_id} от ЧУЖОГО игрока '{source_slug}'!")
+            log_debug(f"[SECURITY BLOCK] {acc_slug}: проигнорирован входящий трейд {trade_id} от ЧУЖОГО игрока '{source_slug}'!")
             continue
 
         if req_items and source_slug not in ALLOWED_TRADE_SLUGS:
             continue
 
+        # Человеческая пауза перед принятием трейда
+        await asyncio.sleep(random.uniform(3.2, 5.2))
         acc_res = await gql_call(
             page,
             GQL_ACCEPT_CARD_TRADE,
@@ -2513,6 +2632,8 @@ def format_text_only_inventory_summary(cards_nodes: list[dict], shards_nodes: li
 
 async def refresh_farm_state(state_map: dict[str, dict]) -> None:
     for aid, st in state_map.items():
+        if FARM_STOP_FLAG:
+            break
         page: Page = st["page"]
         uid: str = st["user_id"]
 
@@ -2535,13 +2656,15 @@ async def forge_local_triples_on_account(st: dict) -> int:
     page: Page = st["page"]
     forged_count = 0
 
-    while st["available_slots"] > 0:
+    while st["available_slots"] > 0 and not FARM_STOP_FLAG:
         did_forge_in_pass = False
         for r in FORGE_UPGRADE_CHAIN:
             pool = st["craftable_by_rank"].get(r, [])
             if len(pool) >= 3 and st["available_slots"] > 0:
                 triple = pool[:3]
                 gql_cards = compress_card_units_for_gql(triple)
+                # Человеческая задержка (3.5–5.5 сек) на выбор 3 карт и переплавку в Кузне!
+                await asyncio.sleep(random.uniform(3.5, 5.5))
                 res = await gql_call(
                     page,
                     GQL_FORGE_CARDS,
@@ -2571,6 +2694,7 @@ async def forge_local_triples_on_account(st: dict) -> int:
                     nxt = NEXT_FORGE_RANK[r]
                     st["logs"].append(f"⚒️ Переплавлено 3×{r} ➡️ <b>1×{nxt}</b>")
 
+                await asyncio.sleep(random.uniform(2.0, 3.2))
                 st["cards_nodes"] = await fetch_all_user_cards_gql(page, st["user_id"], modifier_val=0)
                 st["craftable_by_rank"] = expand_craftable_cards_by_rank(st["cards_nodes"])
                 break
@@ -2583,7 +2707,7 @@ async def forge_local_triples_on_account(st: dict) -> int:
 
 async def run_smart_forge_and_trade_pipeline() -> None:
     send_tg_message(
-        "⚒️ Запускаю умную Кузницу («Переплавка» 3 в 1 до S ранга) и межаккаунтный обмен на 4 аккаунтах...",
+        "⚒️ Запускаю умную Кузницу («Переплавка» 3 в 1) и межаккаунтный обмен на 4 аккаунтах с человеческими задержками...",
         add_keyboard=False,
     )
 
@@ -2595,155 +2719,241 @@ async def run_smart_forge_and_trade_pipeline() -> None:
             browser = await launch_senkuro_browser(p)
             contexts: list[BrowserContext] = []
 
-            for acc in FARM_ACCOUNTS:
-                proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
-                ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
-                log_debug(f"[FORGE STEP] #{acc['idx']}/4 {acc['id']} -> IP: {ip_used}")
-                send_tg_message(f"⚒️ <b>[{acc['idx']}/4] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): подключаю кузню и проверяю карты...", add_keyboard=False)
-                ctx = await create_account_context(browser, acc, proxy_url)
-                contexts.append(ctx)
-                page, user_obj = await ensure_logged_in(ctx, acc)
-                if not user_obj:
-                    continue
-                state_map[acc["id"]] = {
-                    "acc": acc,
-                    "context": ctx,
-                    "page": page,
-                    "user_id": user_obj["id"],
-                    "ip": ip_used,
-                    "available_slots": 0,
-                    "used_slots": 0,
-                    "reset_at": None,
-                    "cards_nodes": [],
-                    "shards_nodes": [],
-                    "craftable_by_rank": defaultdict(list),
-                    "logs": [],
-                }
-
-            if not state_map:
-                send_tg_message("❌ Не удалось авторизоваться ни в одном из 4 фарм-аккаунтов.")
-                await browser.close()
-                return
-
-            await refresh_farm_state(state_map)
-            for aid, st in state_map.items():
-                await forge_local_triples_on_account(st)
-
-            for _ in range(15):
-                await refresh_farm_state(state_map)
-                total_free_slots = sum(st["available_slots"] for st in state_map.values())
-                if total_free_slots <= 0:
-                    break
-
-                target_rank = None
-                for r in FORGE_UPGRADE_CHAIN:
-                    total_r = sum(len(st["craftable_by_rank"].get(r, [])) for st in state_map.values())
-                    if total_r >= 3:
-                        target_rank = r
+            try:
+                for acc in FARM_ACCOUNTS:
+                    if FARM_STOP_FLAG:
                         break
-
-                if not target_rank:
-                    break
-
-                receiver_candidates = [st for st in state_map.values() if st["available_slots"] > 0]
-                if not receiver_candidates:
-                    break
-                receiver_candidates.sort(
-                    key=lambda s: (len(s["craftable_by_rank"].get(target_rank, [])), s["available_slots"]),
-                    reverse=True,
-                )
-                receiver = receiver_candidates[0]
-                rec_id = receiver["acc"]["id"]
-                rec_uid = receiver["user_id"]
-
-                have_on_receiver = len(receiver["craftable_by_rank"].get(target_rank, []))
-                need_count = max(0, 3 - have_on_receiver)
-
-                if need_count == 0:
-                    await forge_local_triples_on_account(receiver)
-                    continue
-
-                transferred_any = False
-                for donor_id, donor in state_map.items():
-                    if donor_id == rec_id or need_count <= 0:
+                    proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
+                    ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
+                    log_debug(f"[FORGE STEP] #{acc['idx']}/4 {acc['id']} -> IP: {ip_used}")
+                    send_tg_message(f"⚒️ <b>[{acc['idx']}/4] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): подключаю кузню и проверяю карты...", add_keyboard=False)
+                    ctx = await create_account_context(browser, acc, proxy_url)
+                    contexts.append(ctx)
+                    page, user_obj = await ensure_logged_in(ctx, acc)
+                    if not user_obj:
                         continue
-                    donor_pool = donor["craftable_by_rank"].get(target_rank, [])
-                    if not donor_pool:
-                        continue
+                    try:
+                        await page.goto("https://senkuro.com/forge", wait_until="domcontentloaded", timeout=35000)
+                        await asyncio.sleep(random.uniform(1.8, 3.0))
+                    except Exception:
+                        pass
+                    state_map[acc["id"]] = {
+                        "acc": acc,
+                        "context": ctx,
+                        "page": page,
+                        "user_id": user_obj["id"],
+                        "ip": ip_used,
+                        "available_slots": 0,
+                        "used_slots": 0,
+                        "reset_at": None,
+                        "cards_nodes": [],
+                        "shards_nodes": [],
+                        "craftable_by_rank": defaultdict(list),
+                        "logs": [],
+                    }
 
-                    take_units = donor_pool[:need_count]
-                    offer_payload = compress_card_units_for_gql(take_units)
-                    tr_res = await gql_call(
-                        donor["page"],
-                        GQL_SUGGEST_CARD_TRADE,
-                        {
-                            "input": {
-                                "userId": rec_uid,
-                                "offer": offer_payload,
-                                "request": [],
-                                "description": [],
-                            }
-                        },
-                        "suggestCardTrade",
-                    )
-                    if ((tr_res.get("data") or {}).get("suggestCardTrade") or {}).get("success"):
-                        need_count -= len(take_units)
-                        transferred_any = True
-                        donor["logs"].append(
-                            f"📤 Отправлен трейд ({len(take_units)}×{target_rank}) ➡️ <b>{rec_id}</b> для переплавки"
-                        )
-                        await receiver["page"].wait_for_timeout(800)
-                        acc_logs = await accept_whitelisted_incoming_trades(receiver["page"], rec_id, rec_uid)
-                        receiver["logs"].extend(acc_logs)
-
-                if not transferred_any:
-                    break
+                if not state_map:
+                    send_tg_message("❌ Не удалось авторизоваться ни в одном из 4 фарм-аккаунтов.")
+                    return
 
                 await refresh_farm_state(state_map)
-                await forge_local_triples_on_account(receiver)
 
-            await refresh_farm_state(state_map)
-            remaining_craftable_ranks = {}
-            for r in FORGE_UPGRADE_CHAIN:
-                tot_r = sum(len(st["craftable_by_rank"].get(r, [])) for st in state_map.values())
-                if tot_r >= 3:
-                    remaining_craftable_ranks[r] = tot_r
+                # Если на всех 4 аккаунтах слоты кузни = 0/5, сразу сообщаем точное время до сброса!
+                initial_free_slots = sum(st["available_slots"] for st in state_map.values())
+                if initial_free_slots <= 0:
+                    reset_lines = ["⏳ <b>На всех 4 фарм-аккаунтах сейчас 0 из 5 доступных попыток переплавки в Кузне:</b>\n"]
+                    for aid, st in state_map.items():
+                        rst_str = format_reset_at_human(st.get("reset_at"))
+                        inv_str = format_text_only_inventory_summary(st["cards_nodes"], st["shards_nodes"])
+                        reset_lines.append(
+                            f"👤 <b>{aid}</b> (Слоты: 0/5) — сброс счётчика: <b>{rst_str}</b>\n"
+                            f"   📦 На аккаунте: {inv_str}\n"
+                        )
+                    reset_lines.append("💡 <i>Карты оставлены на аккаунтах до сброса попыток Кузни.</i>")
+                    send_tg_message("\n".join(reset_lines), add_keyboard=True)
+                    return
 
-            total_free_slots = sum(st["available_slots"] for st in state_map.values())
+                # 1. Сначала переплавляем все готовые тройки внутри каждого аккаунта
+                for aid, st in state_map.items():
+                    if FARM_STOP_FLAG:
+                        break
+                    await forge_local_triples_on_account(st)
 
-            report_lines = ["⚒️ <b>Отчёт работы Кузницы (Переплавка):</b>\n"]
-            for aid, st in state_map.items():
-                inv_str = format_text_only_inventory_summary(st["cards_nodes"], st["shards_nodes"])
-                report_lines.append(
-                    f"👤 <b>{aid}</b> (IP: <code>{st['ip']}</code> | Слоты кузни: {st['available_slots']}/5 свободно):"
-                )
-                if st["logs"]:
-                    for lg in st["logs"]:
-                        report_lines.append(f"   • {lg}")
-                else:
-                    report_lines.append("   • Переплавок не требовалось")
-                report_lines.append(f"   📦 Сейчас на аккаунте: {inv_str}\n")
-
-            if remaining_craftable_ranks and total_free_slots == 0:
-                rem_str = ", ".join(f"{cnt}×{r}" for r, cnt in remaining_craftable_ranks.items())
-                report_lines.append(
-                    "⏳ <b>Суточные лимиты кузни (5 из 5) на всех 4 аккаунтах исчерпаны!</b>\n"
-                    f"Остались карты для дальнейшей переплавки ({rem_str}). "
-                    "Трейд на основу <b>cesium254</b> отложен до завтрашнего сброса лимитов, чтобы докачать все карты до конца!"
-                )
-            else:
+                # 2. Проверяем основной аккаунт cesium254: если там есть свободные карты F/D/C/B рангов (ниже A),
+                #    которые помогут собрать тройку для крафта на ферме, запрашиваем их трейдом с подтверждением!
                 first_page = next(iter(state_map.values()))["page"]
                 main_res = await gql_call(first_page, GQL_FETCH_USER_BY_SLUG, {"slug": MAIN_ACCOUNT_SLUG}, "fetchUserBySlug")
                 main_user = (main_res.get("data") or {}).get("user")
-                if not main_user or not main_user.get("id"):
+                main_uid = main_user.get("id") if isinstance(main_user, dict) else None
+
+                if main_uid and not FARM_STOP_FLAG:
+                    await refresh_farm_state(state_map)
+                    total_free_now = sum(st["available_slots"] for st in state_map.values())
+                    if total_free_now > 0:
+                        main_cards_nodes = await fetch_all_user_cards_gql(first_page, main_uid, modifier_val=0)
+                        main_by_rank = expand_craftable_cards_by_rank(main_cards_nodes)
+                        borrow_units: list[dict] = []
+                        borrow_desc_parts: list[str] = []
+                        # Берем с основы только карты рангов F, D, C, B (ниже A!), если они есть и дополняют крафт
+                        for low_r in ("F", "D", "C", "B"):
+                            m_pool = main_by_rank.get(low_r, [])
+                            if not m_pool:
+                                continue
+                            farm_cnt = sum(len(st["craftable_by_rank"].get(low_r, [])) for st in state_map.values())
+                            if farm_cnt + len(m_pool) >= 3:
+                                take_m = m_pool[:50 - len(borrow_units)]
+                                if take_m:
+                                    borrow_units.extend(take_m)
+                                    borrow_desc_parts.append(f"{len(take_m)}×{RANK_BADGE.get(low_r, low_r)}")
+                        if borrow_units:
+                            # Выбираем фарм-аккаунт с наибольшим числом свободных слотов кузни
+                            best_rec = max(state_map.values(), key=lambda s: s["available_slots"])
+                            req_payload = compress_card_units_for_gql(borrow_units)
+                            await asyncio.sleep(random.uniform(3.0, 5.0))
+                            b_res = await gql_call(
+                                best_rec["page"],
+                                GQL_SUGGEST_CARD_TRADE,
+                                {
+                                    "input": {
+                                        "userId": main_uid,
+                                        "offer": [],
+                                        "request": req_payload,
+                                        "description": [random.choice(TRADE_RANDOM_MESSAGES)],
+                                    }
+                                },
+                                "suggestCardTrade",
+                            )
+                            if ((b_res.get("data") or {}).get("suggestCardTrade") or {}).get("success"):
+                                b_summary = ", ".join(borrow_desc_parts)
+                                send_tg_message(
+                                    f"🤝 <b>Запрос карт с основы <a href='{MAIN_ACCOUNT_URL}'>{MAIN_ACCOUNT_SLUG}</a> для переплавки!</b>\n\n"
+                                    f"Аккаунт <b>{best_rec['acc']['id']}</b> (свободно слотов кузни: {best_rec['available_slots']}/5) "
+                                    f"запросил с вашей основы карты B-ранга и ниже ({b_summary}), чтобы переплавить их на ферме.\n"
+                                    "👉 <b>Пожалуйста, подтвердите входящий обмен на сайте (ожидаю до 2.5 минут)...</b>",
+                                    add_keyboard=False,
+                                )
+                                prev_total_cards = sum(int(n.get("quantity") or 1) for n in best_rec["cards_nodes"])
+                                for _ in range(25):
+                                    if FARM_STOP_FLAG:
+                                        break
+                                    await asyncio.sleep(6.0)
+                                    cur_nodes = await fetch_all_user_cards_gql(best_rec["page"], best_rec["user_id"], modifier_val=0)
+                                    cur_total = sum(int(n.get("quantity") or 1) for n in cur_nodes)
+                                    if cur_total > prev_total_cards:
+                                        best_rec["logs"].append(f"📥 Получены карты с основы {MAIN_ACCOUNT_SLUG} ({b_summary}) для крафта")
+                                        send_tg_message("✅ <b>Обмен с основы подтверждён!</b> Продолжаю переплавку...", add_keyboard=False)
+                                        break
+
+                # 3. Межаккаунтный обмен и переплавка между 4 фарм-аккаунтами (с человеческими паузами!)
+                for _ in range(15):
+                    if FARM_STOP_FLAG:
+                        break
+                    await refresh_farm_state(state_map)
+                    total_free_slots = sum(st["available_slots"] for st in state_map.values())
+                    if total_free_slots <= 0:
+                        break
+
+                    target_rank = None
+                    for r in FORGE_UPGRADE_CHAIN:
+                        total_r = sum(len(st["craftable_by_rank"].get(r, [])) for st in state_map.values())
+                        if total_r >= 3:
+                            target_rank = r
+                            break
+
+                    if not target_rank:
+                        break
+
+                    receiver_candidates = [st for st in state_map.values() if st["available_slots"] > 0]
+                    if not receiver_candidates:
+                        break
+                    receiver_candidates.sort(
+                        key=lambda s: (len(s["craftable_by_rank"].get(target_rank, [])), s["available_slots"]),
+                        reverse=True,
+                    )
+                    receiver = receiver_candidates[0]
+                    rec_id = receiver["acc"]["id"]
+                    rec_uid = receiver["user_id"]
+
+                    have_on_receiver = len(receiver["craftable_by_rank"].get(target_rank, []))
+                    need_count = max(0, 3 - have_on_receiver)
+
+                    if need_count == 0:
+                        await forge_local_triples_on_account(receiver)
+                        continue
+
+                    transferred_any = False
+                    for donor_id, donor in state_map.items():
+                        if donor_id == rec_id or need_count <= 0 or FARM_STOP_FLAG:
+                            continue
+                        donor_pool = donor["craftable_by_rank"].get(target_rank, [])
+                        if not donor_pool:
+                            continue
+
+                        take_units = donor_pool[:need_count]
+                        offer_payload = compress_card_units_for_gql(take_units)
+                        # Человеческая пауза перед отправкой межаккаунтного трейда
+                        await asyncio.sleep(random.uniform(4.0, 6.2))
+                        tr_res = await gql_call(
+                            donor["page"],
+                            GQL_SUGGEST_CARD_TRADE,
+                            {
+                                "input": {
+                                    "userId": rec_uid,
+                                    "offer": offer_payload,
+                                    "request": [],
+                                    "description": [random.choice(TRADE_RANDOM_MESSAGES)],
+                                }
+                            },
+                            "suggestCardTrade",
+                        )
+                        if ((tr_res.get("data") or {}).get("suggestCardTrade") or {}).get("success"):
+                            need_count -= len(take_units)
+                            transferred_any = True
+                            donor["logs"].append(
+                                f"📤 Отправлен трейд ({len(take_units)}×{target_rank}) ➡️ <b>{rec_id}</b> для переплавки"
+                            )
+                            await asyncio.sleep(random.uniform(2.5, 4.0))
+                            acc_logs = await accept_whitelisted_incoming_trades(receiver["page"], rec_id, rec_uid)
+                            receiver["logs"].extend(acc_logs)
+
+                    if not transferred_any:
+                        break
+
+                    await refresh_farm_state(state_map)
+                    await forge_local_triples_on_account(receiver)
+
+                await refresh_farm_state(state_map)
+
+                report_lines = ["⚒️ <b>Отчёт работы Кузницы (Переплавка):</b>\n"]
+                for aid, st in state_map.items():
+                    inv_str = format_text_only_inventory_summary(st["cards_nodes"], st["shards_nodes"])
+                    rst_info = f", сброс {format_reset_at_human(st.get('reset_at'))}" if st["available_slots"] < 5 and st.get("reset_at") else ""
+                    report_lines.append(
+                        f"👤 <b>{aid}</b> (IP: <code>{st['ip']}</code> | Слоты кузни: <b>{st['available_slots']}/5</b> свободно{rst_info}):"
+                    )
+                    if st["logs"]:
+                        for lg in st["logs"]:
+                            report_lines.append(f"   • {lg}")
+                    else:
+                        report_lines.append("   • Переплавок не требовалось")
+                    report_lines.append(f"   📦 Сейчас на аккаунте: {inv_str}\n")
+
+                # 4. Отправка готовых карт НА ОСНОВУ cesium254 по новым правилам:
+                #    - На основу отправляются ТОЛЬКО карты ранга A и выше (A, S, R)!
+                #    - Карты B, C, D, F остаются лежать на фарм-аккаунтах для следующих переплавок!
+                #    - Осколки отправляются на основу ТОЛЬКО попутно вместе с картой A/S/R (отдельно осколки не шлются, а копятся!).
+                if not main_uid:
                     report_lines.append(f"⚠️ Не удалось получить ID основного аккаунта {MAIN_ACCOUNT_SLUG}.")
                 else:
-                    main_uid = main_user["id"]
                     total_sent_cards: Counter = Counter()
                     total_sent_shards: Counter = Counter()
+                    accounts_that_sent: list[str] = []
 
                     for aid, st in state_map.items():
-                        all_offer_entries = []
+                        if FARM_STOP_FLAG:
+                            break
+                        high_rank_offers = []
+                        acc_cards_cnt: Counter = Counter()
                         for node in st["cards_nodes"]:
                             if node.get("locked"):
                                 continue
@@ -2751,10 +2961,17 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                             qty = int(node.get("quantity") or 1)
                             mod = int(node.get("modifier") or 0)
                             rank = str((node.get("card") or {}).get("rank") or "?").upper()
-                            if cid and qty > 0:
-                                all_offer_entries.append({"cardId": cid, "modifier": mod, "quantity": qty})
-                                total_sent_cards[rank] += qty
+                            # Фильтр: отправляем на основу ТОЛЬКО ранг A и выше (A, S, R)!
+                            if cid and qty > 0 and rank in ("A", "S", "R"):
+                                high_rank_offers.append({"cardId": cid, "modifier": mod, "quantity": qty})
+                                acc_cards_cnt[rank] += qty
 
+                        # Если на этом аккаунте НЕТ карт A/S/R — ничего с него не отправляем (мелочь B/C/D/F и осколки копим дальше!)
+                        if not high_rank_offers:
+                            continue
+
+                        all_offer_entries = list(high_rank_offers)
+                        acc_shards_cnt: Counter = Counter()
                         for node in st["shards_nodes"]:
                             if node.get("locked"):
                                 continue
@@ -2764,11 +2981,13 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                             rank = str((node.get("card") or {}).get("rank") or "?").upper()
                             if cid and qty > 0:
                                 all_offer_entries.append({"cardId": cid, "modifier": mod, "quantity": qty})
-                                total_sent_shards[rank] += qty
+                                acc_shards_cnt[rank] += qty
 
+                        sent_ok_any = False
                         for i in range(0, len(all_offer_entries), 50):
                             chunk = all_offer_entries[i : i + 50]
-                            await gql_call(
+                            await asyncio.sleep(random.uniform(4.0, 6.2))
+                            s_res = await gql_call(
                                 st["page"],
                                 GQL_SUGGEST_CARD_TRADE,
                                 {
@@ -2776,36 +2995,51 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                                         "userId": main_uid,
                                         "offer": chunk,
                                         "request": [],
-                                        "description": [],
+                                        "description": [random.choice(TRADE_RANDOM_MESSAGES)],
                                     }
                                 },
                                 "suggestCardTrade",
                             )
+                            if ((s_res.get("data") or {}).get("suggestCardTrade") or {}).get("success"):
+                                sent_ok_any = True
 
-                    c_summary = ", ".join(
-                        f"<b>{total_sent_cards[r]}</b> {RANK_BADGE.get(r, r)}"
-                        for r in RANK_ORDER
-                        if total_sent_cards.get(r, 0) > 0
-                    ) or "нет"
-                    s_summary = ", ".join(
-                        f"<b>{total_sent_shards[r]}</b> {RANK_BADGE.get(r, r)}"
-                        for r in RANK_ORDER
-                        if total_sent_shards.get(r, 0) > 0
-                    ) or "нет"
+                        if sent_ok_any:
+                            accounts_that_sent.append(aid)
+                            for r_k, q_v in acc_cards_cnt.items():
+                                total_sent_cards[r_k] += q_v
+                            for r_k, q_v in acc_shards_cnt.items():
+                                total_sent_shards[r_k] += q_v
 
-                    if sum(total_sent_cards.values()) > 0 or sum(total_sent_shards.values()) > 0:
+                    if accounts_that_sent:
+                        c_summary = ", ".join(
+                            f"<b>{total_sent_cards[r]}</b> {RANK_BADGE.get(r, r)}"
+                            for r in RANK_ORDER
+                            if total_sent_cards.get(r, 0) > 0
+                        ) or "нет"
+                        s_summary = ", ".join(
+                            f"<b>{total_sent_shards[r]}</b> {RANK_BADGE.get(r, r)}"
+                            for r in RANK_ORDER
+                            if total_sent_shards.get(r, 0) > 0
+                        ) or "нет"
                         report_lines.append(
-                            f"🎁 <b>Всего хватило, отправляю вам трейд на основу <a href=\"{MAIN_ACCOUNT_URL}\">{MAIN_ACCOUNT_SLUG}</a>:</b>\n"
+                            f"🎁 <b>Отправлены трейды (ранг A и выше + попутные осколки) на основу <a href='{MAIN_ACCOUNT_URL}'>{MAIN_ACCOUNT_SLUG}</a> (от: {', '.join(accounts_that_sent)}):</b>\n"
                             f"🃏 <b>Карты ({sum(total_sent_cards.values())} шт.):</b> {c_summary}\n"
-                            f"🧩 <b>Осколки ({sum(total_sent_shards.values())} шт.):</b> {s_summary}"
+                            f"🧩 <b>Попутные осколки ({sum(total_sent_shards.values())} шт.):</b> {s_summary}"
                         )
                     else:
-                        report_lines.append("ℹ️ На фарм-аккаунтах сейчас нет свободных карт или осколков для отправки на основу.")
+                        report_lines.append(
+                            "ℹ️ <b>Карт ранга A и выше сейчас нет</b> — все карты B/C/D/F и осколки оставлены на фарм-аккаунтах для накопления и следующих переплавок."
+                        )
 
-            for aid, st in state_map.items():
-                await st["context"].storage_state(path=str(get_session_file(aid)))
-            for ctx in contexts:
-                await ctx.close()
+                for aid, st in state_map.items():
+                    await st["context"].storage_state(path=str(get_session_file(aid)))
+            finally:
+                ACTIVE_BROWSER_PAGES.clear()
+                for ctx in contexts:
+                    try:
+                        await ctx.close()
+                    except Exception:
+                        pass
             await browser.close()
     finally:
         proxy_mgr.stop_all()
@@ -3663,7 +3897,7 @@ async def run_check_all_5_accounts() -> None:
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v18.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v19.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -3701,7 +3935,7 @@ def fetch_tg_updates_sync(offset_val: int, timeout_sec: int = 4) -> list[dict]:
         time.sleep(2)
         return []
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={offset_val}&timeout={timeout_sec}"
-    req = urllib.request.Request(url, headers={"User-Agent": "SenkuroDirectBot/18.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "SenkuroDirectBot/19.0"})
     try:
         with urllib.request.urlopen(req, timeout=timeout_sec + 6) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -3917,7 +4151,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     global ACTIVE_FARM_TASK, FARM_STOP_FLAG
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v18.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v19.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -3999,7 +4233,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            send_full_debug_log_to_user("Полный лог работы комбайна v18.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v19.0")
             return
 
         if data == "check_farm_status":
@@ -4048,7 +4282,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if lower in ("/start", "/menu", "/help", "меню"):
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v18.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v19.0</b>\n\n"
                 "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
                 "или просто напишите промокод одним словом в чат:",
                 add_keyboard=True,
@@ -4061,7 +4295,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
-            send_full_debug_log_to_user("Полный лог работы комбайна v18.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v19.0")
             return
 
         if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
@@ -4198,7 +4432,7 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v18.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v19.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",
