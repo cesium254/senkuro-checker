@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v21.0 (100% TELEGRAM -> CLOUDFLARE -> GITHUB)
+SENKURO FULL AUTOMATION COMBINE v21.1 (100% TELEGRAM -> CLOUDFLARE -> GITHUB)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -254,7 +254,7 @@ def get_collapsible_reply_keyboard() -> dict:
     rows = [
         [{"text": "▶️ Фарм (8 ч)"}, {"text": "📊 Статус"}, {"text": "🛑 СТОП"}],
         [{"text": "🪙 Баланс"}, {"text": "🎴 Паки"}, {"text": "🎟 Промокод"}],
-        [{"text": "⚒️ Кузня+Трейд"}, {"text": "🔄 Чекать 5"}, {"text": "🚀 ВСЁ"}],
+        [{"text": "⚒️ Кузня+Трейд"}, {"text": "🔄 Чекать 5"}],
     ]
     if DEBUG_MODE:
         rows.append([{"text": "📸 Экран"}, {"text": "📜 Лог"}])
@@ -368,7 +368,7 @@ def upload_debug_log_to_github_noop(reason: str = "task") -> Optional[str]:
         headers = {
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {GITHUB_PAT_TOKEN}",
-            "User-Agent": "SenkuroBot/21.0",
+            "User-Agent": "SenkuroBot/21.1",
             "X-GitHub-Api-Version": "2022-11-28",
             "Content-Type": "application/json",
         }
@@ -2941,6 +2941,16 @@ async def run_smart_forge_and_trade_pipeline() -> None:
 
                         take_units = donor_pool[:need_count]
                         offer_payload = compress_card_units_for_gql(take_units)
+                        # Попутно прикрепляем осколки с аккаунта-донора в этот же трейд на аккаунт-крафтер,
+                        # чтобы осколки не застревали на аккаунтах без A-карт, а собирались вместе и уходили на основу с картой A/S!
+                        for sh_node in donor.get("shards_nodes", []):
+                            if sh_node.get("locked") or len(offer_payload) >= 50:
+                                continue
+                            sh_cid = (sh_node.get("card") or {}).get("id") or sh_node.get("cardId")
+                            sh_qty = int(sh_node.get("quantity") or 1)
+                            sh_mod = int(sh_node.get("modifier") or 1)
+                            if sh_cid and sh_qty > 0:
+                                offer_payload.append({"cardId": sh_cid, "modifier": sh_mod, "quantity": sh_qty})
                         # Человеческая пауза перед отправкой межаккаунтного трейда
                         await asyncio.sleep(random.uniform(4.0, 6.2))
                         tr_res = await gql_call(
@@ -3962,7 +3972,7 @@ async def run_check_all_5_accounts() -> None:
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v21.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v21.1 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -4000,7 +4010,7 @@ def fetch_tg_updates_sync(offset_val: int, timeout_sec: int = 4) -> list[dict]:
         time.sleep(2)
         return []
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={offset_val}&timeout={timeout_sec}"
-    req = urllib.request.Request(url, headers={"User-Agent": "SenkuroDirectBot/21.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "SenkuroDirectBot/21.1"})
     try:
         with urllib.request.urlopen(req, timeout=timeout_sec + 6) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -4212,7 +4222,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     FARM_STOP_FLAG = False
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v21.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v21.1 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -4296,7 +4306,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            send_full_debug_log_to_user("Полный лог работы комбайна v21.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v21.1")
             return
 
         if data == "check_farm_status":
@@ -4345,7 +4355,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if lower in ("/start", "/menu", "/help", "меню"):
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v21.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v21.1</b>\n\n"
                 "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
                 "или просто напишите промокод одним словом в чат:",
                 add_keyboard=True,
@@ -4358,7 +4368,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
-            send_full_debug_log_to_user("Полный лог работы комбайна v21.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v21.1")
             return
 
         if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
@@ -4457,7 +4467,7 @@ async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: fl
     log_debug(f"[DAEMON READY] Прямой Telegram Long Polling запущен (offset={offset}) — сервер 100% готов!")
     if os.environ.get("GH_EVENT_NAME") == "push":
         send_tg_message(
-            "🟢 <b>Сервер полностью запущен и готов к работе (v21.0)!</b>\n\n"
+            "🟢 <b>Сервер полностью запущен и готов к работе (v21.1)!</b>\n\n"
             "Браузер Google Chrome и виртуальный экран готовы — теперь любая кнопка сработает сразу 👇:",
             add_keyboard=True,
         )
@@ -4506,7 +4516,7 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v21.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v21.1")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",
