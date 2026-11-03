@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v13.0 (100% TELEGRAM -> CLOUDFLARE -> GITHUB)
+SENKURO FULL AUTOMATION COMBINE v14.0 (100% TELEGRAM -> CLOUDFLARE -> GITHUB)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -80,7 +80,7 @@ GITHUB_REPO_FULL = os.environ.get("GITHUB_REPOSITORY", "cesium254/senkuro-checke
 GITHUB_PAT_TOKEN = (
     os.environ.get("GITHUB_PAT", "").strip()
     or os.environ.get("GITHUB_TOKEN", "").strip()
-    or "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"
+    or ""
 )
 
 DEBUG_LOG_FILE = Path("/tmp/senkuro_full_debug.log")
@@ -364,7 +364,7 @@ def send_tg_photo_bytes(png_bytes: bytes, caption: str = "", add_keyboard: bool 
     return send_tg_multipart("sendPhoto", "photo", "screen.png", png_bytes, "image/png", fields)
 
 
-def upload_debug_log_to_github(reason: str = "task") -> Optional[str]:
+def upload_debug_log_to_github_noop(reason: str = "task") -> Optional[str]:
     """
     Автоматически загружает полный файл лога /tmp/senkuro_full_debug.log в ваш репозиторий
     cesium254/senkuro-checker по пути logs/senkuro_debug.log с тегом [skip ci], чтобы вы или ИИ
@@ -418,16 +418,18 @@ def upload_debug_log_to_github(reason: str = "task") -> Optional[str]:
     return None
 
 
+def upload_debug_log_to_github_noop(reason: str = "task") -> None:
+    return None
+
+
 def send_full_debug_log_to_user(reason_title: str = "Полный лог работы") -> None:
     if not DEBUG_LOG_FILE.exists():
         send_tg_message("ℹ️ Файл лога пока пуст.", add_keyboard=True)
         return
-    gh_url = upload_debug_log_to_github(reason_title)
     raw_bytes = DEBUG_LOG_FILE.read_bytes()
-    gh_line = f'\n🔗 <b>Также сохранено на GitHub:</b> <a href="{gh_url}">logs/senkuro_debug.log</a>' if gh_url else ""
     caption = (
-        f"📜 <b>{reason_title}</b> (размер: {len(raw_bytes) // 1024} КБ){gh_line}\n\n"
-        "Вы можете просто переслать или закинуть этот файл <code>senkuro_debug_log.txt</code> в чат с ИИ для полного анализа!"
+        f"📜 <b>{reason_title}</b> (размер: {max(1, len(raw_bytes) // 1024)} КБ)\n\n"
+        "Откройте этот файл и скопируйте текст (или перешлите его в чат с ИИ) для мгновенной проверки!"
     )
     fields = {
         "chat_id": str(TELEGRAM_CHAT_ID),
@@ -438,10 +440,33 @@ def send_full_debug_log_to_user(reason_title: str = "Полный лог раб�
     send_tg_multipart("sendDocument", "document", "senkuro_debug_log.txt", raw_bytes, "text/plain", fields)
 
 
+async def capture_page_png_fast(pg: Page) -> Optional[bytes]:
+    """
+    Мгновенный захват скриншота через Chrome DevTools Protocol (Page.captureScreenshot) за 0.05 сек!
+    Не зависает на ожидании шрифтов или анимаций через прокси, в отличие от обычного pg.screenshot().
+    """
+    import base64
+    try:
+        cdp = await pg.context.new_cdp_session(pg)
+        try:
+            res = await asyncio.wait_for(cdp.send("Page.captureScreenshot", {"format": "png"}), timeout=4.0)
+            if res and res.get("data"):
+                return base64.b64decode(res["data"])
+        finally:
+            await cdp.detach()
+    except Exception as e:
+        log_debug(f"[CDP SCREENSHOT FALLBACK] {e}")
+    try:
+        return await pg.screenshot(full_page=False, animations="disabled", timeout=5000)
+    except Exception as e2:
+        log_debug(f"[STD SCREENSHOT ERR] {e2}")
+        return None
+
+
 async def send_live_screen_snapshot(custom_caption: str = "") -> None:
     """
-    Делает моментальный скриншот открытых вкладок браузера (или виртуального экрана Xvfb)
-    и отправляет фотографию прямо в Telegram!
+    Делает моментальный скриншот открытых вкладок браузера через CDP за 0.05 сек
+    и отправляет фотографию прямо в Telegram без блокировки потока!
     """
     sent_any = False
     for label, pg in list(ACTIVE_BROWSER_PAGES.items()):
@@ -449,7 +474,9 @@ async def send_live_screen_snapshot(custom_caption: str = "") -> None:
             if pg.is_closed():
                 ACTIVE_BROWSER_PAGES.pop(label, None)
                 continue
-            png_data = await pg.screenshot(full_page=False, timeout=8000)
+            png_data = await capture_page_png_fast(pg)
+            if not png_data:
+                continue
             try:
                 t_str = await pg.title()
             except Exception:
@@ -461,15 +488,15 @@ async def send_live_screen_snapshot(custom_caption: str = "") -> None:
             )
             if custom_caption:
                 cap = f"{custom_caption}\n\n" + cap
-            send_tg_photo_bytes(png_data, cap, add_keyboard=True)
+            await asyncio.to_thread(send_tg_photo_bytes, png_data, cap, True)
             sent_any = True
         except Exception as e:
             log_debug(f"[SCREENSHOT WARNING] {label}: {e}")
 
     if not sent_any:
         send_tg_message(
-            "⚪ <b>Сейчас ни одно окно браузера не открыто</b> (сервер ждёт вашу команду).\n\n"
-            "Нажмите любую задачу (например, «🪙 Баланс монет» или «▶️ Запустить фарм»), и прямо во время её выполнения жмите <b>«📸 Посмотреть экран»</b>!",
+            "⚪ <b>Сейчас ни одно окно браузера не открыто</b> (сервер в режиме ожидания).\n\n"
+            "Запустите любую задачу (например, «🪙 Баланс монет» или «▶️ Запустить фарм»), и прямо во время её работы нажимайте <b>«📸 Посмотреть экран»</b>!",
             add_keyboard=True,
         )
 
@@ -863,7 +890,7 @@ mutation redeemRedemption($input: RedeemRedemptionInput!) {
       type
       titles {
         lang
-        text
+        content
       }
     }
   }
@@ -904,7 +931,7 @@ query fetchPackAndPending($slug: String!) {
       animated
       titles {
         lang
-        text
+        content
       }
     }
   }
@@ -929,7 +956,7 @@ mutation openCardPack($input: OpenCardPackInput!) {
         animated
         titles {
           lang
-          text
+          content
         }
       }
     }
@@ -971,7 +998,7 @@ mutation forgeCards($input: ForgeCardInput!) {
         rank
         titles {
           lang
-          text
+          content
         }
       }
     }
@@ -988,7 +1015,7 @@ mutation forgeCards($input: ForgeCardInput!) {
         rank
         titles {
           lang
-          text
+          content
         }
       }
     }
@@ -1027,7 +1054,7 @@ query fetchUserCards($userId: ID!, $after: String, $modifier: UserCardModifierFi
           explicit
           titles {
             lang
-            text
+            content
           }
           image {
             original {
@@ -1082,7 +1109,7 @@ query fetchCardTrades($userId: ID!, $status: CardTradeStatus, $after: String) {
             rank
             titles {
               lang
-              text
+              content
             }
           }
         }
@@ -1203,7 +1230,7 @@ async def gql_call(page: Page, query: str, variables: Optional[dict] = None, ope
 
         err_msgs = " | ".join(str(e.get("message") or "") for e in errs if isinstance(e, dict))
         log_debug(f"[GQL WARN #{attempt+1}] op={operation_name} errors={err_msgs[:300]}")
-        m_bad = re.search(r'Cannot query field "([A-Za-z0-9_]+)"', err_msgs)
+        m_bad = re.search(r'(?:Cannot query field|Unknown field) "([A-Za-z0-9_]+)"', err_msgs)
         if m_bad:
             bad_f = m_bad.group(1)
             new_q = _strip_bad_gql_field(cur_query, bad_f)
@@ -1332,80 +1359,7 @@ async def create_account_context(playwright_browser, acc: dict, proxy_url: Optio
     return ctx
 
 
-def build_kaggle_v65_autologin_init_js(login_val: str, pass_val: str, uname: str) -> str:
-    """
-    Проверенный боевой авто-логин из Senkuro_Kaggle_Server_v6_5_Ready.ipynb:
-    ждёт исчезновения экрана «Приготовьтесь к приключениям», кликает «Войти»,
-    на sso.senkuro.org ждёт появления поля пароля и вводит логин/пароль через нативный сеттер.
-    """
-    return f"""
-    (() => {{
-        const LOGIN_STR = {json.dumps(login_val)};
-        const PASS_STR = {json.dumps(pass_val)};
-        const MY_UNAME = {json.dumps(uname)};
-
-        function setNativeVal(el, val) {{
-            if (!el) return;
-            el.focus();
-            const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
-            const setter = Object.getOwnPropertyDescriptor(proto, 'value') ? Object.getOwnPropertyDescriptor(proto, 'value').set : null;
-            if (setter) setter.call(el, val);
-            else el.value = val;
-            el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-            el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-        }}
-
-        function tickAutoLogin() {{
-            const host = window.location.hostname || '';
-            const path = window.location.pathname || '';
-            const bodyTxt = document.body ? (document.body.innerText || '') : '';
-            if (!document.body || bodyTxt.includes('Приготовьтесь к приключениям')) return;
-
-            if (host.includes('sso.senkuro.org')) {{
-                const passInput = document.querySelector('input[type="password"]');
-                if (passInput) {{
-                    const allInputs = Array.from(document.querySelectorAll('input:not([type="hidden"]):not([type="password"]):not([type="checkbox"])'));
-                    const userInput = allInputs[0];
-                    if (userInput && userInput.value !== LOGIN_STR) setNativeVal(userInput, LOGIN_STR);
-                    if (passInput.value !== PASS_STR) setNativeVal(passInput, PASS_STR);
-                    const lastSub = parseInt(sessionStorage.getItem('senkuro_sso_submit_ts') || '0', 10);
-                    if (Date.now() - lastSub > 6500) {{
-                        sessionStorage.setItem('senkuro_sso_submit_ts', String(Date.now()));
-                        setTimeout(() => {{
-                            if (userInput && userInput.value !== LOGIN_STR) setNativeVal(userInput, LOGIN_STR);
-                            if (passInput && passInput.value !== PASS_STR) setNativeVal(passInput, PASS_STR);
-                            const submitBtn = document.querySelector('button[type="submit"]') ||
-                                Array.from(document.querySelectorAll('button')).find(b => {{
-                                    const t = (b.innerText || b.textContent || '').trim().toLowerCase();
-                                    return t.includes('продолжить') || t.includes('войти') || t.includes('вход') || t.includes('login') || t.includes('sign in');
-                                }});
-                            if (submitBtn) submitBtn.click();
-                        }}, 500);
-                    }}
-                    return;
-                }}
-                if (path.includes('/account') || bodyTxt.includes('Популярные действия') || bodyTxt.includes('Выйти')) {{
-                    window.location.href = 'https://senkuro.com/users/' + MY_UNAME + '/bookmarks';
-                }}
-            }}
-        }}
-
-        if (!window.__senkuroV13AutoLogin) {{
-            window.__senkuroV13AutoLogin = true;
-            setInterval(tickAutoLogin, 1200);
-            setTimeout(tickAutoLogin, 400);
-        }}
-    }})();
-    """
-
-
 async def check_is_authenticated_on_senkuro(page: Page, acc_slug: str, intercepted_user: dict) -> Optional[dict]:
-    """
-    Комплексная проверка входа:
-    1) Перехваченные ответы GraphQL от самого сайта Senkuro
-    2) Самовосстанавливающийся запрос fetchViewer / fetchUserBySlug
-    3) Проверка реального DOM (исчезла ли кнопка «Войти» и появился ли токен/аватарка профиля)
-    """
     if intercepted_user.get("id"):
         return intercepted_user
 
@@ -1421,22 +1375,11 @@ async def check_is_authenticated_on_senkuro(page: Page, acc_slug: str, intercept
                     return t === 'Войти' || t === 'Вход';
                 });
                 const hasTokenCookie = document.cookie.includes('access_token') || document.cookie.includes('refresh_token');
-                let hasLocalToken = false;
-                try {
-                    for (let i = 0; i < localStorage.length; i++) {
-                        const k = (localStorage.key(i) || '').toLowerCase();
-                        if (k.includes('token') || k.includes('auth') || k.includes('user')) {
-                            hasLocalToken = true;
-                            break;
-                        }
-                    }
-                } catch (e) {}
                 const profileLink = document.querySelector(`header a[href*="/users/${slug}"], nav a[href*="/users/${slug}"], a[href="/users/${slug}"]`);
                 return {
                     loading: false,
                     hasLoginBtn: !!loginBtn,
                     hasTokenCookie,
-                    hasLocalToken,
                     hasProfileLink: !!profileLink,
                     url: window.location.href,
                     title: document.title
@@ -1451,14 +1394,12 @@ async def check_is_authenticated_on_senkuro(page: Page, acc_slug: str, intercept
     if dom_state.get("loading"):
         return None
 
-    # Пробуем получить объект пользователя через GraphQL
     v_res = await gql_call(page, GQL_FETCH_VIEWER, {}, "fetchViewer")
     v_data = (v_res.get("data") or {}).get("viewer") or {}
     v_user = v_data.get("user") if isinstance(v_data.get("user"), dict) else v_data
     if isinstance(v_user, dict) and v_user.get("id"):
         return v_user
 
-    # Если на сайте НЕТ кнопки «Войти» (или есть кука access_token / ссылка на профиль в шапке), значит мы УЖЕ ВОШЛИ!
     if not dom_state.get("hasLoginBtn") and "senkuro.com" in str(dom_state.get("url", "")) and "/auth/" not in str(dom_state.get("url", "")):
         u_res = await gql_call(page, GQL_FETCH_USER_BY_SLUG, {"slug": acc_slug}, "fetchUserBySlug")
         u_obj = (u_res.get("data") or {}).get("user") or {}
@@ -1473,15 +1414,13 @@ async def check_is_authenticated_on_senkuro(page: Page, acc_slug: str, intercept
 
 
 async def ensure_logged_in(context: BrowserContext, acc: dict) -> tuple[Page, Optional[dict]]:
-    if acc.get("login") and acc.get("password"):
-        await context.add_init_script(build_kaggle_v65_autologin_init_js(acc["login"], acc["password"], acc["id"]))
-
     page = await context.new_page()
     ACTIVE_BROWSER_PAGES[acc["id"]] = page
     intercepted_user: dict[str, Any] = {}
 
-    async def on_gql_resp(resp):
-        if "graphql" in resp.url and resp.request.method == "POST":
+    async def on_gql_or_sso_resp(resp):
+        u_str = resp.url
+        if "graphql" in u_str and resp.request.method == "POST":
             try:
                 j = await resp.json()
                 d = j.get("data") or {}
@@ -1491,8 +1430,14 @@ async def ensure_logged_in(context: BrowserContext, acc: dict) -> tuple[Page, Op
                     intercepted_user.update(u)
             except Exception:
                 pass
+        elif "sso.senkuro.org" in u_str and (resp.request.method == "POST" or resp.status >= 400):
+            try:
+                body_preview = (await resp.text())[:300]
+            except Exception:
+                body_preview = ""
+            log_debug(f"[SSO HTTP] {acc['id']}: {resp.request.method} {u_str[:100]} -> status={resp.status} body={body_preview}")
 
-    page.on("response", on_gql_resp)
+    page.on("response", on_gql_or_sso_resp)
 
     target_start_url = acc.get("bookmarks_url") or f"https://senkuro.com/users/{acc['id']}/bookmarks"
     log_debug(f"[AUTH START] {acc['id']}: открываю {target_start_url}")
@@ -1501,7 +1446,6 @@ async def ensure_logged_in(context: BrowserContext, acc: dict) -> tuple[Page, Op
     except Exception as e:
         log_debug(f"[AUTH GOTO WARN] {acc['id']}: {e}")
 
-    # Ждём до 12 секунд, пока исчезнет заставка «Приготовьтесь к приключениям»
     for _ in range(15):
         await page.wait_for_timeout(800)
         try:
@@ -1524,7 +1468,6 @@ async def ensure_logged_in(context: BrowserContext, acc: dict) -> tuple[Page, Op
 
     for attempt in range(1, 3):
         try:
-            # Кликаем кнопку «Войти» на senkuro.com
             if "senkuro.com" in page.url and "sso.senkuro" not in page.url:
                 clicked = await page.evaluate(
                     """() => {
@@ -1540,40 +1483,160 @@ async def ensure_logged_in(context: BrowserContext, acc: dict) -> tuple[Page, Op
         except Exception as e:
             log_debug(f"[AUTH CLICK WARN] {acc['id']}: {e}")
 
-        # Ждем перехода на sso.senkuro.org И реального появления поля пароля (или завершения авто-логина)
-        for step_w in range(35):
-            await page.wait_for_timeout(900)
-            cur_u = page.url
+        # Ждем перехода на sso.senkuro.org (до 12 сек)
+        for _ in range(15):
+            await page.wait_for_timeout(800)
+            if "sso.senkuro." in page.url:
+                break
 
-            if "sso.senkuro." in cur_u:
-                try:
-                    pass_loc = page.locator('input[type="password"]')
-                    if await pass_loc.count() > 0:
-                        user_loc = page.locator('input:not([type="hidden"]):not([type="password"]):not([type="checkbox"])').first
-                        if await user_loc.count() > 0:
-                            await user_loc.fill(acc["login"])
-                        await pass_loc.first.fill(acc["password"])
-                        await page.wait_for_timeout(400)
-                        sub_loc = page.locator('button[type="submit"], button:has-text("Продолжить"), button:has-text("Войти")').first
-                        if await sub_loc.count() > 0:
-                            await sub_loc.click()
-                            log_debug(f"[AUTH SSO] {acc['id']}: логин и пароль введены, нажата кнопка входа на {cur_u}")
-                            await page.wait_for_timeout(2500)
-                except Exception as sso_e:
-                    log_debug(f"[AUTH SSO FILL WARN] {acc['id']}: {sso_e}")
-                continue
+        if "sso.senkuro." in page.url:
+            # Ждем, пока форма на sso.senkuro.org полностью отрисуется (до 10 сек)
+            for _ in range(12):
+                await page.wait_for_timeout(800)
+                has_pass = await page.evaluate("() => !!document.querySelector('input[type=password]')")
+                if has_pass:
+                    break
 
-            if "senkuro.com" in cur_u and "/auth/" not in cur_u and step_w >= 3:
-                u_now = await check_is_authenticated_on_senkuro(page, acc["id"], intercepted_user)
-                if u_now:
-                    log_debug(f"[AUTH SUCCESS] {acc['id']}: вход успешно выполнен (id={u_now.get('id')})")
-                    await context.storage_state(path=str(get_session_file(acc["id"])))
-                    return page, u_now
+            # Записываем точную структуру инпутов и кнопок на sso.senkuro.org в лог и вводим данные РОВНО 1 РАЗ за попытку!
+            sso_fill_info = await page.evaluate(
+                """({ loginStr, passStr }) => {
+                    function isVis(el) {
+                        if (!el) return false;
+                        const r = el.getBoundingClientRect();
+                        return r.width > 5 && r.height > 5 && window.getComputedStyle(el).visibility !== 'hidden';
+                    }
+                    function setNativeVal(el, val) {
+                        if (!el) return;
+                        el.focus();
+                        const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+                        const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+                        if (desc && desc.set) desc.set.call(el, val);
+                        else el.value = val;
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                        el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+                    }
 
-        # Если после ожидания мы застряли, возвращаемся на закладки и проверяем ещё раз
+                    const allInputs = Array.from(document.querySelectorAll('input')).filter(isVis);
+                    const passInput = allInputs.find(i => i.type === 'password');
+                    const userInput = allInputs.find(i => i.type !== 'password' && i.type !== 'checkbox' && i.type !== 'hidden');
+
+                    const inputsDiag = allInputs.map(i => ({
+                        type: i.type, name: i.name || '', id: i.id || '', placeholder: i.placeholder || ''
+                    }));
+
+                    const allBtns = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]')).filter(isVis);
+                    const btnsDiag = allBtns.map(b => ({
+                        tag: b.tagName, type: b.getAttribute('type') || 'default', text: (b.innerText || b.value || '').trim().slice(0, 40)
+                    }));
+
+                    if (userInput) setNativeVal(userInput, loginStr);
+                    if (passInput) setNativeVal(passInput, passStr);
+
+                    // ВАЖНО: Ищем кнопку строго по тексту «Продолжить» / «Войти» / «Вход» / «Login»,
+                    // чтобы НИКОГДА не кликнуть по кнопке-глазику показа пароля (у которой по стандарту HTML тоже type="submit"!)
+                    let targetBtn = allBtns.find(b => {
+                        const t = (b.innerText || b.value || '').trim().toLowerCase();
+                        return t === 'продолжить' || t === 'войти' || t === 'вход' || t === 'login' || t === 'sign in' ||
+                               t.includes('продолжить') || t.includes('войти');
+                    });
+                    if (!targetBtn && allBtns.length > 0) {
+                        // Берем кнопку с непустым текстом
+                        targetBtn = allBtns.find(b => (b.innerText || '').trim().length >= 3) || allBtns[allBtns.length - 1];
+                    }
+
+                    return {
+                        foundUser: !!userInput,
+                        foundPass: !!passInput,
+                        targetBtnText: targetBtn ? (targetBtn.innerText || '').trim() : null,
+                        inputsDiag,
+                        btnsDiag
+                    };
+                }""",
+                {"loginStr": acc["login"], "passStr": acc["password"]},
+            )
+            log_debug(f"[SSO FORM DIAG] {acc['id']} (попытка #{attempt}): {json.dumps(sso_fill_info, ensure_ascii=False)}")
+
+            # Дополнительно вводим через нативный клавиатурный ввод Playwright и нажимаем кнопку текста + Enter!
+            try:
+                u_loc = page.locator('input:visible:not([type="password"]):not([type="checkbox"]):not([type="hidden"])').first
+                p_loc = page.locator('input[type="password"]:visible').first
+                if await u_loc.count() > 0:
+                    await u_loc.click()
+                    await u_loc.fill(acc["login"])
+                if await p_loc.count() > 0:
+                    await p_loc.click()
+                    await p_loc.fill(acc["password"])
+                await page.wait_for_timeout(400)
+
+                # Кликаем именно кнопку с текстом «Продолжить» или «Войти» (а не иконку глазика!)
+                btn_clicked = False
+                for btn_txt in ("Продолжить", "Войти", "Вход", "Login", "Sign in"):
+                    b_loc = page.locator(f'button:visible:has-text("{btn_txt}")').first
+                    if await b_loc.count() > 0:
+                        await b_loc.click()
+                        btn_clicked = True
+                        log_debug(f"[SSO SUBMIT] {acc['id']}: нажата кнопка '{btn_txt}'")
+                        break
+                if not btn_clicked and await p_loc.count() > 0:
+                    await p_loc.press("Enter")
+                    log_debug(f"[SSO SUBMIT] {acc['id']}: нажат Enter в поле пароля")
+            except Exception as e:
+                log_debug(f"[SSO PLAYWRIGHT SUBMIT WARN] {acc['id']}: {e}")
+
+            # Теперь СПОКОЙНО ждём до 18 секунд завершения входа и редиректа (НЕ перебивая форму повторным вводом!)
+            sent_mid_diag_screen = False
+            for wait_sec in range(18):
+                await page.wait_for_timeout(1000)
+                cur_u = page.url
+
+                # Если sso.senkuro.org перешёл на экран разрешения OAuth (/oauth/authorize) — нажимаем «Разрешить» / «Продолжить»
+                if "sso.senkuro.org" in cur_u and ("/oauth/" in cur_u or "/account" in cur_u):
+                    try:
+                        await page.evaluate(
+                            """() => {
+                                const b = Array.from(document.querySelectorAll('button, a')).find(el => {
+                                    const t = (el.innerText || '').trim().toLowerCase();
+                                    return t.includes('разрешить') || t.includes('продолжить') || t.includes('авториз') || t.includes('allow') || t.includes('continue');
+                                });
+                                if (b) b.click();
+                            }"""
+                        )
+                    except Exception:
+                        pass
+
+                # Если через 6 секунд мы всё ещё на /auth/login — логируем текст страницы и отправляем 1 быстрый скриншот в ТГ!
+                if wait_sec == 6 and "sso.senkuro.org/auth/login" in cur_u and not sent_mid_diag_screen:
+                    sent_mid_diag_screen = True
+                    try:
+                        page_txt = await page.evaluate("() => (document.body ? document.body.innerText : '').trim().slice(0, 500)")
+                        log_debug(f"[SSO AFTER 6s] {acc['id']}: url={cur_u} | text={page_txt!r}")
+                        if DEBUG_MODE and acc["idx"] == 1:
+                            png_fast = await capture_page_png_fast(page)
+                            if png_fast:
+                                await asyncio.to_thread(
+                                    send_tg_photo_bytes,
+                                    png_fast,
+                                    f"🔍 <b>Диагностика SSO ({acc['id']}, 6 сек после клика):</b>\n"
+                                    f"🌐 URL: <code>{cur_u[:100]}</code>\n"
+                                    f"📄 Текст: <code>{page_txt[:220]}</code>",
+                                    False,
+                                )
+                    except Exception as e:
+                        log_debug(f"[SSO 6S DIAG ERR] {e}")
+
+                if "senkuro.com" in cur_u and "sso.senkuro" not in cur_u and "/auth/" not in cur_u:
+                    await page.wait_for_timeout(1500)
+                    u_now = await check_is_authenticated_on_senkuro(page, acc["id"], intercepted_user)
+                    if u_now:
+                        log_debug(f"[AUTH SUCCESS] {acc['id']}: вход успешно выполнен (id={u_now.get('id')})")
+                        await context.storage_state(path=str(get_session_file(acc["id"])))
+                        return page, u_now
+
+        # Проверяем на основной странице
         try:
             await page.goto(target_start_url, wait_until="domcontentloaded", timeout=35000)
-            await page.wait_for_timeout(2500)
+            await page.wait_for_timeout(2000)
             u_final = await check_is_authenticated_on_senkuro(page, acc["id"], intercepted_user)
             if u_final:
                 log_debug(f"[AUTH SUCCESS AFTER RELOAD] {acc['id']}: вход выполнен!")
@@ -1582,21 +1645,23 @@ async def ensure_logged_in(context: BrowserContext, acc: dict) -> tuple[Page, Op
         except Exception as e:
             log_debug(f"[AUTH RELOAD WARN] {acc['id']}: {e}")
 
-    # Если войти всё равно не удалось — записываем подробную диагностику в лог и присылаем авто-скриншот!
+    # Если войти не удалось — записываем финальную диагностику и делаем мгновенный CDP-скриншот
     try:
         diag_info = await page.evaluate(
             "() => ({ url: location.href, title: document.title, text: (document.body ? document.body.innerText : '').slice(0, 600) })"
         )
         log_debug(f"[AUTH FAILED DIAG] {acc['id']}: {json.dumps(diag_info, ensure_ascii=False)}")
         if DEBUG_MODE:
-            png_err = await page.screenshot(full_page=False, timeout=8000)
-            send_tg_photo_bytes(
-                png_err,
-                f"⚠️ <b>Авто-скриншот ошибки входа ({acc['id']}):</b>\n"
-                f"🌐 URL: <code>{page.url[:120]}</code>\n"
-                f"📄 Текст на экране: <code>{str(diag_info.get('text', ''))[:250]}</code>",
-                add_keyboard=False,
-            )
+            png_err = await capture_page_png_fast(page)
+            if png_err:
+                await asyncio.to_thread(
+                    send_tg_photo_bytes,
+                    png_err,
+                    f"⚠️ <b>Авто-скриншот ошибки входа ({acc['id']}):</b>\n"
+                    f"🌐 URL: <code>{page.url[:120]}</code>\n"
+                    f"📄 Текст на экране: <code>{str(diag_info.get('text', ''))[:250]}</code>",
+                    False,
+                )
     except Exception as e:
         log_debug(f"[AUTH DIAG SCREENSHOT ERR] {acc['id']}: {e}")
 
@@ -1669,7 +1734,7 @@ async def run_promo_code_activation(promo_code: str) -> None:
         async with async_playwright() as p:
             browser = await launch_senkuro_browser(p)
             for acc in FARM_ACCOUNTS:
-                proxy_url = proxy_mgr.start_account_proxy(acc)
+                proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
                 ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
                 log_debug(f"[BALANCE STEP] #{acc['idx']}/4 {acc['id']} -> IP: {ip_used}")
                 send_tg_message(f"⏳ <b>[{acc['idx']}/4] {acc['id']}</b> (IP: <code>{ip_used}</code>): проверяю вход и баланс...", add_keyboard=False)
@@ -1770,8 +1835,10 @@ async def run_check_coins_balance() -> None:
         async with async_playwright() as p:
             browser = await launch_senkuro_browser(p)
             for acc in FARM_ACCOUNTS:
-                proxy_url = proxy_mgr.start_account_proxy(acc)
+                proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
                 ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
+                log_debug(f"[PROMO STEP] #{acc['idx']}/4 {acc['id']} -> IP: {ip_used}")
+                send_tg_message(f"🎟 <b>[{acc['idx']}/4] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): вхожу и ввожу промокод <code>{code_clean}</code>...", add_keyboard=False)
                 context = await create_account_context(browser, acc, proxy_url)
                 try:
                     page, user_obj = await ensure_logged_in(context, acc)
@@ -1796,7 +1863,7 @@ async def run_check_coins_balance() -> None:
     full_msg = "\n".join(lines)
     send_tg_message(full_msg, add_keyboard=True)
     if DEBUG_MODE:
-        upload_debug_log_to_github("balance_check")
+        upload_debug_log_to_github_noop("balance_check")
         if "не удалось войти" in full_msg:
             send_full_debug_log_to_user("Авто-лог диагностики входа (Баланс)")
 
@@ -1944,8 +2011,10 @@ async def run_all_packs_opening() -> None:
         async with async_playwright() as p:
             browser = await launch_senkuro_browser(p)
             for acc in FARM_ACCOUNTS:
-                proxy_url = proxy_mgr.start_account_proxy(acc)
+                proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
                 ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
+                log_debug(f"[PACKS STEP] #{acc['idx']}/4 {acc['id']} -> IP: {ip_used}")
+                send_tg_message(f"🎴 <b>[{acc['idx']}/4] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): проверяю монеты и кручу паки «Хардкор»...", add_keyboard=False)
                 context = await create_account_context(browser, acc, proxy_url)
                 try:
                     page, user_obj = await ensure_logged_in(context, acc)
@@ -2154,8 +2223,10 @@ async def run_smart_forge_and_trade_pipeline() -> None:
             contexts: list[BrowserContext] = []
 
             for acc in FARM_ACCOUNTS:
-                proxy_url = proxy_mgr.start_account_proxy(acc)
+                proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
                 ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
+                log_debug(f"[FORGE STEP] #{acc['idx']}/4 {acc['id']} -> IP: {ip_used}")
+                send_tg_message(f"⚒️ <b>[{acc['idx']}/4] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): подключаю кузню и проверяю карты...", add_keyboard=False)
                 ctx = await create_account_context(browser, acc, proxy_url)
                 contexts.append(ctx)
                 page, user_obj = await ensure_logged_in(ctx, acc)
@@ -2724,7 +2795,7 @@ async def run_farm_segment(part_mode: str = "farm_part1") -> None:
                 ],
             )
             for acc in FARM_ACCOUNTS:
-                proxy_url = proxy_mgr.start_account_proxy(acc)
+                proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
                 ip_used = proxy_mgr.active_ips.get(acc["acc_id"], acc["pinned_ip"])
                 ctx = await create_account_context(browser, acc, proxy_url)
                 await ctx.add_init_script(FULL_FARM_USERSCRIPT_V9)
@@ -3085,9 +3156,24 @@ async def scrape_account_cards_public(browser, account: dict) -> dict:
 
     try:
         await page.goto(account["url"], wait_until="domcontentloaded", timeout=40000)
+        await page.wait_for_timeout(1500)
 
-        # Ждем до 12 секунд перехвата fetchUserCards и завершения заставки «Приготовьтесь к приключениям»
-        for _ in range(24):
+        # Способ 1 (Самый быстрый — 1 сек): прямой GraphQL запрос всех страниц карт и осколков по userId
+        u_res = await gql_call(page, GQL_FETCH_USER_BY_SLUG, {"slug": account["id"]}, "fetchUserBySlug")
+        uid = ((u_res.get("data") or {}).get("user") or {}).get("id") or (intercepted_user_id[0] if intercepted_user_id else None)
+        log_debug(f"[CHECK 5 UID] {account['id']}: uid={uid}")
+
+        if uid:
+            c_nodes = await fetch_all_user_cards_gql(page, uid, modifier_val=0)
+            s_nodes = await fetch_all_user_cards_gql(page, uid, modifier_val=1)
+            cards = parse_graphql_edges(c_nodes)
+            shards = parse_graphql_edges(s_nodes)
+            log_debug(f"[CHECK 5 DIRECT GQL] {account['id']}: карт={len(cards)}, осколков={len(shards)}")
+            if cards or shards:
+                return {"cards": cards, "shards": shards, "error": None}
+
+        # Способ 2: перехваченный запрос fetchUserCards от самой страницы
+        for _ in range(10):
             if captured_req:
                 break
             await page.wait_for_timeout(500)
@@ -3096,27 +3182,6 @@ async def scrape_account_cards_public(browser, account: dict) -> dict:
             cards = await fetch_all_pages_via_graphql(page, captured_req, modifier_val=0)
             shards = await fetch_all_pages_via_graphql(page, captured_req, modifier_val=1)
             log_debug(f"[CHECK 5 GQL CAPTURED] {account['id']}: карт={len(cards)}, осколков={len(shards)}")
-            if cards or shards:
-                return {"cards": cards, "shards": shards, "error": None}
-
-        # Резерв 1: если есть сохраненный шаблон fetchUserCards от предыдущего аккаунта + узнаём userId по slug
-        u_res = await gql_call(page, GQL_FETCH_USER_BY_SLUG, {"slug": account["id"]}, "fetchUserBySlug")
-        uid = ((u_res.get("data") or {}).get("user") or {}).get("id") or (intercepted_user_id[0] if intercepted_user_id else None)
-        log_debug(f"[CHECK 5 FALLBACK] {account['id']}: uid={uid}, has_cached_tpl={bool(CACHED_FETCH_USER_CARDS_TEMPLATE)}")
-
-        if uid and CACHED_FETCH_USER_CARDS_TEMPLATE:
-            cards = await fetch_all_pages_via_graphql(page, CACHED_FETCH_USER_CARDS_TEMPLATE, modifier_val=0, override_user_id=uid)
-            shards = await fetch_all_pages_via_graphql(page, CACHED_FETCH_USER_CARDS_TEMPLATE, modifier_val=1, override_user_id=uid)
-            log_debug(f"[CHECK 5 CACHED TPL] {account['id']}: карт={len(cards)}, осколков={len(shards)}")
-            if cards or shards:
-                return {"cards": cards, "shards": shards, "error": None}
-
-        if uid:
-            c_nodes = await fetch_all_user_cards_gql(page, uid, modifier_val=0)
-            s_nodes = await fetch_all_user_cards_gql(page, uid, modifier_val=1)
-            cards = parse_graphql_edges(c_nodes)
-            shards = parse_graphql_edges(s_nodes)
-            log_debug(f"[CHECK 5 DIRECT GQL] {account['id']}: карт={len(cards)}, осколков={len(shards)}")
             if cards or shards:
                 return {"cards": cards, "shards": shards, "error": None}
 
@@ -3231,11 +3296,11 @@ async def run_check_all_5_accounts() -> None:
             await asyncio.sleep(2.0)
         await browser.close()
     if DEBUG_MODE:
-        upload_debug_log_to_github("check_5_accounts")
+        upload_debug_log_to_github_noop("check_5_accounts")
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v13.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v14.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -3328,7 +3393,7 @@ async def run_background_8h_farm(base_elapsed_minutes: int = 0, segment_hours: f
             for acc in FARM_ACCOUNTS:
                 if FARM_STOP_FLAG:
                     break
-                proxy_url = proxy_mgr.start_account_proxy(acc)
+                proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
                 ip_used = proxy_mgr.active_ips.get(acc["acc_id"], acc["pinned_ip"])
                 ctx = await create_account_context(browser, acc, proxy_url)
                 await ctx.add_init_script(FULL_FARM_USERSCRIPT_V9)
@@ -3485,7 +3550,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     global ACTIVE_FARM_TASK, FARM_STOP_FLAG
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v13.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v14.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -3567,7 +3632,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            send_full_debug_log_to_user("Полный лог работы комбайна v13.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v14.0")
             return
 
         if data == "check_farm_status":
@@ -3636,7 +3701,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
                 },
             )
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v13.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v14.0</b>\n\n"
                 "Выберите нужную задачу одним нажатием кнопки ниже (или просто отправьте промокод одним словом в чат):",
                 add_keyboard=True,
             )
@@ -3647,7 +3712,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("/log", "📜 полный лог", "лог", "логи"):
-            send_full_debug_log_to_user("Полный лог работы комбайна v13.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v14.0")
             return
 
         if lower in ("/stop", "стоп", "🛑 остановить фарм / все задачи"):
@@ -3768,7 +3833,7 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v13.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v14.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",
