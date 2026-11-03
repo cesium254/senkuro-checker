@@ -721,7 +721,7 @@ def ensure_opera_proxy_binary() -> Optional[str]:
 
     asset = "opera-proxy.windows-amd64.exe" if "windows" in sys_name else "opera-proxy.linux-amd64"
     url = f"https://github.com/Alexey71/opera-proxy/releases/latest/download/{asset}"
-    print(f"[VPN] Скачивание {asset} с GitHub...")
+    log_debug(f"[VPN] Скачивание {asset} с GitHub...")
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=30) as resp, open(target_path, "wb") as out_f:
@@ -776,10 +776,15 @@ class AccountProxyManager:
             return None
 
         if self._port_open(port):
-            ok, ip = verify_proxy_exit_ip(port, timeout=2.5)
+            ok, ip = verify_proxy_exit_ip(port, timeout=3.5)
             if ok:
                 self.active_ips[aid] = ip
-                print(f"[VPN] {acc['id']}: используется активный туннель 127.0.0.1:{port} -> {ip}")
+                log_debug(f"[VPN] {acc['id']}: используется активный туннель 127.0.0.1:{port} -> {ip}")
+                return f"http://127.0.0.1:{port}"
+            elif aid not in self.procs:
+                fallback_ip = acc.get("pinned_ip") or "активный VPN"
+                self.active_ips[aid] = fallback_ip
+                log_debug(f"[VPN] {acc['id']}: порт 127.0.0.1:{port} уже занят фоновым фармом, переиспользую ({fallback_ip})")
                 return f"http://127.0.0.1:{port}"
 
         exe_path = ensure_opera_proxy_binary()
@@ -820,7 +825,7 @@ class AccountProxyManager:
                     ok, ip = verify_proxy_exit_ip(port, timeout=3.0)
                     if ok and ip not in used_ips and not ip.startswith("77.111.247."):
                         self.active_ips[aid] = ip
-                        print(f"[VPN] {acc['id']}: закреплен уникальный IP {ip} (порт {port})")
+                        log_debug(f"[VPN] {acc['id']}: закреплен уникальный IP {ip} (порт {port})")
                         return f"http://127.0.0.1:{port}"
                     elif ok and ip:
                         used_ips.add(ip)
@@ -848,7 +853,7 @@ class AccountProxyManager:
                 ok, ip = verify_proxy_exit_ip(port, timeout=3.0)
                 if ok and ip not in used_ips and not ip.startswith("77.111.247."):
                     self.active_ips[aid] = ip
-                    print(f"[VPN] {acc['id']} ({region}): закреплен уникальный IP {ip} (порт {port})")
+                    log_debug(f"[VPN] {acc['id']} ({region}): закреплен уникальный IP {ip} (порт {port})")
                     return f"http://127.0.0.1:{port}"
                 elif ok and ip:
                     used_ips.add(ip)
@@ -1322,12 +1327,14 @@ async def launch_senkuro_browser(playwright_obj):
     if chrome_bin:
         log_debug(f"[BROWSER] Запуск настоящего Google Chrome: {chrome_bin} (headless={not has_display})")
         try:
-            return await playwright_obj.chromium.launch(
+            b_inst = await playwright_obj.chromium.launch(
                 executable_path=chrome_bin,
                 headless=not has_display,
                 ignore_default_args=["--enable-automation"],
                 args=launch_args,
             )
+            log_debug("[BROWSER OK] Google Chrome успешно запущен и готов к работе")
+            return b_inst
         except Exception as e:
             log_debug(f"[BROWSER WARN] Не удалось запустить {chrome_bin}: {e}, резервный Chromium")
     log_debug(f"[BROWSER] Запуск Chromium без флага автоматизации (headless={not has_display})")
@@ -2131,6 +2138,8 @@ async def fetch_all_user_cards_gql(page: Page, user_id: str, modifier_val: Optio
 # ==============================================================================
 
 async def run_promo_code_activation(promo_code: str) -> None:
+    global FARM_STOP_FLAG
+    FARM_STOP_FLAG = False
     code_clean = (promo_code or "").strip().upper()
     if not code_clean:
         send_tg_message("⚠️ Промокод не указан. Нажмите «🎟 Ввести промокод» и отправьте код ответным сообщением.")
@@ -2239,6 +2248,8 @@ async def run_promo_code_activation(promo_code: str) -> None:
 # ==============================================================================
 
 async def run_check_coins_balance() -> None:
+    global FARM_STOP_FLAG
+    FARM_STOP_FLAG = False
     """Проверяет баланс сенкоинов на всех 4 фарм-аккаунтах и возвращает базовую панель кнопок."""
     send_tg_message("🪙 Вхожу на 4 фарм-аккаунта под своими IP и проверяю баланс сенкоинов...", add_keyboard=False)
     proxy_mgr = AccountProxyManager()
@@ -2439,6 +2450,8 @@ async def roll_hardcore_packs_for_account(page: Page, acc: dict, user_obj: dict)
 
 
 async def run_all_packs_opening() -> None:
+    global FARM_STOP_FLAG
+    FARM_STOP_FLAG = False
     send_tg_message(
         "🎰 Открываю 4 изолированных профиля Chrome под своими IP и кручу паки «Хардкор» (480 🪙) с человеческими паузами...",
         add_keyboard=False,
@@ -2706,6 +2719,8 @@ async def forge_local_triples_on_account(st: dict) -> int:
 
 
 async def run_smart_forge_and_trade_pipeline() -> None:
+    global FARM_STOP_FLAG
+    FARM_STOP_FLAG = False
     send_tg_message(
         "⚒️ Запускаю умную Кузницу («Переплавка» 3 в 1) и межаккаунтный обмен на 4 аккаунтах с человеческими задержками...",
         add_keyboard=False,
@@ -4149,6 +4164,7 @@ async def run_background_8h_farm(base_elapsed_minutes: int = 0, segment_hours: f
 
 async def execute_single_action(action: str, promo_code: str = "") -> None:
     global ACTIVE_FARM_TASK, FARM_STOP_FLAG
+    FARM_STOP_FLAG = False
     if action == "menu":
         send_tg_message(
             "✅ <b>Единый комбайн Senkuro v19.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
@@ -4217,6 +4233,8 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
                     break
             if ACTIVE_JOB_TASK and not ACTIVE_JOB_TASK.done():
                 ACTIVE_JOB_TASK.cancel()
+            if ACTIVE_FARM_TASK and not ACTIVE_FARM_TASK.done():
+                ACTIVE_FARM_TASK.cancel()
             CURRENT_FARM_STATUS = {"active": False, "accounts": []}
             publish_live_farm_status(CURRENT_FARM_STATUS)
             send_tg_message(
@@ -4391,7 +4409,13 @@ async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: fl
             offset = int(initial_upds[-1]["update_id"]) + 1
             write_saved_tg_offset(offset)
 
-    print(f"📡 Прямой Telegram Long Polling запущен (начальный offset={offset})...")
+    log_debug(f"[DAEMON READY] Прямой Telegram Long Polling запущен (offset={offset}) — сервер 100% готов!")
+    if os.environ.get("GH_EVENT_NAME") == "push":
+        send_tg_message(
+            "🟢 <b>Сервер полностью запущен и готов к работе (v19.0)!</b>\n\n"
+            "Браузер Google Chrome и виртуальный экран готовы — теперь любая кнопка сработает сразу 👇:",
+            add_keyboard=True,
+        )
     while time.time() < deadline_ts:
         updates = await asyncio.to_thread(fetch_tg_updates_sync, offset, 4)
         for upd in updates:
@@ -4407,7 +4431,7 @@ async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: fl
 
 
 async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> None:
-    global ACTIVE_JOB_TASK
+    global ACTIVE_JOB_TASK, FARM_STOP_FLAG
     while time.time() < deadline_ts:
         try:
             item = await asyncio.wait_for(task_queue.get(), timeout=2.0)
@@ -4420,12 +4444,17 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
             ACTIVE_JOB_TASK = asyncio.create_task(execute_single_action(act_code, p_code))
             await ACTIVE_JOB_TASK
         except asyncio.CancelledError:
-            print(f"🛑 [EXECUTOR] Задача {act_code} отменена пользователем.")
+            log_debug(f"[EXECUTOR CANCELLED] Задача {act_code} остановлена пользователем (СТОП).")
         except Exception as e:
             log_debug(f"[EXECUTOR ERROR] {act_code}: {e}")
             send_tg_message(f"⚠️ Ошибка при выполнении задачи <code>{act_code}</code>: {e}", add_keyboard=True)
         finally:
-            ACTIVE_BROWSER_PAGES.clear()
+            for _k, _pg in list(ACTIVE_BROWSER_PAGES.items()):
+                try:
+                    if _pg.is_closed():
+                        ACTIVE_BROWSER_PAGES.pop(_k, None)
+                except Exception:
+                    ACTIVE_BROWSER_PAGES.pop(_k, None)
             ACTIVE_JOB_TASK = None
             task_queue.task_done()
 

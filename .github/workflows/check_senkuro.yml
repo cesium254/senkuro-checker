@@ -113,13 +113,11 @@ jobs:
           with open(OFFSET_FILE, "w", encoding="utf-8") as f:
               f.write(str(offset))
 
-          # 3. При сохранении кода (push) сразу через 3 секунды присылаем новую 4-рядную панель v19.0!
+          # 3. При сохранении кода (push) честно сообщаем, что сервер перезапускается (~15 сек)
           if EVENT_NAME == "push":
               send_msg(
-                  "✅ <b>Единый комбайн Senkuro v19.0 запущен!</b>\n\n"
-                  "• Кнопка <b>«🛑 СТОП»</b> вынесена в 1-й ряд справа (все 4 ряда помещаются на экран без прокрутки).\n"
-                  "• Подключён рабочий CDP-инжектор входа из ноутбука Kaggle (4 изолированных профиля Chrome + 4 уникальных IP).\n\n"
-                  "Нажимайте любую кнопку внизу 👇:"
+                  "⏳ <b>Обновление кода получено! Перезапускаю сервер (~15 сек)...</b>\n\n"
+                  "<i>Дождитесь зелёного сообщения <b>«🟢 Сервер полностью запущен!»</b> (или нажмите кнопку сейчас — она встанет в очередь и запустится сразу после старта, только не нажимайте «🛑 СТОП» во время загрузки).</i>"
               )
 
           # 4. Слушаем нажатия кнопок, пока подготавливается окружение (~25 сек)
@@ -236,9 +234,10 @@ jobs:
       - name: Install Playwright, Chromium, Xvfb, xdotool & Openbox
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq xvfb xdotool openbox
-          pip install --upgrade pip
-          pip install playwright pillow
-          playwright install --with-deps chromium
+          pip install -q playwright pillow
+          if [ ! -x /usr/bin/google-chrome-stable ]; then
+            playwright install --with-deps chromium
+          fi
 
       - name: Download Opera VPN Proxy (for 4 unique IPs)
         run: |
@@ -255,6 +254,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
           SENKURO_ACTION: ${{ github.event.inputs.action || 'daemon' }}
           SENKURO_PROMO_CODE: ${{ github.event.inputs.promo_code || '' }}
+          GH_EVENT_NAME: ${{ github.event_name }}
         run: |
           if [ -f /tmp/early_poller.pid ]; then
             kill $(cat /tmp/early_poller.pid) 2>/dev/null || true
@@ -311,9 +311,10 @@ jobs:
       - name: Install Playwright, Chromium, Xvfb, xdotool & Openbox
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq xvfb xdotool openbox
-          pip install --upgrade pip
-          pip install playwright pillow
-          playwright install --with-deps chromium
+          pip install -q playwright pillow
+          if [ ! -x /usr/bin/google-chrome-stable ]; then
+            playwright install --with-deps chromium
+          fi
 
       - name: Download Opera VPN Proxy (for 4 unique IPs)
         run: |
