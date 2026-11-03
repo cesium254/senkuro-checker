@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v14.0 (100% TELEGRAM -> CLOUDFLARE -> GITHUB)
+SENKURO FULL AUTOMATION COMBINE v15.0 (100% TELEGRAM -> CLOUDFLARE -> GITHUB)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -272,23 +272,25 @@ def get_main_inline_keyboard() -> dict:
 
 def get_collapsible_reply_keyboard() -> dict:
     """
-    Современная сворачиваемая нижняя клавиатура Telegram (справа в поле ввода появляется значок 🎛,
-    позволяющий в 1 клик прятать и открывать меню кнопок, чтобы оно не занимало место в чате!).
+    Компактная сворачиваемая нижняя клавиатура Telegram (значок 🎛 справа в поле ввода
+    позволяет свободно сворачивать и разворачивать панель, а короткие подписи полностью
+    помещаются на экране любого телефона без обрезки!).
     """
     rows = [
-        [{"text": "🔄 Проверить 5 аккаунтов"}, {"text": "🪙 Баланс монет (4 акка)"}],
-        [{"text": "▶️ Запустить фарм (8 ч)"}, {"text": "📊 Проверить статус фарма"}],
-        [{"text": "🎴 Крутить паки Хардкор"}, {"text": "⚒️ Переплавка + Трейд"}],
-        [{"text": "🎟 Ввести промокод"}, {"text": "🚀 Сделать ВСЁ (Паки+Кузня)"}],
+        [{"text": "▶️ Фарм (8 ч)"}, {"text": "📊 Статус фарма"}],
+        [{"text": "🪙 Баланс монет"}, {"text": "🎴 Паки Хардкор"}],
+        [{"text": "⚒️ Кузня + Трейд"}, {"text": "🎟 Промокод"}],
+        [{"text": "🔄 Чекать 5 акков"}, {"text": "🚀 Сделать ВСЁ"}],
     ]
     if DEBUG_MODE:
-        rows.append([{"text": "📸 Посмотреть экран"}, {"text": "📜 Полный лог"}])
-    rows.append([{"text": "🛑 ОСТАНОВИТЬ ФАРМ / ВСЕ ЗАДАЧИ"}])
+        rows.append([{"text": "📸 Экран"}, {"text": "📜 Лог"}, {"text": "🛑 СТОП"}])
+    else:
+        rows.append([{"text": "🛑 СТОП"}])
     return {
         "keyboard": rows,
         "resize_keyboard": True,
-        "is_persistent": True,
-        "input_field_placeholder": "Отправьте промокод или откройте меню 🎛 👇",
+        "is_persistent": False,
+        "input_field_placeholder": "Промокод или меню 🎛 👇",
     }
 
 
@@ -313,15 +315,21 @@ def tg_request(method: str, payload: dict) -> dict:
         return {"ok": False, "error": str(e)}
 
 
-def send_tg_message(text: str, add_keyboard: bool = True) -> dict:
+_REPLY_KB_INITIALIZED: bool = False
+
+
+def send_tg_message(text: str, add_keyboard: bool = True, force_reply_kb: bool = False) -> dict:
+    global _REPLY_KB_INITIALIZED
     payload: dict[str, Any] = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": text,
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }
-    if add_keyboard:
-        payload["reply_markup"] = get_main_inline_keyboard()
+    # Прикрепляем только нижнюю сворачиваемую клавиатуру (без дублирования гигантских верхних inline-кнопок!)
+    if force_reply_kb or (add_keyboard and not _REPLY_KB_INITIALIZED):
+        payload["reply_markup"] = get_collapsible_reply_keyboard()
+        _REPLY_KB_INITIALIZED = True
     return tg_request("sendMessage", payload)
 
 
@@ -359,8 +367,8 @@ def send_tg_photo_bytes(png_bytes: bytes, caption: str = "", add_keyboard: bool 
     fields = {"chat_id": str(TELEGRAM_CHAT_ID), "parse_mode": "HTML"}
     if caption:
         fields["caption"] = caption[:1000]
-    if add_keyboard:
-        fields["reply_markup"] = json.dumps(get_main_inline_keyboard(), ensure_ascii=False)
+    if add_keyboard and not _REPLY_KB_INITIALIZED:
+        fields["reply_markup"] = json.dumps(get_collapsible_reply_keyboard(), ensure_ascii=False)
     return send_tg_multipart("sendPhoto", "photo", "screen.png", png_bytes, "image/png", fields)
 
 
@@ -383,7 +391,7 @@ def upload_debug_log_to_github_noop(reason: str = "task") -> Optional[str]:
         headers = {
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {GITHUB_PAT_TOKEN}",
-            "User-Agent": "SenkuroBot/13.0",
+            "User-Agent": "SenkuroBot/15.0",
             "X-GitHub-Api-Version": "2022-11-28",
             "Content-Type": "application/json",
         }
@@ -435,7 +443,7 @@ def send_full_debug_log_to_user(reason_title: str = "Полный лог раб�
         "chat_id": str(TELEGRAM_CHAT_ID),
         "caption": caption[:1000],
         "parse_mode": "HTML",
-        "reply_markup": json.dumps(get_main_inline_keyboard(), ensure_ascii=False),
+        "reply_markup": json.dumps(get_collapsible_reply_keyboard(), ensure_ascii=False),
     }
     send_tg_multipart("sendDocument", "document", "senkuro_debug_log.txt", raw_bytes, "text/plain", fields)
 
@@ -1244,17 +1252,49 @@ async def gql_call(page: Page, query: str, variables: Optional[dict] = None, ope
 
 async def launch_senkuro_browser(playwright_obj):
     has_display = bool(os.environ.get("DISPLAY"))
+    launch_args = [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--test-type",
+        "--disable-dev-shm-usage",
+        "--disable-blink-features=AutomationControlled",
+        "--password-store=basic",
+        "--disable-save-password-bubble",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
+        "--window-size=1280,900",
+    ]
+    # На GitHub Actions (ubuntu-latest) предустановлен настоящий Google Chrome (/usr/bin/google-chrome-stable).
+    # Запускаем именно его (как на сервере Kaggle) и убираем --enable-automation, чтобы капча sso.senkuro.org проходила с 1-го раза!
+    chrome_bin = None
+    for cand in (
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/google-chrome",
+        shutil.which("google-chrome-stable"),
+        shutil.which("google-chrome"),
+    ):
+        if cand and os.path.exists(cand):
+            chrome_bin = cand
+            break
+    if chrome_bin:
+        log_debug(f"[BROWSER] Запуск настоящего Google Chrome: {chrome_bin} (headless={not has_display})")
+        try:
+            return await playwright_obj.chromium.launch(
+                executable_path=chrome_bin,
+                headless=not has_display,
+                ignore_default_args=["--enable-automation"],
+                args=launch_args,
+            )
+        except Exception as e:
+            log_debug(f"[BROWSER WARN] Не удалось запустить {chrome_bin}: {e}, резервный Chromium")
+    log_debug(f"[BROWSER] Запуск Chromium без флага автоматизации (headless={not has_display})")
     return await playwright_obj.chromium.launch(
         headless=not has_display,
-        args=[
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-blink-features=AutomationControlled",
-            "--disable-background-timer-throttling",
-            "--disable-backgrounding-occluded-windows",
-            "--disable-renderer-backgrounding",
-        ],
+        ignore_default_args=["--enable-automation"],
+        args=launch_args,
     )
 
 
@@ -1340,11 +1380,12 @@ def get_session_file(acc_id: str) -> Path:
 
 async def create_account_context(playwright_browser, acc: dict, proxy_url: Optional[str]) -> BrowserContext:
     sess_file = get_session_file(acc["id"])
+    # ВАЖНО: НЕ подменяем user_agent на Windows внутри Linux и НЕ блокируем service_workers!
+    # На сервере Kaggle использовался родной User-Agent Google Chrome для Linux — именно из-за несовпадения
+    # Windows User-Agent и navigator.platform=="Linux x86_64" капча на sso.senkuro.org выдавала ошибку!
     ctx_kwargs: dict[str, Any] = {
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
         "viewport": {"width": 1280, "height": 900},
         "locale": "ru-RU",
-        "service_workers": "block",
     }
     if proxy_url:
         ctx_kwargs["proxy"] = {"server": proxy_url}
@@ -1355,7 +1396,12 @@ async def create_account_context(playwright_browser, acc: dict, proxy_url: Optio
         except Exception as e:
             log_debug(f"[SESSION WARN] {acc['id']}: {e}")
     ctx = await playwright_browser.new_context(**ctx_kwargs)
-    await ctx.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
+    await ctx.add_init_script(
+        """
+        Object.defineProperty(navigator, webdriver, {get: () => false});
+        if (!window.chrome) { window.chrome = { runtime: {} }; }
+        """
+    )
     return ctx
 
 
@@ -1490,16 +1536,26 @@ async def ensure_logged_in(context: BrowserContext, acc: dict) -> tuple[Page, Op
                 break
 
         if "sso.senkuro." in page.url:
-            # Ждем, пока форма на sso.senkuro.org полностью отрисуется (до 10 сек)
+            # 1. Ждем, пока форма на sso.senkuro.org полностью отрисуется (до 10 сек)
             for _ in range(12):
                 await page.wait_for_timeout(800)
                 has_pass = await page.evaluate("() => !!document.querySelector('input[type=password]')")
                 if has_pass:
                     break
 
-            # Записываем точную структуру инпутов и кнопок на sso.senkuro.org в лог и вводим данные РОВНО 1 РАЗ за попытку!
+            # 2. ВАЖНО: Даем скрипту капчи на sso.senkuro.org спокойно докачаться через прокси (3.5 сек)
+            # и делаем плавные движения мышью, как живой пользователь (иначе капча выдает «Ошибка при прохождении капчи»!)
+            try:
+                await page.mouse.move(260, 240, steps=8)
+                await page.wait_for_timeout(1200)
+                await page.mouse.move(540, 380, steps=10)
+                await page.wait_for_timeout(2000)
+            except Exception:
+                await page.wait_for_timeout(3000)
+
+            # 3. Логируем информацию о капче и форме (и при попытке #1 заполняем ровно 1 раз методом Kaggle v6.5!)
             sso_fill_info = await page.evaluate(
-                """({ loginStr, passStr }) => {
+                """({ loginStr, passStr, doNativeFill }) => {
                     function isVis(el) {
                         if (!el) return false;
                         const r = el.getBoundingClientRect();
@@ -1514,62 +1570,87 @@ async def ensure_logged_in(context: BrowserContext, acc: dict) -> tuple[Page, Op
                         else el.value = val;
                         el.dispatchEvent(new Event('input', { bubbles: true }));
                         el.dispatchEvent(new Event('change', { bubbles: true }));
-                        el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
                     }
 
                     const allInputs = Array.from(document.querySelectorAll('input')).filter(isVis);
                     const passInput = allInputs.find(i => i.type === 'password');
                     const userInput = allInputs.find(i => i.type !== 'password' && i.type !== 'checkbox' && i.type !== 'hidden');
 
-                    const inputsDiag = allInputs.map(i => ({
-                        type: i.type, name: i.name || '', id: i.id || '', placeholder: i.placeholder || ''
+                    const scripts = Array.from(document.querySelectorAll('script[src]')).map(s => s.src).filter(u => /captcha|turnstile|recaptcha|hcaptcha|smart|cf|challenge/i.test(u));
+                    const iframes = Array.from(document.querySelectorAll('iframe')).map(f => ({
+                        src: (f.src || '').slice(0, 120),
+                        w: Math.round(f.getBoundingClientRect().width),
+                        h: Math.round(f.getBoundingClientRect().height),
+                        x: Math.round(f.getBoundingClientRect().left + f.getBoundingClientRect().width / 2),
+                        y: Math.round(f.getBoundingClientRect().top + f.getBoundingClientRect().height / 2)
                     }));
+                    const hiddenInputs = Array.from(document.querySelectorAll('input[type="hidden"], textarea[name*="captcha"], textarea[name*="response"]')).map(i => ({
+                        name: i.name || i.id || '',
+                        valLen: (i.value || '').length
+                    }));
+
+                    if (doNativeFill) {
+                        if (userInput) setNativeVal(userInput, loginStr);
+                        if (passInput) setNativeVal(passInput, passStr);
+                    }
 
                     const allBtns = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]')).filter(isVis);
-                    const btnsDiag = allBtns.map(b => ({
-                        tag: b.tagName, type: b.getAttribute('type') || 'default', text: (b.innerText || b.value || '').trim().slice(0, 40)
-                    }));
-
-                    if (userInput) setNativeVal(userInput, loginStr);
-                    if (passInput) setNativeVal(passInput, passStr);
-
-                    // ВАЖНО: Ищем кнопку строго по тексту «Продолжить» / «Войти» / «Вход» / «Login»,
-                    // чтобы НИКОГДА не кликнуть по кнопке-глазику показа пароля (у которой по стандарту HTML тоже type="submit"!)
                     let targetBtn = allBtns.find(b => {
                         const t = (b.innerText || b.value || '').trim().toLowerCase();
                         return t === 'продолжить' || t === 'войти' || t === 'вход' || t === 'login' || t === 'sign in' ||
                                t.includes('продолжить') || t.includes('войти');
                     });
-                    if (!targetBtn && allBtns.length > 0) {
-                        // Берем кнопку с непустым текстом
-                        targetBtn = allBtns.find(b => (b.innerText || '').trim().length >= 3) || allBtns[allBtns.length - 1];
-                    }
 
                     return {
                         foundUser: !!userInput,
                         foundPass: !!passInput,
                         targetBtnText: targetBtn ? (targetBtn.innerText || '').trim() : null,
-                        inputsDiag,
-                        btnsDiag
+                        ua: navigator.userAgent,
+                        platform: navigator.platform,
+                        webdriver: navigator.webdriver,
+                        hasGrecaptcha: typeof window.grecaptcha !== 'undefined',
+                        hasTurnstile: typeof window.turnstile !== 'undefined',
+                        hasSmartCaptcha: typeof window.smartCaptcha !== 'undefined',
+                        scripts,
+                        iframes,
+                        hiddenInputs
                     };
                 }""",
-                {"loginStr": acc["login"], "passStr": acc["password"]},
+                {"loginStr": acc["login"], "passStr": acc["password"], "doNativeFill": attempt == 1},
             )
-            log_debug(f"[SSO FORM DIAG] {acc['id']} (попытка #{attempt}): {json.dumps(sso_fill_info, ensure_ascii=False)}")
+            log_debug(f"[SSO CAPTCHA DIAG] {acc['id']} (попытка #{attempt}): {json.dumps(sso_fill_info, ensure_ascii=False)}")
 
-            # Дополнительно вводим через нативный клавиатурный ввод Playwright и нажимаем кнопку текста + Enter!
+            # Если на странице есть видимый iframe капчи (Turnstile / SmartCaptcha / reCAPTCHA checkbox) — кликаем по чекбоксу и ждем 2.5 сек
+            try:
+                for ifr in sso_fill_info.get("iframes") or []:
+                    if ifr.get("w", 0) >= 30 and ifr.get("h", 0) >= 25 and ifr.get("x", 0) > 0 and ifr.get("y", 0) > 0:
+                        click_x = int(ifr["x"]) - min(80, int(ifr["w"]) // 3)
+                        click_y = int(ifr["y"])
+                        log_debug(f"[SSO CAPTCHA CLICK] {acc['id']}: клик по чекбоксу капчи ({click_x}, {click_y})")
+                        await page.mouse.move(click_x, click_y, steps=6)
+                        await page.mouse.click(click_x, click_y)
+                        await page.wait_for_timeout(2500)
+            except Exception as e:
+                log_debug(f"[SSO CAPTCHA CLICK WARN] {e}")
+
             try:
                 u_loc = page.locator('input:visible:not([type="password"]):not([type="checkbox"]):not([type="hidden"])').first
                 p_loc = page.locator('input[type="password"]:visible').first
-                if await u_loc.count() > 0:
-                    await u_loc.click()
-                    await u_loc.fill(acc["login"])
-                if await p_loc.count() > 0:
-                    await p_loc.click()
-                    await p_loc.fill(acc["password"])
-                await page.wait_for_timeout(400)
+                if attempt >= 2:
+                    # На 2-й попытке вводим посимвольно с человеческой задержкой 50 мс между клавишами
+                    if await u_loc.count() > 0:
+                        await u_loc.click()
+                        await u_loc.fill("")
+                        await u_loc.press_sequentially(acc["login"], delay=50)
+                    await page.wait_for_timeout(400)
+                    if await p_loc.count() > 0:
+                        await p_loc.click()
+                        await p_loc.fill("")
+                        await p_loc.press_sequentially(acc["password"], delay=50)
 
-                # Кликаем именно кнопку с текстом «Продолжить» или «Войти» (а не иконку глазика!)
+                # Пауза 1.2 сек после заполнения перед кликом «Войти» (как в Kaggle v6.5: setTimeout 650ms+)
+                await page.wait_for_timeout(1200)
+
                 btn_clicked = False
                 for btn_txt in ("Продолжить", "Войти", "Вход", "Login", "Sign in"):
                     b_loc = page.locator(f'button:visible:has-text("{btn_txt}")').first
@@ -1584,8 +1665,8 @@ async def ensure_logged_in(context: BrowserContext, acc: dict) -> tuple[Page, Op
             except Exception as e:
                 log_debug(f"[SSO PLAYWRIGHT SUBMIT WARN] {acc['id']}: {e}")
 
-            # Теперь СПОКОЙНО ждём до 18 секунд завершения входа и редиректа (НЕ перебивая форму повторным вводом!)
-            sent_mid_diag_screen = False
+            # СПОКОЙНО ждём до 18 секунд завершения входа и редиректа (без авто-спама вторым скриншотом!)
+            logged_6s_text = False
             for wait_sec in range(18):
                 await page.wait_for_timeout(1000)
                 cur_u = page.url
@@ -1605,23 +1686,14 @@ async def ensure_logged_in(context: BrowserContext, acc: dict) -> tuple[Page, Op
                     except Exception:
                         pass
 
-                # Если через 6 секунд мы всё ещё на /auth/login — логируем текст страницы и отправляем 1 быстрый скриншот в ТГ!
-                if wait_sec == 6 and "sso.senkuro.org/auth/login" in cur_u and not sent_mid_diag_screen:
-                    sent_mid_diag_screen = True
+                if wait_sec == 6 and "sso.senkuro.org/auth/login" in cur_u and not logged_6s_text:
+                    logged_6s_text = True
                     try:
                         page_txt = await page.evaluate("() => (document.body ? document.body.innerText : '').trim().slice(0, 500)")
                         log_debug(f"[SSO AFTER 6s] {acc['id']}: url={cur_u} | text={page_txt!r}")
-                        if DEBUG_MODE and acc["idx"] == 1:
-                            png_fast = await capture_page_png_fast(page)
-                            if png_fast:
-                                await asyncio.to_thread(
-                                    send_tg_photo_bytes,
-                                    png_fast,
-                                    f"🔍 <b>Диагностика SSO ({acc['id']}, 6 сек после клика):</b>\n"
-                                    f"🌐 URL: <code>{cur_u[:100]}</code>\n"
-                                    f"📄 Текст: <code>{page_txt[:220]}</code>",
-                                    False,
-                                )
+                        if "капч" in page_txt.lower() or "что-то пошло не так" in page_txt.lower():
+                            # Если на 1-й попытке выскочила ошибка капчи — не ждём лишние 12 сек, сразу переходим ко 2-й попытке с посимвольным вводом!
+                            break
                     except Exception as e:
                         log_debug(f"[SSO 6S DIAG ERR] {e}")
 
@@ -2783,17 +2855,7 @@ async def run_farm_segment(part_mode: str = "farm_part1") -> None:
 
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=not has_display,
-                args=[
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-background-timer-throttling",
-                    "--disable-backgrounding-occluded-windows",
-                    "--disable-renderer-backgrounding",
-                ],
-            )
+            browser = await launch_senkuro_browser(p)
             for acc in FARM_ACCOUNTS:
                 proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
                 ip_used = proxy_mgr.active_ips.get(acc["acc_id"], acc["pinned_ip"])
@@ -3300,7 +3362,7 @@ async def run_check_all_5_accounts() -> None:
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v14.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v15.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -3338,7 +3400,7 @@ def fetch_tg_updates_sync(offset_val: int, timeout_sec: int = 4) -> list[dict]:
         time.sleep(2)
         return []
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={offset_val}&timeout={timeout_sec}"
-    req = urllib.request.Request(url, headers={"User-Agent": "SenkuroDirectBot/12.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "SenkuroDirectBot/15.0"})
     try:
         with urllib.request.urlopen(req, timeout=timeout_sec + 6) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -3550,7 +3612,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     global ACTIVE_FARM_TASK, FARM_STOP_FLAG
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v14.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v15.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -3632,7 +3694,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            send_full_debug_log_to_user("Полный лог работы комбайна v14.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v15.0")
             return
 
         if data == "check_farm_status":
@@ -3645,22 +3707,11 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "prompt_promo":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "Введите промокод в чат 👇"})
-            tg_request(
-                "sendMessage",
-                {
-                    "chat_id": TELEGRAM_CHAT_ID,
-                    "text": (
-                        "🎟 <b>Отправьте промокод одним словом в этот чат:</b>\n\n"
-                        "Сервер откроет 4 уникальных IP, зайдёт на каждый из 4 аккаунтов, введёт промокод, "
-                        "<b>реально проверит увеличение баланса монет</b> и пришлёт результат!"
-                    ),
-                    "parse_mode": "HTML",
-                    "reply_markup": {
-                        "force_reply": True,
-                        "selective": True,
-                        "input_field_placeholder": "Введите промокод...",
-                    },
-                },
+            send_tg_message(
+                "🎟 <b>Просто напишите и отправьте промокод одним словом в этот чат:</b>\n\n"
+                "Сервер откроет 4 уникальных IP, зайдёт на каждый из 4 аккаунтов, введёт промокод, "
+                "<b>реально проверит увеличение баланса монет</b> и пришлёт результат!",
+                add_keyboard=True,
             )
             return
 
@@ -3691,31 +3742,24 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
         lower = raw_text.lower()
 
         if lower in ("/start", "/menu", "/help", "меню"):
-            tg_request(
-                "sendMessage",
-                {
-                    "chat_id": TELEGRAM_CHAT_ID,
-                    "text": "🎛 <b>Сворачиваемое нижнее меню подключено!</b> Вы можете прятать и открывать кнопки значком 🎛 справа в строке ввода (или через синюю кнопку «Меню» слева).",
-                    "parse_mode": "HTML",
-                    "reply_markup": get_collapsible_reply_keyboard(),
-                },
-            )
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v14.0</b>\n\n"
-                "Выберите нужную задачу одним нажатием кнопки ниже (или просто отправьте промокод одним словом в чат):",
+                "🤖 <b>Панель управления фермой Senkuro v15.0</b>\n\n"
+                "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
+                "или просто напишите промокод одним словом в чат:",
                 add_keyboard=True,
+                force_reply_kb=True,
             )
             return
 
-        if lower in ("/screen", "📸 посмотреть экран", "экран", "скрин"):
+        if lower in ("/screen", "📸 экран", "📸 посмотреть экран", "экран", "скрин"):
             await send_live_screen_snapshot()
             return
 
-        if lower in ("/log", "📜 полный лог", "лог", "логи"):
-            send_full_debug_log_to_user("Полный лог работы комбайна v14.0")
+        if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
+            send_full_debug_log_to_user("Полный лог работы комбайна v15.0")
             return
 
-        if lower in ("/stop", "стоп", "🛑 остановить фарм / все задачи"):
+        if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
             FARM_STOP_FLAG = True
             if FARM_RESUME_FILE.exists():
                 FARM_RESUME_FILE.unlink(missing_ok=True)
@@ -3725,38 +3769,39 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             send_tg_message("🛑 <b>Фарм и все активные задачи остановлены!</b>", add_keyboard=True)
             return
 
-        if lower in ("/status", "📊 проверить статус фарма"):
+        if lower in ("/status", "📊 статус фарма", "📊 проверить статус фарма"):
             if CURRENT_FARM_STATUS.get("active"):
                 send_tg_message(format_farm_status_message(CURRENT_FARM_STATUS), add_keyboard=True)
             else:
                 await run_check_farm_status()
             return
 
-        if lower in ("/farm", "▶️ запустить фарм (8 ч)"):
+        if lower in ("/farm", "▶️ фарм (8 ч)", "▶️ запустить фарм (8 ч)"):
             await execute_single_action("farm", "")
             return
 
-        if lower == "🎟 ввести промокод":
-            tg_request(
-                "sendMessage",
-                {
-                    "chat_id": TELEGRAM_CHAT_ID,
-                    "text": "🎟 <b>Отправьте промокод одним словом в этот чат:</b>",
-                    "parse_mode": "HTML",
-                    "reply_markup": {"force_reply": True, "selective": True, "input_field_placeholder": "Введите промокод..."},
-                },
+        if lower in ("🎟 промокод", "🎟 ввести промокод"):
+            send_tg_message(
+                "🎟 <b>Просто напишите и отправьте промокод одним словом в этот чат:</b>\n"
+                "(окошко принудительного ответа убрано, чтобы ничего не залипало!)",
+                add_keyboard=True,
             )
             return
 
         text_btn_map = {
             "/balance": "balance",
+            "🪙 баланс монет": "balance",
             "🪙 баланс монет (4 акка)": "balance",
             "/packs": "packs",
+            "🎴 паки хардкор": "packs",
             "🎴 крутить паки хардкор": "packs",
             "/forge": "forge",
+            "⚒️ кузня + трейд": "forge",
             "⚒️ переплавка + трейд": "forge",
             "/check": "check",
+            "🔄 чекать 5 акков": "check",
             "🔄 проверить 5 аккаунтов": "check",
+            "🚀 сделать всё": "all",
             "🚀 сделать всё (паки+кузня)": "all",
         }
         if lower in text_btn_map:
@@ -3833,7 +3878,7 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v14.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v15.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",

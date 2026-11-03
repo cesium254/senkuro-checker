@@ -1,4 +1,4 @@
-name: Senkuro Full Automation Combine v13.0
+name: Senkuro Full Automation Combine v15.0
 
 on:
   push:
@@ -52,32 +52,18 @@ jobs:
           OFFSET_FILE = "/tmp/tg_offset.txt"
           QUEUE_FILE = "/tmp/senkuro_early_queue.jsonl"
 
-          KEYBOARD = {
-              "inline_keyboard": [
-                  [
-                      {"text": "▶️ Запустить фарм (8 ч)", "callback_data": "start_farm_8h"},
-                      {"text": "📊 Проверить статус фарма", "callback_data": "check_farm_status"},
-                  ],
-                  [
-                      {"text": "🎟 Ввести промокод", "callback_data": "prompt_promo"},
-                      {"text": "🪙 Баланс монет (4 акка)", "callback_data": "check_balance"},
-                  ],
-                  [
-                      {"text": "🎴 Крутить паки Хардкор", "callback_data": "roll_packs"},
-                      {"text": "⚒️ Переплавка + Трейд", "callback_data": "run_forge"},
-                  ],
-                  [
-                      {"text": "🔄 Проверить 5 аккаунтов", "callback_data": "check_senkuro"},
-                      {"text": "🚀 Сделать ВСЁ (Паки+Кузня)", "callback_data": "run_all"},
-                  ],
-                  [
-                      {"text": "📸 Посмотреть экран", "callback_data": "view_screen"},
-                      {"text": "📜 Полный лог (Файл+GitHub)", "callback_data": "dump_full_log"},
-                  ],
-                  [
-                      {"text": "🛑 ОСТАНОВИТЬ ФАРМ / ВСЕ ЗАДАЧИ", "callback_data": "stop_all_farm"},
-                  ],
-              ]
+          # Компактная сворачиваемая нижняя клавиатура (без дублирования верхних кнопок и с коротким текстом для телефона!)
+          REPLY_KEYBOARD = {
+              "keyboard": [
+                  [{"text": "▶️ Фарм (8 ч)"}, {"text": "📊 Статус фарма"}],
+                  [{"text": "🪙 Баланс монет"}, {"text": "🎴 Паки Хардкор"}],
+                  [{"text": "⚒️ Кузня + Трейд"}, {"text": "🎟 Промокод"}],
+                  [{"text": "🔄 Чекать 5 акков"}, {"text": "🚀 Сделать ВСЁ"}],
+                  [{"text": "📸 Экран"}, {"text": "📜 Лог"}, {"text": "🛑 СТОП"}],
+              ],
+              "resize_keyboard": True,
+              "is_persistent": False,
+              "input_field_placeholder": "Промокод или меню 🎛 👇",
           }
 
           def tg_call(method, payload, timeout=10):
@@ -93,14 +79,15 @@ jobs:
               except Exception:
                   return {}
 
-          def send_msg(text, markup=None):
+          def send_msg(text, attach_kb=False):
               body = {
                   "chat_id": CHAT_ID,
                   "text": text,
                   "parse_mode": "HTML",
                   "disable_web_page_preview": True,
-                  "reply_markup": markup if markup is not None else KEYBOARD,
               }
+              if attach_kb:
+                  body["reply_markup"] = REPLY_KEYBOARD
               tg_call("sendMessage", body)
 
           def append_queue(action, promo=""):
@@ -127,15 +114,17 @@ jobs:
           with open(OFFSET_FILE, "w", encoding="utf-8") as f:
               f.write(str(offset))
 
-          # 3. При сохранении кода (push) сразу через 3 секунды присылаем новую панель с красной кнопкой СТОП!
+          # 3. При сохранении кода (push) сразу через 3 секунды присылаем компактную нижнюю панель v15.0!
           if EVENT_NAME == "push":
               send_msg(
-                  "✅ <b>Единый комбайн Senkuro v13.0 запущен (Прямая связь — без Cloudflare)!</b>\n\n"
-                  "Старый сбойный вебхук отключён. Можете прямо сейчас нажимать любую кнопку ниже "
-                  "(пока браузер докачивается ~35 сек, ваша задача сразу встанет первой в очередь и пришлёт отчёт):"
+                  "✅ <b>Единый комбайн Senkuro v15.0 запущен!</b>\n\n"
+                  "• Компактное нижнее меню обновлено (сворачивается и открывается значком 🎛 в поле ввода, без дублирования кнопок сверху).\n"
+                  "• Вход в аккаунты переведён на родной Google Chrome (без ошибки капчи SSO).\n\n"
+                  "Нажимайте любую кнопку внизу 👇:",
+                  attach_kb=True,
               )
 
-          # 4. Слушаем нажатия кнопок, пока устанавливается браузер Chromium
+          # 4. Слушаем нажатия кнопок, пока подготавливается окружение (~25 сек)
           while True:
               res = tg_call("getUpdates", {"offset": offset, "timeout": 2}, timeout=6)
               for upd in res.get("result") or []:
@@ -152,20 +141,13 @@ jobs:
                           if os.path.exists(QUEUE_FILE):
                               os.remove(QUEUE_FILE)
                           tg_call("answerCallbackQuery", {"callback_query_id": cb_id, "text": "🛑 Все задачи остановлены!"})
-                          send_msg("🛑 <b>Очередь и все активные задачи остановлены!</b>\nВыберите нужную задачу кнопкой ниже:")
+                          send_msg("🛑 <b>Очередь и все активные задачи остановлены!</b>")
                       elif data == "check_farm_status":
                           tg_call("answerCallbackQuery", {"callback_query_id": cb_id, "text": "Проверяю статус фарма..."})
-                          send_msg(
-                              "⚪ <b>Сейчас 8-часовой фарм манги не запущен.</b>\n\n"
-                              "Нажмите <b>«▶️ Запустить фарм (8 ч)»</b> ниже, чтобы запустить чтение манги на всех 4 аккаунтах!"
-                          )
+                          send_msg("⚪ <b>Сейчас 8-часовой фарм манги не запущен.</b>\nНажмите <b>«▶️ Фарм (8 ч)»</b> в нижнем меню 🎛!")
                       elif data == "prompt_promo":
                           tg_call("answerCallbackQuery", {"callback_query_id": cb_id, "text": "Введите промокод в чат 👇"})
-                          send_msg(
-                              "🎟 <b>Отправьте промокод одним словом в этот чат:</b>\n\n"
-                              "Сервер откроет 4 уникальных IP, зайдёт на каждый из 4 аккаунтов, введёт промокод и проверит увеличение баланса!",
-                              markup={"force_reply": True, "selective": True, "input_field_placeholder": "Введите промокод..."},
-                          )
+                          send_msg("🎟 <b>Просто напишите и отправьте промокод одним словом в этот чат:</b>")
                       else:
                           amap = {
                               "start_farm_8h": ("farm", "▶️ Запускаю 8-часовой фарм манги на 4 аккаунтах!"),
@@ -178,24 +160,51 @@ jobs:
                           act_c, lbl = amap.get(data, ("check", "🔄 Проверка 5 аккаунтов принята!"))
                           tg_call("answerCallbackQuery", {"callback_query_id": cb_id, "text": lbl})
                           append_queue(act_c, "")
-                          send_msg(f"⏳ <b>{lbl}</b>\nДогружаю браузер (~20–30 сек) и сразу пришлю полный отчёт в этот чат!")
+                          send_msg(f"⏳ <b>{lbl}</b>\nПодготавливаю браузер (~20 сек) и сразу пришлю отчёт!")
                   msg = upd.get("message")
                   if msg and msg.get("text"):
                       txt = str(msg.get("text") or "").strip()
                       low = txt.lower()
+                      btn_map = {
+                          "▶️ фарм (8 ч)": ("farm", "▶️ Запускаю 8-часовой фарм манги на 4 аккаунтах!"),
+                          "▶️ запустить фарм (8 ч)": ("farm", "▶️ Запускаю 8-часовой фарм манги на 4 аккаунтах!"),
+                          "/farm": ("farm", "▶️ Запускаю 8-часовой фарм манги на 4 аккаунтах!"),
+                          "🪙 баланс монет": ("balance", "🪙 Проверка баланса монет (4 акка) принята!"),
+                          "🪙 баланс монет (4 акка)": ("balance", "🪙 Проверка баланса монет (4 акка) принята!"),
+                          "/balance": ("balance", "🪙 Проверка баланса монет (4 акка) принята!"),
+                          "🎴 паки хардкор": ("packs", "🎴 Прокрутка паков «Хардкор» (480 🪙) принята!"),
+                          "🎴 крутить паки хардкор": ("packs", "🎴 Прокрутка паков «Хардкор» (480 🪙) принята!"),
+                          "/packs": ("packs", "🎴 Прокрутка паков «Хардкор» (480 🪙) принята!"),
+                          "⚒️ кузня + трейд": ("forge", "⚒️ Переплавка + Трейд на основу приняты!"),
+                          "⚒️ переплавка + трейд": ("forge", "⚒️ Переплавка + Трейд на основу приняты!"),
+                          "/forge": ("forge", "⚒️ Переплавка + Трейд на основу приняты!"),
+                          "🔄 чекать 5 акков": ("check", "🔄 Проверка карт и осколков (5 аккаунтов) принята!"),
+                          "🔄 проверить 5 аккаунтов": ("check", "🔄 Проверка карт и осколков (5 аккаунтов) принята!"),
+                          "/check": ("check", "🔄 Проверка карт и осколков (5 аккаунтов) принята!"),
+                          "🚀 сделать всё": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
+                          "🚀 сделать всё (паки+кузня)": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
+                      }
                       if low in ("/start", "/menu", "/help", "меню"):
-                          send_msg("🤖 <b>Панель управления фермой Senkuro v13.0</b>\n\nВыберите задачу одним нажатием кнопки ниже:")
-                      elif low in ("/stop", "стоп"):
+                          send_msg("🤖 <b>Панель управления фермой Senkuro v15.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:", attach_kb=True)
+                      elif low in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
                           if os.path.exists(QUEUE_FILE):
                               os.remove(QUEUE_FILE)
                           send_msg("🛑 <b>Все задачи остановлены!</b>")
-                      elif low == "/status":
-                          send_msg("⚪ <b>Сейчас 8-часовой фарм манги не запущен.</b>")
+                      elif low in ("/status", "📊 статус фарма", "📊 проверить статус фарма"):
+                          send_msg("⚪ <b>Сейчас 8-часовой фарм манги не запущен.</b>\nНажмите <b>«▶️ Фарм (8 ч)»</b> в нижнем меню 🎛!")
+                      elif low in ("🎟 промокод", "🎟 ввести промокод"):
+                          send_msg("🎟 <b>Просто напишите и отправьте промокод одним словом в этот чат:</b>")
+                      elif low in ("📸 экран", "📸 посмотреть экран", "/screen", "📜 лог", "📜 полный лог", "/log"):
+                          send_msg("⏳ Догружаю основной движок браузера (~15 сек) — сразу после старта кнопка сработает мгновенно!")
+                      elif low in btn_map:
+                          act_c, lbl = btn_map[low]
+                          append_queue(act_c, "")
+                          send_msg(f"⏳ <b>{lbl}</b>\nПодготавливаю браузер (~20 сек) и сразу пришлю отчёт!")
                       else:
                           pcode = txt[7:].strip().upper() if low.startswith("/promo ") else (txt.upper() if not txt.startswith("/") and re.match(r"^[A-Za-z0-9_-]{4,32}$", txt) else "")
                           if pcode:
                               append_queue("promo", pcode)
-                              send_msg(f"🎟 Принят промокод <code>{pcode}</code>!\n⏳ Догружаю браузер (~20–30 сек) и сразу проверяю начисление монет на 4 аккаунтах...")
+                              send_msg(f"🎟 Принят промокод <code>{pcode}</code>!\n⏳ Подготавливаю браузер (~20 сек) и проверяю начисление монет на 4 аккаунтах...")
               time.sleep(0.5)
           EOF
           nohup python3 /tmp/early_poller.py >/tmp/early_poller.log 2>&1 &
@@ -216,12 +225,10 @@ jobs:
           path: |
             .sessions
             bin
-          key: senkuro-sessions-v12-${{ github.run_id }}
+          key: senkuro-sessions-v15-${{ github.run_id }}
           restore-keys: |
+            senkuro-sessions-v15-
             senkuro-sessions-v12-
-            senkuro-sessions-v11-
-            senkuro-sessions-v10-
-            senkuro-sessions-v9-
 
       - name: Install Playwright, Chromium & Virtual Display (Xvfb)
         run: |
@@ -238,7 +245,7 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v13.0 (Direct Telegram Engine)
+      - name: Run Senkuro Automation Combine v15.0 (Direct Telegram Engine)
         id: run_bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
@@ -257,7 +264,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: senkuro-farm-sessions-${{ github.run_id }}
-          path: .sessions/sessions/
+          path: .sessions/
           retention-days: 1
 
   continue-bot-second-half:
@@ -294,9 +301,9 @@ jobs:
           path: |
             .sessions
             bin
-          key: senkuro-sessions-v12-part2-${{ github.run_id }}
+          key: senkuro-sessions-v15-part2-${{ github.run_id }}
           restore-keys: |
-            senkuro-sessions-v12-
+            senkuro-sessions-v15-
 
       - name: Install Playwright, Chromium & Virtual Display (Xvfb)
         run: |
@@ -313,7 +320,7 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v13.0 (Part 2 — Hours 4 to 8)
+      - name: Run Senkuro Automation Combine v15.0 (Part 2 — Hours 4 to 8)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
