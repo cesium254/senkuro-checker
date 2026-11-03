@@ -293,7 +293,13 @@ def send_tg_message(text: str, add_keyboard: bool = True, force_reply_kb: bool =
     }
     if add_keyboard or force_reply_kb:
         payload["reply_markup"] = get_collapsible_reply_keyboard()
-    return tg_request("sendMessage", payload)
+    res = tg_request("sendMessage", payload)
+    if not res.get("ok"):
+        log_debug(f"[TG WARN] sendMessage HTML failed ({res}), повтор без parse_mode...")
+        payload_plain = dict(payload)
+        payload_plain.pop("parse_mode", None)
+        res = tg_request("sendMessage", payload_plain)
+    return res
 
 
 def send_tg_multipart(method: str, file_field: str, filename: str, file_bytes: bytes, mime_type: str, extra_fields: dict[str, str]) -> dict:
@@ -3317,6 +3323,10 @@ FULL_FARM_USERSCRIPT_V9 = r"""
             }
             const chosen = candidates.length > 0 ? candidates[candidates.length - 1] : (uniqueLinks.length > 0 ? uniqueLinks[uniqueLinks.length - 1] : null);
             if (chosen) {
+                try {
+                    cdMap[chosen.slug] = Date.now() + 12 * 3600 * 1000;
+                    localStorage.setItem('senkuro_cooldown_mangas_v4', JSON.stringify(cdMap));
+                } catch (e) {}
                 triggerClick(chosen.el);
                 setTimeout(() => {
                     if (window.location.pathname.includes('/bookmarks')) window.location.href = chosen.href;
@@ -3991,22 +4001,17 @@ async def run_background_8h_farm(base_elapsed_minutes: int = 0, segment_hours: f
 
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=not has_display,
-                args=[
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-background-timer-throttling",
-                    "--disable-backgrounding-occluded-windows",
-                    "--disable-renderer-backgrounding",
-                ],
-            )
+            browser = await launch_senkuro_browser(p)
             for acc in FARM_ACCOUNTS:
                 if FARM_STOP_FLAG:
                     break
                 proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
                 ip_used = proxy_mgr.active_ips.get(acc["acc_id"], acc["pinned_ip"])
+                log_debug(f"[FARM STEP] #{acc['idx']}/4 {acc['id']} -> IP: {ip_used}")
+                send_tg_message(
+                    f"⏳ <b>[Фарм {acc['idx']}/4] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): вхожу в профиль, открываю закладки и листаю в самый низ...",
+                    add_keyboard=False,
+                )
                 ctx = await create_account_context(browser, acc, proxy_url)
                 await ctx.add_init_script(FULL_FARM_USERSCRIPT_V9)
                 page, user_obj = await ensure_logged_in(ctx, acc)
@@ -4156,7 +4161,7 @@ async def run_background_8h_farm(base_elapsed_minutes: int = 0, segment_hours: f
             FARM_RESUME_FILE.unlink(missing_ok=True)
     except Exception as e:
         log_debug(f"[FARM FATAL ERROR] {e}")
-        send_tg_message(f"⚠️ Ошибка при запуске фарма: <code>{e}</code>", add_keyboard=True)
+        send_tg_message(f"⚠️ Ошибка при запуске фарма: <code>{str(e).replace('<', '&lt;').replace('>', '&gt;')[:400]}</code>", add_keyboard=True)
     finally:
         ACTIVE_BROWSER_PAGES.clear()
         proxy_mgr.stop_all()
@@ -4447,7 +4452,7 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
             log_debug(f"[EXECUTOR CANCELLED] Задача {act_code} остановлена пользователем (СТОП).")
         except Exception as e:
             log_debug(f"[EXECUTOR ERROR] {act_code}: {e}")
-            send_tg_message(f"⚠️ Ошибка при выполнении задачи <code>{act_code}</code>: {e}", add_keyboard=True)
+            send_tg_message(f"⚠️ Ошибка при выполнении задачи <code>{act_code}</code>: {str(e).replace('<', '&lt;').replace('>', '&gt;')[:400]}", add_keyboard=True)
         finally:
             for _k, _pg in list(ACTIVE_BROWSER_PAGES.items()):
                 try:
