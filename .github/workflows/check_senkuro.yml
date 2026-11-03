@@ -1,4 +1,4 @@
-name: Senkuro Full Automation Combine v17.0
+name: Senkuro Full Automation Combine v18.0
 
 on:
   push:
@@ -52,14 +52,14 @@ jobs:
           OFFSET_FILE = "/tmp/tg_offset.txt"
           QUEUE_FILE = "/tmp/senkuro_early_queue.jsonl"
 
-          # is_persistent=False возвращает треугольную кнопку сворачивания меню [v] / 🎛 справа в строке ввода!
+          # 4 ряда (помещаются на экран БЕЗ прокрутки!), кнопка «🛑 СТОП» на 1-м ряду справа,
+          # а is_persistent=False сохраняет стрелочку сворачивания меню [v] / 🎛 в строке ввода!
           REPLY_KEYBOARD = {
               "keyboard": [
-                  [{"text": "▶️ Фарм (8 ч)"}, {"text": "📊 Статус фарма"}],
-                  [{"text": "🪙 Баланс монет"}, {"text": "🎴 Паки Хардкор"}],
-                  [{"text": "⚒️ Кузня + Трейд"}, {"text": "🎟 Промокод"}],
-                  [{"text": "🔄 Чекать 5 акков"}, {"text": "🚀 Сделать ВСЁ"}],
-                  [{"text": "📸 Экран"}, {"text": "📜 Лог"}, {"text": "🛑 СТОП"}],
+                  [{"text": "▶️ Фарм (8 ч)"}, {"text": "📊 Статус"}, {"text": "🛑 СТОП"}],
+                  [{"text": "🪙 Баланс"}, {"text": "🎴 Паки"}, {"text": "🎟 Промокод"}],
+                  [{"text": "⚒️ Кузня+Трейд"}, {"text": "🔄 Чекать 5"}, {"text": "🚀 ВСЁ"}],
+                  [{"text": "📸 Экран"}, {"text": "📜 Лог"}],
               ],
               "resize_keyboard": True,
               "is_persistent": False,
@@ -113,12 +113,12 @@ jobs:
           with open(OFFSET_FILE, "w", encoding="utf-8") as f:
               f.write(str(offset))
 
-          # 3. При сохранении кода (push) сразу через 3 секунды присылаем компактную нижнюю панель v17.0!
+          # 3. При сохранении кода (push) сразу через 3 секунды присылаем новую 4-рядную панель v18.0!
           if EVENT_NAME == "push":
               send_msg(
-                  "✅ <b>Единый комбайн Senkuro v17.0 запущен!</b>\n\n"
-                  "• Возвращена кнопка сворачивания меню [v] / 🎛 в строке ввода.\n"
-                  "• Исправлен запуск изолированных профилей Chrome с индивидуальными IP.\n\n"
+                  "✅ <b>Единый комбайн Senkuro v18.0 запущен!</b>\n\n"
+                  "• Кнопка <b>«🛑 СТОП»</b> вынесена в 1-й ряд справа (все 4 ряда помещаются на экран без прокрутки).\n"
+                  "• Подключён рабочий CDP-инжектор входа из ноутбука Kaggle (4 изолированных профиля Chrome + 4 уникальных IP).\n\n"
                   "Нажимайте любую кнопку внизу 👇:"
               )
 
@@ -167,28 +167,33 @@ jobs:
                           "▶️ фарм (8 ч)": ("farm", "▶️ Запускаю 8-часовой фарм манги на 4 аккаунтах!"),
                           "▶️ запустить фарм (8 ч)": ("farm", "▶️ Запускаю 8-часовой фарм манги на 4 аккаунтах!"),
                           "/farm": ("farm", "▶️ Запускаю 8-часовой фарм манги на 4 аккаунтах!"),
+                          "🪙 баланс": ("balance", "🪙 Проверка баланса монет (4 акка) принята!"),
                           "🪙 баланс монет": ("balance", "🪙 Проверка баланса монет (4 акка) принята!"),
                           "🪙 баланс монет (4 акка)": ("balance", "🪙 Проверка баланса монет (4 акка) принята!"),
                           "/balance": ("balance", "🪙 Проверка баланса монет (4 акка) принята!"),
+                          "🎴 паки": ("packs", "🎴 Прокрутка паков «Хардкор» (480 🪙) принята!"),
                           "🎴 паки хардкор": ("packs", "🎴 Прокрутка паков «Хардкор» (480 🪙) принята!"),
                           "🎴 крутить паки хардкор": ("packs", "🎴 Прокрутка паков «Хардкор» (480 🪙) принята!"),
                           "/packs": ("packs", "🎴 Прокрутка паков «Хардкор» (480 🪙) принята!"),
+                          "⚒️ кузня+трейд": ("forge", "⚒️ Переплавка + Трейд на основу приняты!"),
                           "⚒️ кузня + трейд": ("forge", "⚒️ Переплавка + Трейд на основу приняты!"),
                           "⚒️ переплавка + трейд": ("forge", "⚒️ Переплавка + Трейд на основу приняты!"),
                           "/forge": ("forge", "⚒️ Переплавка + Трейд на основу приняты!"),
+                          "🔄 чекать 5": ("check", "🔄 Проверка карт и осколков (5 аккаунтов) принята!"),
                           "🔄 чекать 5 акков": ("check", "🔄 Проверка карт и осколков (5 аккаунтов) принята!"),
                           "🔄 проверить 5 аккаунтов": ("check", "🔄 Проверка карт и осколков (5 аккаунтов) принята!"),
                           "/check": ("check", "🔄 Проверка карт и осколков (5 аккаунтов) принята!"),
+                          "🚀 всё": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                           "🚀 сделать всё": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                           "🚀 сделать всё (паки+кузня)": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                       }
                       if low in ("/start", "/menu", "/help", "меню"):
-                          send_msg("🤖 <b>Панель управления фермой Senkuro v17.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
+                          send_msg("🤖 <b>Панель управления фермой Senkuro v18.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
                       elif low in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
                           if os.path.exists(QUEUE_FILE):
                               os.remove(QUEUE_FILE)
-                          send_msg("🛑 <b>Все задачи остановлены!</b>")
-                      elif low in ("/status", "📊 статус фарма", "📊 проверить статус фарма"):
+                          send_msg("🛑 <b>Все задачи и очередь остановлены!</b>")
+                      elif low in ("/status", "📊 статус", "📊 статус фарма", "📊 проверить статус фарма"):
                           send_msg("⚪ <b>Сейчас 8-часовой фарм манги не запущен.</b>\nНажмите <b>«▶️ Фарм (8 ч)»</b> в нижнем меню 🎛!")
                       elif low in ("🎟 промокод", "🎟 ввести промокод"):
                           send_msg("🎟 <b>Просто напишите и отправьте промокод одним словом в этот чат:</b>")
@@ -223,10 +228,10 @@ jobs:
           path: |
             .sessions
             bin
-          key: senkuro-sessions-v17-${{ github.run_id }}
+          key: senkuro-sessions-v18-${{ github.run_id }}
           restore-keys: |
+            senkuro-sessions-v18-
             senkuro-sessions-v17-
-            senkuro-sessions-v16-
 
       - name: Install Playwright, Chromium, Xvfb, xdotool & Openbox
         run: |
@@ -243,7 +248,7 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v17.0 (Direct Telegram Engine)
+      - name: Run Senkuro Automation Combine v18.0 (Direct Telegram Engine)
         id: run_bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
@@ -299,9 +304,9 @@ jobs:
           path: |
             .sessions
             bin
-          key: senkuro-sessions-v17-part2-${{ github.run_id }}
+          key: senkuro-sessions-v18-part2-${{ github.run_id }}
           restore-keys: |
-            senkuro-sessions-v17-
+            senkuro-sessions-v18-
 
       - name: Install Playwright, Chromium, Xvfb, xdotool & Openbox
         run: |
@@ -318,7 +323,7 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v17.0 (Part 2 — Hours 4 to 8)
+      - name: Run Senkuro Automation Combine v18.0 (Part 2 — Hours 4 to 8)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
