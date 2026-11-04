@@ -1,4 +1,4 @@
-name: Senkuro Full Automation Combine v23.1
+name: Senkuro Full Automation Combine v24.0
 
 on:
   push:
@@ -35,7 +35,7 @@ jobs:
     steps:
       - name: Instant Telegram Direct Connect & Early Responder (Runs in 3 Seconds)
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
           GH_EVENT_NAME: ${{ github.event_name }}
         run: |
@@ -46,7 +46,7 @@ jobs:
           import time
           import urllib.request
 
-          TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4").strip()
+          TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
           CHAT_ID = str(os.environ.get("TELEGRAM_CHAT_ID", "457787014")).strip()
           EVENT_NAME = os.environ.get("GH_EVENT_NAME", "push").strip()
           OFFSET_FILE = "/tmp/tg_offset.txt"
@@ -186,7 +186,7 @@ jobs:
                           "🚀 сделать всё (паки+кузня)": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                       }
                       if low in ("/start", "/menu", "/help", "меню"):
-                          send_msg("🤖 <b>Панель управления фермой Senkuro v23.1</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
+                          send_msg("🤖 <b>Панель управления фермой Senkuro v24.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
                       elif low in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
                           if os.path.exists(QUEUE_FILE):
                               os.remove(QUEUE_FILE)
@@ -247,10 +247,10 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v23.1 (Direct Telegram Engine)
+      - name: Run Senkuro Automation Combine v24.0 (Direct Telegram Engine)
         id: run_bot
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
           SENKURO_ACTION: ${{ github.event.inputs.action || 'daemon' }}
           SENKURO_PROMO_CODE: ${{ github.event.inputs.promo_code || '' }}
@@ -281,7 +281,7 @@ jobs:
     steps:
       - name: Instant Early Poller for Part 2 Handoff
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
           curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteWebhook" -H "Content-Type: application/json" -d '{"drop_pending_updates":false}' || true
 
@@ -326,10 +326,10 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v23.1 (Part 2 — Hours 4 to 8)
+      - name: Run Senkuro Automation Combine v24.0 (Part 2 — Hours 4 to 8)
         id: run_bot_p2
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
         run: |
           xvfb-run -a --server-args="-screen 0 1280x900x24" bash -c "openbox >/dev/null 2>&1 & sleep 1 && python check_senkuro.py --action 'daemon'"
@@ -390,9 +390,9 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v23.1 (Part 3 — Finish Remaining 8h Farm)
+      - name: Run Senkuro Automation Combine v24.0 (Part 3 — Finish Remaining 8h Farm)
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
         run: |
           xvfb-run -a --server-args="-screen 0 1280x900x24" bash -c "openbox >/dev/null 2>&1 & sleep 1 && python check_senkuro.py --action 'daemon'"
