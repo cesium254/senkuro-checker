@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v22.0 (100% TELEGRAM -> CLOUDFLARE -> GITHUB)
+SENKURO FULL AUTOMATION COMBINE v23.0 (100% TELEGRAM -> CLOUDFLARE -> GITHUB)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -368,7 +368,7 @@ def upload_debug_log_to_github_noop(reason: str = "task") -> Optional[str]:
         headers = {
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {GITHUB_PAT_TOKEN}",
-            "User-Agent": "SenkuroBot/22.0",
+            "User-Agent": "SenkuroBot/23.0",
             "X-GitHub-Api-Version": "2022-11-28",
             "Content-Type": "application/json",
         }
@@ -3971,11 +3971,12 @@ async def run_check_all_5_accounts() -> None:
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v22.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v23.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
 FARM_STOP_FLAG: bool = False
+GLOBAL_DEADLINE_TS: float = 0.0
 ACTIVE_FARM_TASK: Optional[asyncio.Task] = None
 ACTIVE_JOB_TASK: Optional[asyncio.Task] = None
 PENDING_TASKS: Optional[asyncio.Queue] = None
@@ -4009,7 +4010,7 @@ def fetch_tg_updates_sync(offset_val: int, timeout_sec: int = 4) -> list[dict]:
         time.sleep(2)
         return []
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={offset_val}&timeout={timeout_sec}"
-    req = urllib.request.Request(url, headers={"User-Agent": "SenkuroDirectBot/22.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "SenkuroDirectBot/23.0"})
     try:
         with urllib.request.urlopen(req, timeout=timeout_sec + 6) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -4133,13 +4134,24 @@ async def run_background_8h_farm(base_elapsed_minutes: int = 0, segment_hours: f
                 initial_snap = await enrich_titles(collect_snapshot(True))
                 CURRENT_FARM_STATUS = initial_snap
                 publish_live_farm_status(initial_snap)
+                # Сразу сохраняем файл резюме фарма на диск, чтобы при любом переходе между этапами прогресс не терялся!
+                try:
+                    FARM_RESUME_FILE.write_text(
+                        json.dumps({"active": True, "elapsed_minutes": max(1, initial_snap["elapsed_minutes"])}),
+                        encoding="utf-8",
+                    )
+                except Exception:
+                    pass
                 if base_elapsed_minutes == 0:
                     send_tg_message(
                         "✅ <b>8-часовой фарм манги успешно запущен!</b>\n\n" + format_farm_status_message(initial_snap),
                         add_keyboard=True,
                     )
+                else:
+                    log_debug(f"[FARM RESUME OK] Этап 8-часового фарма продолжен с {base_elapsed_minutes}-й минуты!")
 
-            end_ts = start_ts + segment_hours * 3600.0
+            job_limit_ts = (GLOBAL_DEADLINE_TS - 45.0) if GLOBAL_DEADLINE_TS > time.time() + 120 else (start_ts + segment_hours * 3600.0)
+            end_ts = min(start_ts + segment_hours * 3600.0, job_limit_ts)
             last_sync_ts = time.time()
             last_save_ts = time.time()
 
@@ -4159,6 +4171,13 @@ async def run_background_8h_farm(base_elapsed_minutes: int = 0, segment_hours: f
                     snap = await enrich_titles(collect_snapshot(True))
                     CURRENT_FARM_STATUS = snap
                     publish_live_farm_status(snap)
+                    try:
+                        FARM_RESUME_FILE.write_text(
+                            json.dumps({"active": True, "elapsed_minutes": max(1, snap["elapsed_minutes"])}),
+                            encoding="utf-8",
+                        )
+                    except Exception:
+                        pass
                     if snap["elapsed_minutes"] >= 480:
                         # Полные 8 часов (480 минут) отработаны!
                         break
@@ -4185,9 +4204,10 @@ async def run_background_8h_farm(base_elapsed_minutes: int = 0, segment_hours: f
             if FARM_STOP_FLAG:
                 if FARM_RESUME_FILE.exists():
                     FARM_RESUME_FILE.unlink(missing_ok=True)
-            elif final_elapsed >= 475 or base_elapsed_minutes >= 200:
+            elif final_elapsed >= 475:
                 if FARM_RESUME_FILE.exists():
                     FARM_RESUME_FILE.unlink(missing_ok=True)
+                log_debug(f"[FARM COMPLETE] 8 часов фарма ({final_elapsed} мин) полностью отработаны!")
                 send_tg_message(
                     "🏁 <b>8 часов фарма манги полностью завершены!</b>\n"
                     "Все 4 аккаунта остановлены, прогресс чтения и сессии сохранены.\n\n"
@@ -4195,9 +4215,11 @@ async def run_background_8h_farm(base_elapsed_minutes: int = 0, segment_hours: f
                     add_keyboard=True,
                 )
             else:
-                # Сохраняем состояние для бесшовного продолжения во 2-й половине воркфлоу (часы 4..8)
+                # Сохраняем точное количество отработанных минут для бесшовного продолжения в следующем этапе воркфлоу!
+                saved_min = max(1, final_elapsed)
+                log_debug(f"[FARM HANDOFF] Этап завершён на {saved_min}/480 мин — сохраняю farm_resume.json для следующего этапа!")
                 FARM_RESUME_FILE.write_text(
-                    json.dumps({"active": True, "elapsed_minutes": max(240, final_elapsed)}),
+                    json.dumps({"active": True, "elapsed_minutes": saved_min}),
                     encoding="utf-8",
                 )
 
@@ -4206,8 +4228,20 @@ async def run_background_8h_farm(base_elapsed_minutes: int = 0, segment_hours: f
             await browser.close()
     except asyncio.CancelledError:
         CURRENT_FARM_STATUS = {"active": False, "accounts": []}
-        if FARM_RESUME_FILE.exists():
-            FARM_RESUME_FILE.unlink(missing_ok=True)
+        if FARM_STOP_FLAG:
+            if FARM_RESUME_FILE.exists():
+                FARM_RESUME_FILE.unlink(missing_ok=True)
+        else:
+            # Отмена из-за завершения 4-часового джоба GitHub Actions — сохраняем точный прогресс для следующего джоба!
+            saved_min = max(1, base_elapsed_minutes + int((time.time() - start_ts) // 60))
+            log_debug(f"[FARM CANCEL HANDOFF] Джоб завершается на {saved_min}/480 мин — сохраняю farm_resume.json!")
+            try:
+                FARM_RESUME_FILE.write_text(
+                    json.dumps({"active": True, "elapsed_minutes": saved_min}),
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
     except Exception as e:
         log_debug(f"[FARM FATAL ERROR] {e}")
         send_tg_message(f"⚠️ Ошибка при запуске фарма: <code>{str(e).replace('<', '&lt;').replace('>', '&gt;')[:400]}</code>", add_keyboard=True)
@@ -4221,7 +4255,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     FARM_STOP_FLAG = False
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v22.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v23.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -4305,7 +4339,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            send_full_debug_log_to_user("Полный лог работы комбайна v22.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v23.0")
             return
 
         if data == "check_farm_status":
@@ -4354,7 +4388,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if lower in ("/start", "/menu", "/help", "меню"):
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v22.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v23.0</b>\n\n"
                 "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
                 "или просто напишите промокод одним словом в чат:",
                 add_keyboard=True,
@@ -4367,7 +4401,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
-            send_full_debug_log_to_user("Полный лог работы комбайна v22.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v23.0")
             return
 
         if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
@@ -4466,7 +4500,7 @@ async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: fl
     log_debug(f"[DAEMON READY] Прямой Telegram Long Polling запущен (offset={offset}) — сервер 100% готов!")
     if os.environ.get("GH_EVENT_NAME") == "push":
         send_tg_message(
-            "🟢 <b>Сервер полностью запущен и готов к работе (v22.0)!</b>\n\n"
+            "🟢 <b>Сервер полностью запущен и готов к работе (v23.0)!</b>\n\n"
             "Браузер Google Chrome и виртуальный экран готовы — теперь любая кнопка сработает сразу 👇:",
             add_keyboard=True,
         )
@@ -4515,7 +4549,7 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v22.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v23.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",
@@ -4529,8 +4563,10 @@ async def async_main() -> None:
 
     configure_telegram_bot_profile()
 
+    global GLOBAL_DEADLINE_TS
     PENDING_TASKS = asyncio.Queue()
     deadline_ts = time.time() + 4.1 * 3600.0
+    GLOBAL_DEADLINE_TS = deadline_ts
 
     # 1. Загружаем все команды, которые пользователь успел нажать за 40 секунд установки браузера!
     if EARLY_QUEUE_FILE.exists():
@@ -4550,7 +4586,7 @@ async def async_main() -> None:
         except Exception as e:
             print(f"[EARLY QUEUE WARNING] {e}")
 
-    # 2. Проверяем, нужно ли автоматически продолжить 2-ю половину 8-часового фарма (часы 4..8)
+    # 2. Проверяем, нужно ли автоматически продолжить 8-часовой фарм с сохраненной минуты
     if args.action == "farm_part2" or FARM_RESUME_FILE.exists():
         elapsed_prev = 240
         try:
@@ -4559,7 +4595,8 @@ async def async_main() -> None:
                 elapsed_prev = int(st_data.get("elapsed_minutes") or 240)
         except Exception:
             pass
-        rem_hours = max(0.5, (480 - elapsed_prev) / 60.0)
+        rem_hours = max(0.25, (480 - elapsed_prev) / 60.0)
+        log_debug(f"[FARM AUTO-RESUME] Обнаружен незаконченный 8ч фарм (уже прошло {elapsed_prev} мин из 480, осталось {rem_hours:.2f} ч)!")
         ACTIVE_FARM_TASK = asyncio.create_task(run_background_8h_farm(elapsed_prev, min(4.0, rem_hours)))
     elif args.action not in ("daemon", "menu"):
         if args.action in ("farm", "farm_part1"):

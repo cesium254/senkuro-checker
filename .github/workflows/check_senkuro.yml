@@ -1,4 +1,4 @@
-name: Senkuro Full Automation Combine v22.0
+name: Senkuro Full Automation Combine v23.0
 
 on:
   push:
@@ -186,7 +186,7 @@ jobs:
                           "🚀 сделать всё (паки+кузня)": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                       }
                       if low in ("/start", "/menu", "/help", "меню"):
-                          send_msg("🤖 <b>Панель управления фермой Senkuro v22.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
+                          send_msg("🤖 <b>Панель управления фермой Senkuro v23.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
                       elif low in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
                           if os.path.exists(QUEUE_FILE):
                               os.remove(QUEUE_FILE)
@@ -247,7 +247,7 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v22.0 (Direct Telegram Engine)
+      - name: Run Senkuro Automation Combine v23.0 (Direct Telegram Engine)
         id: run_bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
@@ -270,11 +270,13 @@ jobs:
           path: .sessions/
           retention-days: 1
 
-  continue-bot-second-half:
+    continue-bot-second-half:
     needs: run-senkuro-bot
     if: needs.run-senkuro-bot.outputs.continue_bot == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 270
+    outputs:
+      continue_bot: ${{ steps.run_bot_p2.outputs.continue_bot }}
 
     steps:
       - name: Instant Early Poller for Part 2 Handoff
@@ -291,14 +293,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Restore Login Sessions from Part 1
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: senkuro-farm-sessions-${{ github.run_id }}
-          path: .sessions/
-
-      - name: Cache Updated Login Sessions (.sessions) & Opera Proxy
+      - name: Cache Login Sessions (.sessions) & Opera Proxy
         uses: actions/cache@v4
         with:
           path: |
@@ -307,6 +302,13 @@ jobs:
           key: senkuro-sessions-v18-part2-${{ github.run_id }}
           restore-keys: |
             senkuro-sessions-v18-
+
+      - name: Restore Login Sessions & Farm Resume State from Part 1 (Overwrites Cache)
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: senkuro-farm-sessions-${{ github.run_id }}
+          path: .sessions/
 
       - name: Install Playwright, Chromium, Xvfb, xdotool & Openbox
         run: |
@@ -324,9 +326,74 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v22.0 (Part 2 — Hours 4 to 8)
+      - name: Run Senkuro Automation Combine v23.0 (Part 2 — Hours 4 to 8)
+        id: run_bot_p2
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
         run: |
           xvfb-run -a --server-args="-screen 0 1280x900x24" bash -c "openbox >/dev/null 2>&1 & sleep 1 && python check_senkuro.py --action 'daemon'"
+
+      - name: Save Sessions & State Artifact for Part 3 Continuation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: senkuro-farm-sessions-p2-${{ github.run_id }}
+          path: .sessions/
+          retention-days: 1
+
+  continue-bot-third-half:
+    needs: continue-bot-second-half
+    if: needs.continue-bot-second-half.outputs.continue_bot == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 270
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache Login Sessions (.sessions) & Opera Proxy
+        uses: actions/cache@v4
+        with:
+          path: |
+            .sessions
+            bin
+          key: senkuro-sessions-v18-part3-${{ github.run_id }}
+          restore-keys: |
+            senkuro-sessions-v18-
+
+      - name: Restore Login Sessions & Farm Resume State from Part 2 (Overwrites Cache)
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: senkuro-farm-sessions-p2-${{ github.run_id }}
+          path: .sessions/
+
+      - name: Install Playwright, Chromium, Xvfb, xdotool & Openbox
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb xdotool openbox
+          pip install -q playwright pillow
+          if [ ! -x /usr/bin/google-chrome-stable ]; then
+            playwright install --with-deps chromium
+          fi
+
+      - name: Download Opera VPN Proxy (for 4 unique IPs)
+        run: |
+          mkdir -p bin .sessions
+          if [ ! -f bin/opera-proxy ]; then
+            curl -L -sS https://github.com/Alexey71/opera-proxy/releases/latest/download/opera-proxy.linux-amd64 -o bin/opera-proxy
+            chmod +x bin/opera-proxy
+          fi
+
+      - name: Run Senkuro Automation Combine v23.0 (Part 3 — Finish Remaining 8h Farm)
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8868493953:AAHyGgQCt4n2FrvyL6mPmFK8w1fq_LNpug4' }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
+        run: |
+          xvfb-run -a --server-args="-screen 0 1280x900x24" bash -c "openbox >/dev/null 2>&1 & sleep 1 && python check_senkuro.py --action 'daemon'"
+
