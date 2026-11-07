@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v25.0 (8 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
+SENKURO FULL AUTOMATION COMBINE v26.0 (8 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -202,7 +202,7 @@ FARM_ACCOUNTS = [
         "acc_id": "acc_1",
         "id": "ber_turtle",
         "label": "#1 Ber Turtle (ber_turtle)",
-        "login": os.environ.get("SENKURO_LOGIN_1", "zerovillbusiness@gmail.com").strip(),
+        "login": os.environ.get("SENKURO_LOGIN_1", "").strip() or "zerovillbusiness@gmail.com",
         "password": get_secret_password(1, "ber_turtle", "zerovillbusiness@gmail.com"),
         "pinned_ip": "77.111.244.37",
         "proxy_port": 25341,
@@ -214,7 +214,7 @@ FARM_ACCOUNTS = [
         "acc_id": "acc_2",
         "id": "ainz",
         "label": "#2 Ainz (ainz)",
-        "login": os.environ.get("SENKURO_LOGIN_2", "dert124689@gmail.com").strip(),
+        "login": os.environ.get("SENKURO_LOGIN_2", "").strip() or "dert124689@gmail.com",
         "password": get_secret_password(2, "ainz", "dert124689@gmail.com"),
         "pinned_ip": "77.111.244.209",
         "proxy_port": 25342,
@@ -226,7 +226,7 @@ FARM_ACCOUNTS = [
         "acc_id": "acc_3",
         "id": "catswat",
         "label": "#3 Cat Swat (catswat)",
-        "login": os.environ.get("SENKURO_LOGIN_3", "gamerecapbusiness@gmail.com").strip(),
+        "login": os.environ.get("SENKURO_LOGIN_3", "").strip() or "gamerecapbusiness@gmail.com",
         "password": get_secret_password(3, "catswat", "gamerecapbusiness@gmail.com"),
         "pinned_ip": "77.111.244.210",
         "proxy_port": 25343,
@@ -238,7 +238,7 @@ FARM_ACCOUNTS = [
         "acc_id": "acc_4",
         "id": "wolfrice",
         "label": "#4 Wolf Rice (wolfrice)",
-        "login": os.environ.get("SENKURO_LOGIN_4", "gameepicenterbusiness@gmail.com").strip(),
+        "login": os.environ.get("SENKURO_LOGIN_4", "").strip() or "gameepicenterbusiness@gmail.com",
         "password": get_secret_password(4, "wolfrice", "gameepicenterbusiness@gmail.com"),
         "pinned_ip": "77.111.246.8",
         "proxy_port": 25344,
@@ -250,7 +250,7 @@ FARM_ACCOUNTS = [
         "acc_id": "acc_5",
         "id": "lanar",
         "label": "#5 Lanar (lanar)",
-        "login": os.environ.get("SENKURO_LOGIN_5", "Cesium254@proton.me").strip(),
+        "login": os.environ.get("SENKURO_LOGIN_5", "").strip() or "Cesium254@proton.me",
         "password": get_secret_password(5, "lanar", "Cesium254@proton.me"),
         "pinned_ip": "77.111.246.10",
         "proxy_port": 25345,
@@ -262,7 +262,7 @@ FARM_ACCOUNTS = [
         "acc_id": "acc_6",
         "id": "canva",
         "label": "#6 Canva (canva)",
-        "login": os.environ.get("SENKURO_LOGIN_6", "woodlandcava@gmail.com").strip(),
+        "login": os.environ.get("SENKURO_LOGIN_6", "").strip() or "woodlandcava@gmail.com",
         "password": get_secret_password(6, "canva", "woodlandcava@gmail.com"),
         "pinned_ip": "77.111.246.14",
         "proxy_port": 25346,
@@ -274,7 +274,7 @@ FARM_ACCOUNTS = [
         "acc_id": "acc_7",
         "id": "raya",
         "label": "#7 Raya (raya)",
-        "login": os.environ.get("SENKURO_LOGIN_7", "restunger@gmail.com").strip(),
+        "login": os.environ.get("SENKURO_LOGIN_7", "").strip() or "restunger@gmail.com",
         "password": get_secret_password(7, "raya", "restunger@gmail.com"),
         "pinned_ip": "77.111.245.10",
         "proxy_port": 25347,
@@ -286,7 +286,7 @@ FARM_ACCOUNTS = [
         "acc_id": "acc_8",
         "id": "tnt",
         "label": "#8 TNT (tnt)",
-        "login": os.environ.get("SENKURO_LOGIN_8", "jekadinamit@gmail.com").strip(),
+        "login": os.environ.get("SENKURO_LOGIN_8", "").strip() or "jekadinamit@gmail.com",
         "password": get_secret_password(8, "tnt", "jekadinamit@gmail.com"),
         "pinned_ip": "77.111.245.14",
         "proxy_port": 25348,
@@ -2227,19 +2227,11 @@ async def ensure_logged_in(context: BrowserContext, acc: dict) -> tuple[Page, Op
         await context.storage_state(path=str(get_session_file(acc["id"])))
         return page, user_obj
 
-    if not acc.get("login"):
-        acc["login"] = os.environ.get(f"SENKURO_LOGIN_{acc.get('idx')}", acc.get("login", "")).strip()
     if not acc.get("password"):
         acc["password"] = get_secret_password(int(acc.get("idx", 1)), str(acc.get("id", "")), str(acc.get("login", "")))
     if not acc.get("login") or not acc.get("password"):
-        yml_ver = os.environ.get("WORKFLOW_YML_VERSION", "").strip()
-        env_diag = (
-            "Причина: на GitHub НЕ обновлён файл .github/workflows/check_senkuro.yml (работает старый workflow v24, который не передаёт SENKURO_PASSWORDS в скрипт)!"
-            if not yml_ver
-            else f"Причина: секрет SENKURO_PASSWORDS пуст в окружении (yml={yml_ver}). Проверьте, что секрет добавлен в Repository secrets под именем SENKURO_PASSWORDS."
-        )
         log_debug(
-            f"[AUTH NO SECRET] {acc['id']}: пароль не получен из GitHub Secrets! {env_diag}"
+            f"[AUTH NO SECRET] {acc['id']}: login_present={bool(acc.get('login'))}, pass_present={bool(acc.get('password'))}! Проверьте секрет SENKURO_PASSWORDS."
         )
         return page, None
 
@@ -4183,7 +4175,7 @@ async def run_check_all_5_accounts() -> None:
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v25.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v26.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -4467,7 +4459,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     FARM_STOP_FLAG = False
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v25.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v26.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -4551,7 +4543,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            send_full_debug_log_to_user("Полный лог работы комбайна v25.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v26.0")
             return
 
         if data == "check_farm_status":
@@ -4600,7 +4592,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if lower in ("/start", "/menu", "/help", "меню"):
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v25.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v26.0</b>\n\n"
                 "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
                 "или просто напишите промокод одним словом в чат:",
                 add_keyboard=True,
@@ -4613,7 +4605,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
-            send_full_debug_log_to_user("Полный лог работы комбайна v25.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v26.0")
             return
 
         if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
@@ -4722,7 +4714,7 @@ async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: fl
     )
     if os.environ.get("GH_EVENT_NAME") == "push":
         send_tg_message(
-            "🟢 <b>Сервер полностью запущен и готов к работе (v25.0)!</b>\n\n"
+            "🟢 <b>Сервер полностью запущен и готов к работе (v26.0)!</b>\n\n"
             "Браузер Google Chrome и виртуальный экран готовы — теперь любая кнопка сработает сразу 👇:",
             add_keyboard=True,
         )
@@ -4771,7 +4763,7 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v25.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v26.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",

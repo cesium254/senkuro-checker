@@ -1,4 +1,4 @@
-name: Senkuro Full Automation Combine v25.0
+name: Senkuro Full Automation Combine v26.0
 
 on:
   push:
@@ -189,7 +189,7 @@ jobs:
                           "🚀 сделать всё (паки+кузня)": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                       }
                       if low in ("/start", "/menu", "/help", "меню"):
-                          send_msg("🤖 <b>Панель управления фермой Senkuro v25.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
+                          send_msg("🤖 <b>Панель управления фермой Senkuro v26.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
                       elif low in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
                           if os.path.exists(QUEUE_FILE):
                               os.remove(QUEUE_FILE)
@@ -250,10 +250,10 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v25.0 (Direct Telegram Engine)
+      - name: Run Senkuro Automation Combine v26.0 (Direct Telegram Engine)
         id: run_bot
         env:
-          WORKFLOW_YML_VERSION: "v25.1"
+          WORKFLOW_YML_VERSION: "v26.0"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
           SENKURO_PASSWORDS: ${{ secrets.SENKURO_PASSWORDS }}
@@ -270,14 +270,6 @@ jobs:
           SENKURO_PASS_6: ${{ secrets.SENKURO_PASS_6 }}
           SENKURO_PASS_7: ${{ secrets.SENKURO_PASS_7 }}
           SENKURO_PASS_8: ${{ secrets.SENKURO_PASS_8 }}
-          SENKURO_LOGIN_1: ${{ secrets.SENKURO_LOGIN_1 }}
-          SENKURO_LOGIN_2: ${{ secrets.SENKURO_LOGIN_2 }}
-          SENKURO_LOGIN_3: ${{ secrets.SENKURO_LOGIN_3 }}
-          SENKURO_LOGIN_4: ${{ secrets.SENKURO_LOGIN_4 }}
-          SENKURO_LOGIN_5: ${{ secrets.SENKURO_LOGIN_5 }}
-          SENKURO_LOGIN_6: ${{ secrets.SENKURO_LOGIN_6 }}
-          SENKURO_LOGIN_7: ${{ secrets.SENKURO_LOGIN_7 }}
-          SENKURO_LOGIN_8: ${{ secrets.SENKURO_LOGIN_8 }}
           SENKURO_ACTION: ${{ github.event.inputs.action || 'daemon' }}
           SENKURO_PROMO_CODE: ${{ github.event.inputs.promo_code || '' }}
           GH_EVENT_NAME: ${{ github.event_name }}
@@ -352,10 +344,10 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v25.0 (Part 2 — Hours 4 to 8)
+      - name: Run Senkuro Automation Combine v26.0 (Part 2 — Hours 4 to 8)
         id: run_bot_p2
         env:
-          WORKFLOW_YML_VERSION: "v25.1"
+          WORKFLOW_YML_VERSION: "v26.0"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
           SENKURO_PASSWORDS: ${{ secrets.SENKURO_PASSWORDS }}
@@ -372,14 +364,6 @@ jobs:
           SENKURO_PASS_6: ${{ secrets.SENKURO_PASS_6 }}
           SENKURO_PASS_7: ${{ secrets.SENKURO_PASS_7 }}
           SENKURO_PASS_8: ${{ secrets.SENKURO_PASS_8 }}
-          SENKURO_LOGIN_1: ${{ secrets.SENKURO_LOGIN_1 }}
-          SENKURO_LOGIN_2: ${{ secrets.SENKURO_LOGIN_2 }}
-          SENKURO_LOGIN_3: ${{ secrets.SENKURO_LOGIN_3 }}
-          SENKURO_LOGIN_4: ${{ secrets.SENKURO_LOGIN_4 }}
-          SENKURO_LOGIN_5: ${{ secrets.SENKURO_LOGIN_5 }}
-          SENKURO_LOGIN_6: ${{ secrets.SENKURO_LOGIN_6 }}
-          SENKURO_LOGIN_7: ${{ secrets.SENKURO_LOGIN_7 }}
-          SENKURO_LOGIN_8: ${{ secrets.SENKURO_LOGIN_8 }}
         run: |
           xvfb-run -a --server-args="-screen 0 1280x900x24" bash -c "openbox >/dev/null 2>&1 & sleep 1 && python check_senkuro.py --action 'daemon'"
 
@@ -439,9 +423,9 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v25.0 (Part 3 — Finish Remaining 8h Farm)
+      - name: Run Senkuro Automation Combine v26.0 (Part 3 — Finish Remaining 8h Farm)
         env:
-          WORKFLOW_YML_VERSION: "v25.1"
+          WORKFLOW_YML_VERSION: "v26.0"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
           SENKURO_PASSWORDS: ${{ secrets.SENKURO_PASSWORDS }}
@@ -458,14 +442,6 @@ jobs:
           SENKURO_PASS_6: ${{ secrets.SENKURO_PASS_6 }}
           SENKURO_PASS_7: ${{ secrets.SENKURO_PASS_7 }}
           SENKURO_PASS_8: ${{ secrets.SENKURO_PASS_8 }}
-          SENKURO_LOGIN_1: ${{ secrets.SENKURO_LOGIN_1 }}
-          SENKURO_LOGIN_2: ${{ secrets.SENKURO_LOGIN_2 }}
-          SENKURO_LOGIN_3: ${{ secrets.SENKURO_LOGIN_3 }}
-          SENKURO_LOGIN_4: ${{ secrets.SENKURO_LOGIN_4 }}
-          SENKURO_LOGIN_5: ${{ secrets.SENKURO_LOGIN_5 }}
-          SENKURO_LOGIN_6: ${{ secrets.SENKURO_LOGIN_6 }}
-          SENKURO_LOGIN_7: ${{ secrets.SENKURO_LOGIN_7 }}
-          SENKURO_LOGIN_8: ${{ secrets.SENKURO_LOGIN_8 }}
         run: |
           xvfb-run -a --server-args="-screen 0 1280x900x24" bash -c "openbox >/dev/null 2>&1 & sleep 1 && python check_senkuro.py --action 'daemon'"
 
