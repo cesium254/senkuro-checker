@@ -1,4 +1,4 @@
-name: Senkuro Full Automation Combine v24.0
+name: Senkuro Full Automation Combine v25.0
 
 on:
   push:
@@ -58,7 +58,7 @@ jobs:
               "keyboard": [
                   [{"text": "▶️ Фарм (8 ч)"}, {"text": "📊 Статус"}, {"text": "🛑 СТОП"}],
                   [{"text": "🪙 Баланс"}, {"text": "🎴 Паки"}, {"text": "🎟 Промокод"}],
-                  [{"text": "⚒️ Кузня+Трейд"}, {"text": "🔄 Чекать 5"}],
+                  [{"text": "⚒️ Кузня+Трейд"}, {"text": "🔄 Чекать 9"}],
                   [{"text": "📸 Экран"}, {"text": "📜 Лог"}],
               ],
               "resize_keyboard": True,
@@ -95,7 +95,7 @@ jobs:
 
           # 1. Мгновенно отключаем старый вебхук Cloudflare и стираем чужую спам-рекламу из описания бота!
           tg_call("deleteWebhook", {"drop_pending_updates": False})
-          clean_desc = "Личный бот автоматизации Senkuro (проверка 5 аккаунтов, паки Хардкор, Переплавка, промокоды и фарм)."
+          clean_desc = "Личный бот автоматизации Senkuro (проверка 9 аккаунтов, паки Хардкор, Переплавка, промокоды и фарм)."
           for lang in ("", "ru", "uk", "en", "be", "kk"):
               dp = {"description": clean_desc}
               sp = {"short_description": "Автоматизация Senkuro"}
@@ -146,14 +146,14 @@ jobs:
                           send_msg("🎟 <b>Просто напишите и отправьте промокод одним словом в этот чат:</b>")
                       else:
                           amap = {
-                              "start_farm_8h": ("farm", "▶️ Запускаю 8-часовой фарм манги на 4 аккаунтах!"),
-                              "check_balance": ("balance", "🪙 Проверка баланса монет (4 акка) принята!"),
+                              "start_farm_8h": ("farm", "▶️ Запускаю 8-часовой фарм манги на 8 аккаунтах!"),
+                              "check_balance": ("balance", "🪙 Проверка баланса монет (8 акков) принята!"),
                               "roll_packs": ("packs", "🎴 Прокрутка паков «Хардкор» (480 🪙) принята!"),
                               "run_forge": ("forge", "⚒️ Переплавка + Трейд на основу приняты!"),
-                              "check_senkuro": ("check", "🔄 Проверка карт и осколков (5 аккаунтов) принята!"),
+                              "check_senkuro": ("check", "🔄 Проверка карт и осколков (9 аккаунтов) принята!"),
                               "run_all": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                           }
-                          act_c, lbl = amap.get(data, ("check", "🔄 Проверка 5 аккаунтов принята!"))
+                          act_c, lbl = amap.get(data, ("check", "🔄 Проверка 9 аккаунтов принята!"))
                           tg_call("answerCallbackQuery", {"callback_query_id": cb_id, "text": lbl})
                           append_queue(act_c, "")
                           send_msg(f"⏳ <b>{lbl}</b>\nПодготавливаю браузер (~20 сек) и сразу пришлю отчёт!")
@@ -162,13 +162,13 @@ jobs:
                       txt = str(msg.get("text") or "").strip()
                       low = txt.lower()
                       btn_map = {
-                          "▶️ фарм (8 ч)": ("farm", "▶️ Запускаю 8-часовой фарм манги на 4 аккаунтах!"),
-                          "▶️ запустить фарм (8 ч)": ("farm", "▶️ Запускаю 8-часовой фарм манги на 4 аккаунтах!"),
-                          "/farm": ("farm", "▶️ Запускаю 8-часовой фарм манги на 4 аккаунтах!"),
-                          "🪙 баланс": ("balance", "🪙 Проверка баланса монет (4 акка) принята!"),
-                          "🪙 баланс монет": ("balance", "🪙 Проверка баланса монет (4 акка) принята!"),
-                          "🪙 баланс монет (4 акка)": ("balance", "🪙 Проверка баланса монет (4 акка) принята!"),
-                          "/balance": ("balance", "🪙 Проверка баланса монет (4 акка) принята!"),
+                          "▶️ фарм (8 ч)": ("farm", "▶️ Запускаю 8-часовой фарм манги на 8 аккаунтах!"),
+                          "▶️ запустить фарм (8 ч)": ("farm", "▶️ Запускаю 8-часовой фарм манги на 8 аккаунтах!"),
+                          "/farm": ("farm", "▶️ Запускаю 8-часовой фарм манги на 8 аккаунтах!"),
+                          "🪙 баланс": ("balance", "🪙 Проверка баланса монет (8 акков) принята!"),
+                          "🪙 баланс монет": ("balance", "🪙 Проверка баланса монет (8 акков) принята!"),
+                          "🪙 баланс монет (8 акков)": ("balance", "🪙 Проверка баланса монет (8 акков) принята!"),
+                          "/balance": ("balance", "🪙 Проверка баланса монет (8 акков) принята!"),
                           "🎴 паки": ("packs", "🎴 Прокрутка паков «Хардкор» (480 🪙) принята!"),
                           "🎴 паки хардкор": ("packs", "🎴 Прокрутка паков «Хардкор» (480 🪙) принята!"),
                           "🎴 крутить паки хардкор": ("packs", "🎴 Прокрутка паков «Хардкор» (480 🪙) принята!"),
@@ -177,16 +177,19 @@ jobs:
                           "⚒️ кузня + трейд": ("forge", "⚒️ Переплавка + Трейд на основу приняты!"),
                           "⚒️ переплавка + трейд": ("forge", "⚒️ Переплавка + Трейд на основу приняты!"),
                           "/forge": ("forge", "⚒️ Переплавка + Трейд на основу приняты!"),
-                          "🔄 чекать 5": ("check", "🔄 Проверка карт и осколков (5 аккаунтов) принята!"),
-                          "🔄 чекать 5 акков": ("check", "🔄 Проверка карт и осколков (5 аккаунтов) принята!"),
-                          "🔄 проверить 5 аккаунтов": ("check", "🔄 Проверка карт и осколков (5 аккаунтов) принята!"),
-                          "/check": ("check", "🔄 Проверка карт и осколков (5 аккаунтов) принята!"),
+                          "🔄 чекать 9": ("check", "🔄 Проверка карт и осколков (9 аккаунтов) принята!"),
+                          "🔄 чекать 9 акков": ("check", "🔄 Проверка карт и осколков (9 аккаунтов) принята!"),
+                          "🔄 чекать 5": ("check", "🔄 Проверка карт и осколков (9 аккаунтов) принята!"),
+                          "🔄 чекать 5 акков": ("check", "🔄 Проверка карт и осколков (9 аккаунтов) принята!"),
+                          "🔄 проверить 9 аккаунтов": ("check", "🔄 Проверка карт и осколков (9 аккаунтов) принята!"),
+                          "🔄 проверить 5 аккаунтов": ("check", "🔄 Проверка карт и осколков (9 аккаунтов) принята!"),
+                          "/check": ("check", "🔄 Проверка карт и осколков (9 аккаунтов) принята!"),
                           "🚀 всё": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                           "🚀 сделать всё": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                           "🚀 сделать всё (паки+кузня)": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                       }
                       if low in ("/start", "/menu", "/help", "меню"):
-                          send_msg("🤖 <b>Панель управления фермой Senkuro v24.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
+                          send_msg("🤖 <b>Панель управления фермой Senkuro v25.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
                       elif low in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
                           if os.path.exists(QUEUE_FILE):
                               os.remove(QUEUE_FILE)
@@ -205,7 +208,7 @@ jobs:
                           pcode = txt[7:].strip().upper() if low.startswith("/promo ") else (txt.upper() if not txt.startswith("/") and re.match(r"^[A-Za-z0-9_-]{4,32}$", txt) else "")
                           if pcode:
                               append_queue("promo", pcode)
-                              send_msg(f"🎟 Принят промокод <code>{pcode}</code>!\n⏳ Подготавливаю браузер (~20 сек) и проверяю начисление монет на 4 аккаунтах...")
+                              send_msg(f"🎟 Принят промокод <code>{pcode}</code>!\n⏳ Подготавливаю браузер (~20 сек) и проверяю начисление монет на 8 аккаунтах...")
               time.sleep(0.5)
           EOF
           nohup python3 /tmp/early_poller.py >/tmp/early_poller.log 2>&1 &
@@ -239,7 +242,7 @@ jobs:
             playwright install --with-deps chromium
           fi
 
-      - name: Download Opera VPN Proxy (for 4 unique IPs)
+      - name: Download Opera VPN Proxy (for 8 unique IPs)
         run: |
           mkdir -p bin .sessions
           if [ ! -f bin/opera-proxy ]; then
@@ -247,11 +250,30 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v24.0 (Direct Telegram Engine)
+      - name: Run Senkuro Automation Combine v25.0 (Direct Telegram Engine)
         id: run_bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
+          SENKURO_PASSWORDS: ${{ secrets.SENKURO_PASSWORDS }}
+          SENKURO_PASS_NEW: ${{ secrets.SENKURO_PASS_NEW }}
+          SENKURO_PASS: ${{ secrets.SENKURO_PASS }}
+          SENKURO_PASS_1: ${{ secrets.SENKURO_PASS_1 }}
+          SENKURO_PASS_2: ${{ secrets.SENKURO_PASS_2 }}
+          SENKURO_PASS_3: ${{ secrets.SENKURO_PASS_3 }}
+          SENKURO_PASS_4: ${{ secrets.SENKURO_PASS_4 }}
+          SENKURO_PASS_5: ${{ secrets.SENKURO_PASS_5 }}
+          SENKURO_PASS_6: ${{ secrets.SENKURO_PASS_6 }}
+          SENKURO_PASS_7: ${{ secrets.SENKURO_PASS_7 }}
+          SENKURO_PASS_8: ${{ secrets.SENKURO_PASS_8 }}
+          SENKURO_LOGIN_1: ${{ secrets.SENKURO_LOGIN_1 }}
+          SENKURO_LOGIN_2: ${{ secrets.SENKURO_LOGIN_2 }}
+          SENKURO_LOGIN_3: ${{ secrets.SENKURO_LOGIN_3 }}
+          SENKURO_LOGIN_4: ${{ secrets.SENKURO_LOGIN_4 }}
+          SENKURO_LOGIN_5: ${{ secrets.SENKURO_LOGIN_5 }}
+          SENKURO_LOGIN_6: ${{ secrets.SENKURO_LOGIN_6 }}
+          SENKURO_LOGIN_7: ${{ secrets.SENKURO_LOGIN_7 }}
+          SENKURO_LOGIN_8: ${{ secrets.SENKURO_LOGIN_8 }}
           SENKURO_ACTION: ${{ github.event.inputs.action || 'daemon' }}
           SENKURO_PROMO_CODE: ${{ github.event.inputs.promo_code || '' }}
           GH_EVENT_NAME: ${{ github.event_name }}
@@ -318,7 +340,7 @@ jobs:
             playwright install --with-deps chromium
           fi
 
-      - name: Download Opera VPN Proxy (for 4 unique IPs)
+      - name: Download Opera VPN Proxy (for 8 unique IPs)
         run: |
           mkdir -p bin .sessions
           if [ ! -f bin/opera-proxy ]; then
@@ -326,11 +348,30 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v24.0 (Part 2 — Hours 4 to 8)
+      - name: Run Senkuro Automation Combine v25.0 (Part 2 — Hours 4 to 8)
         id: run_bot_p2
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
+          SENKURO_PASSWORDS: ${{ secrets.SENKURO_PASSWORDS }}
+          SENKURO_PASS_NEW: ${{ secrets.SENKURO_PASS_NEW }}
+          SENKURO_PASS: ${{ secrets.SENKURO_PASS }}
+          SENKURO_PASS_1: ${{ secrets.SENKURO_PASS_1 }}
+          SENKURO_PASS_2: ${{ secrets.SENKURO_PASS_2 }}
+          SENKURO_PASS_3: ${{ secrets.SENKURO_PASS_3 }}
+          SENKURO_PASS_4: ${{ secrets.SENKURO_PASS_4 }}
+          SENKURO_PASS_5: ${{ secrets.SENKURO_PASS_5 }}
+          SENKURO_PASS_6: ${{ secrets.SENKURO_PASS_6 }}
+          SENKURO_PASS_7: ${{ secrets.SENKURO_PASS_7 }}
+          SENKURO_PASS_8: ${{ secrets.SENKURO_PASS_8 }}
+          SENKURO_LOGIN_1: ${{ secrets.SENKURO_LOGIN_1 }}
+          SENKURO_LOGIN_2: ${{ secrets.SENKURO_LOGIN_2 }}
+          SENKURO_LOGIN_3: ${{ secrets.SENKURO_LOGIN_3 }}
+          SENKURO_LOGIN_4: ${{ secrets.SENKURO_LOGIN_4 }}
+          SENKURO_LOGIN_5: ${{ secrets.SENKURO_LOGIN_5 }}
+          SENKURO_LOGIN_6: ${{ secrets.SENKURO_LOGIN_6 }}
+          SENKURO_LOGIN_7: ${{ secrets.SENKURO_LOGIN_7 }}
+          SENKURO_LOGIN_8: ${{ secrets.SENKURO_LOGIN_8 }}
         run: |
           xvfb-run -a --server-args="-screen 0 1280x900x24" bash -c "openbox >/dev/null 2>&1 & sleep 1 && python check_senkuro.py --action 'daemon'"
 
@@ -382,7 +423,7 @@ jobs:
             playwright install --with-deps chromium
           fi
 
-      - name: Download Opera VPN Proxy (for 4 unique IPs)
+      - name: Download Opera VPN Proxy (for 8 unique IPs)
         run: |
           mkdir -p bin .sessions
           if [ ! -f bin/opera-proxy ]; then
@@ -390,10 +431,29 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v24.0 (Part 3 — Finish Remaining 8h Farm)
+      - name: Run Senkuro Automation Combine v25.0 (Part 3 — Finish Remaining 8h Farm)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
+          SENKURO_PASSWORDS: ${{ secrets.SENKURO_PASSWORDS }}
+          SENKURO_PASS_NEW: ${{ secrets.SENKURO_PASS_NEW }}
+          SENKURO_PASS: ${{ secrets.SENKURO_PASS }}
+          SENKURO_PASS_1: ${{ secrets.SENKURO_PASS_1 }}
+          SENKURO_PASS_2: ${{ secrets.SENKURO_PASS_2 }}
+          SENKURO_PASS_3: ${{ secrets.SENKURO_PASS_3 }}
+          SENKURO_PASS_4: ${{ secrets.SENKURO_PASS_4 }}
+          SENKURO_PASS_5: ${{ secrets.SENKURO_PASS_5 }}
+          SENKURO_PASS_6: ${{ secrets.SENKURO_PASS_6 }}
+          SENKURO_PASS_7: ${{ secrets.SENKURO_PASS_7 }}
+          SENKURO_PASS_8: ${{ secrets.SENKURO_PASS_8 }}
+          SENKURO_LOGIN_1: ${{ secrets.SENKURO_LOGIN_1 }}
+          SENKURO_LOGIN_2: ${{ secrets.SENKURO_LOGIN_2 }}
+          SENKURO_LOGIN_3: ${{ secrets.SENKURO_LOGIN_3 }}
+          SENKURO_LOGIN_4: ${{ secrets.SENKURO_LOGIN_4 }}
+          SENKURO_LOGIN_5: ${{ secrets.SENKURO_LOGIN_5 }}
+          SENKURO_LOGIN_6: ${{ secrets.SENKURO_LOGIN_6 }}
+          SENKURO_LOGIN_7: ${{ secrets.SENKURO_LOGIN_7 }}
+          SENKURO_LOGIN_8: ${{ secrets.SENKURO_LOGIN_8 }}
         run: |
           xvfb-run -a --server-args="-screen 0 1280x900x24" bash -c "openbox >/dev/null 2>&1 & sleep 1 && python check_senkuro.py --action 'daemon'"
 

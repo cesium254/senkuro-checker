@@ -2,28 +2,28 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v24.0 (100% TELEGRAM -> CLOUDFLARE -> GITHUB)
+SENKURO FULL AUTOMATION COMBINE v25.0 (8 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
    - Запускается прямо с кнопки в Telegram на 8 часов (2 этапа по 4 часа в одном
      воркфлоу GitHub Actions с передачей сессий через артефакты).
    - Поднимает виртуальный экран Xvfb (реальный браузер без headless-ограничений),
-     4 изолированных туннеля opera-proxy (4 разных IP), входит в 4 аккаунта,
+     8 изолированных туннеля opera-proxy (4 разных IP), входит в 4 аккаунта,
      подключает полный боевой скрипт Senkuro Automation Suite v4.0 (анти-сон через
      Web Worker + AudioContext + WebLocks + requestAnimationFrame, сбор карт в 2 этапа,
      прокрутка закладок в самый низ, автоскролл глав и смена манги в конце).
-   - Присылает отчет в Telegram при старте (когда все 4 аккаунта открыли главы)
+   - Присылает отчет в Telegram при старте (когда все 8 аккаунтов открыли главы)
      и финальный отчет ровно через 8 часов (без лишних уведомлений за 5 минут).
 2. 📊 Проверить статус фарма (--action farm_status):
    - Показывает живую сводку: сколько времени идет фарм, какие IP у 4 аккаунтов,
      читают ли они сейчас главы манги и какие именно тайтлы открыты.
 3. 🎟 Ввести промокод (--action promo --promo-code КОД):
-   - Заходит на 4 фарм-аккаунта под их уникальными IP, проверяет баланс ДО,
+   - Заходит на 8 фарм-аккаунтов под их уникальными IP, проверяет баланс ДО,
      вводит промокод, запрашивает свежий баланс с сервера ПОСЛЕ, строго проверяет,
      что монеты реально начислились (after > before), и пишет финальный баланс.
 4. 🪙 Баланс монет (4 акка) (--action balance):
-   - Прямая кнопка без подменю: заходит на 4 фарм-аккаунта и показывает точное
+   - Прямая кнопка без подменю: заходит на 8 фарм-аккаунтов и показывает точное
      количество сенкоинов и сколько паков «Хардкор» (по 480 монет) доступно.
 5. 🎴 Крутить паки Хардкор (--action packs):
    - Прямая кнопка без подменю: крутит пак https://senkuro.com/packs/for-hardcore-gamers
@@ -34,8 +34,8 @@ SENKURO FULL AUTOMATION COMBINE v24.0 (100% TELEGRAM -> CLOUDFLARE -> GITHUB)
    - Перекидывает недостающие карты между 4 аккаунтами, принимает трейды строго из
      белого списка (ber_turtle, ainz, catswat, wolfrice, cesium254), а по завершении
      отправляет все карты и осколки трейдом на основу cesium254.
-7. 🔄 Проверить 5 аккаунтов (--action check):
-   - Стандартная проверка карт и осколков всех 5 аккаунтов с альбомами фотографий.
+7. 🔄 Проверить 9 аккаунтов (--action check):
+   - Стандартная проверка карт и осколков всех 9 аккаунтов с альбомами фотографий.
 ================================================================================
 """
 
@@ -113,14 +113,49 @@ KNOWN_USER_IDS: dict[str, str] = {
     "cesium254": "VVNFUjoxODAxNDM0ODEzOTI0ODE4MDE",
 }
 
+
+def get_secret_password(idx: int, slug: str, login_email: str) -> str:
+    """
+    Безопасно загружает пароль аккаунта из Secrets GitHub Actions (никаких паролей в открытом коде!):
+    Поддерживает как отдельные секреты SENKURO_PASS_1 .. SENKURO_PASS_8,
+    так и единый многострочный секрет SENKURO_PASSWORDS (по 1 паролю на строку или в формате slug:пароль),
+    либо общий секрет SENKURO_PASS_NEW (для новых аккаунтов 5..8) / SENKURO_PASS.
+    """
+    direct = os.environ.get(f"SENKURO_PASS_{idx}", "").strip()
+    if direct:
+        return direct
+
+    bulk = os.environ.get("SENKURO_PASSWORDS", "").strip()
+    if bulk:
+        lines = [ln.strip() for ln in bulk.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+        for ln in lines:
+            for sep in (":", "="):
+                if sep in ln:
+                    k, v = ln.split(sep, 1)
+                    k_clean = k.strip().lower()
+                    if k_clean in (str(idx), f"acc_{idx}", slug.lower(), login_email.lower()):
+                        return v.strip()
+        if len(lines) >= idx and ":" not in lines[idx - 1] and "=" not in lines[idx - 1]:
+            return lines[idx - 1]
+        if len(lines) == 1 and ":" not in lines[0] and "=" not in lines[0]:
+            return lines[0]
+
+    if idx >= 5:
+        shared_new = os.environ.get("SENKURO_PASS_NEW", "").strip()
+        if shared_new:
+            return shared_new
+
+    return os.environ.get("SENKURO_PASS", "").strip()
+
+
 FARM_ACCOUNTS = [
     {
         "idx": 1,
         "acc_id": "acc_1",
         "id": "ber_turtle",
-        "label": "First (Ber Turtle)",
-        "login": os.environ.get("SENKURO_LOGIN_1", "zerovillbusiness@gmail.com"),
-        "password": os.environ.get("SENKURO_PASS_1", "Zazceq-2gukmy-vudhog"),
+        "label": "#1 Ber Turtle (ber_turtle)",
+        "login": os.environ.get("SENKURO_LOGIN_1", "zerovillbusiness@gmail.com").strip(),
+        "password": get_secret_password(1, "ber_turtle", "zerovillbusiness@gmail.com"),
         "pinned_ip": "77.111.244.37",
         "proxy_port": 25341,
         "url": "https://senkuro.com/users/ber_turtle/cards",
@@ -130,9 +165,9 @@ FARM_ACCOUNTS = [
         "idx": 2,
         "acc_id": "acc_2",
         "id": "ainz",
-        "label": "Second (Ainz)",
-        "login": os.environ.get("SENKURO_LOGIN_2", "dert124689@gmail.com"),
-        "password": os.environ.get("SENKURO_PASS_2", "hohFac-segqyx-guwnu8"),
+        "label": "#2 Ainz (ainz)",
+        "login": os.environ.get("SENKURO_LOGIN_2", "dert124689@gmail.com").strip(),
+        "password": get_secret_password(2, "ainz", "dert124689@gmail.com"),
         "pinned_ip": "77.111.244.209",
         "proxy_port": 25342,
         "url": "https://senkuro.com/users/ainz/cards",
@@ -142,9 +177,9 @@ FARM_ACCOUNTS = [
         "idx": 3,
         "acc_id": "acc_3",
         "id": "catswat",
-        "label": "Third (Cat Swat)",
-        "login": os.environ.get("SENKURO_LOGIN_3", "gamerecapbusiness@gmail.com"),
-        "password": os.environ.get("SENKURO_PASS_3", "ryhxoQ-wudny1-worsum"),
+        "label": "#3 Cat Swat (catswat)",
+        "login": os.environ.get("SENKURO_LOGIN_3", "gamerecapbusiness@gmail.com").strip(),
+        "password": get_secret_password(3, "catswat", "gamerecapbusiness@gmail.com"),
         "pinned_ip": "77.111.244.210",
         "proxy_port": 25343,
         "url": "https://senkuro.com/users/catswat/cards",
@@ -154,19 +189,67 @@ FARM_ACCOUNTS = [
         "idx": 4,
         "acc_id": "acc_4",
         "id": "wolfrice",
-        "label": "Fourth (Wolf Rice)",
-        "login": os.environ.get("SENKURO_LOGIN_4", "gameepicenterbusiness@gmail.com"),
-        "password": os.environ.get("SENKURO_PASS_4", "hyqki0-gamhod-byzhaN"),
+        "label": "#4 Wolf Rice (wolfrice)",
+        "login": os.environ.get("SENKURO_LOGIN_4", "gameepicenterbusiness@gmail.com").strip(),
+        "password": get_secret_password(4, "wolfrice", "gameepicenterbusiness@gmail.com"),
         "pinned_ip": "77.111.246.8",
         "proxy_port": 25344,
         "url": "https://senkuro.com/users/wolfrice/cards",
         "bookmarks_url": "https://senkuro.com/users/wolfrice/bookmarks",
     },
+    {
+        "idx": 5,
+        "acc_id": "acc_5",
+        "id": "lanar",
+        "label": "#5 Lanar (lanar)",
+        "login": os.environ.get("SENKURO_LOGIN_5", "Cesium254@proton.me").strip(),
+        "password": get_secret_password(5, "lanar", "Cesium254@proton.me"),
+        "pinned_ip": "77.111.246.10",
+        "proxy_port": 25345,
+        "url": "https://senkuro.com/users/lanar/cards",
+        "bookmarks_url": "https://senkuro.com/users/lanar/bookmarks",
+    },
+    {
+        "idx": 6,
+        "acc_id": "acc_6",
+        "id": "canva",
+        "label": "#6 Canva (canva)",
+        "login": os.environ.get("SENKURO_LOGIN_6", "woodlandcava@gmail.com").strip(),
+        "password": get_secret_password(6, "canva", "woodlandcava@gmail.com"),
+        "pinned_ip": "77.111.246.14",
+        "proxy_port": 25346,
+        "url": "https://senkuro.com/users/canva/cards",
+        "bookmarks_url": "https://senkuro.com/users/canva/bookmarks",
+    },
+    {
+        "idx": 7,
+        "acc_id": "acc_7",
+        "id": "raya",
+        "label": "#7 Raya (raya)",
+        "login": os.environ.get("SENKURO_LOGIN_7", "restunger@gmail.com").strip(),
+        "password": get_secret_password(7, "raya", "restunger@gmail.com"),
+        "pinned_ip": "77.111.245.10",
+        "proxy_port": 25347,
+        "url": "https://senkuro.com/users/raya/cards",
+        "bookmarks_url": "https://senkuro.com/users/raya/bookmarks",
+    },
+    {
+        "idx": 8,
+        "acc_id": "acc_8",
+        "id": "tnt",
+        "label": "#8 TNT (tnt)",
+        "login": os.environ.get("SENKURO_LOGIN_8", "jekadinamit@gmail.com").strip(),
+        "password": get_secret_password(8, "tnt", "jekadinamit@gmail.com"),
+        "pinned_ip": "77.111.245.14",
+        "proxy_port": 25348,
+        "url": "https://senkuro.com/users/tnt/cards",
+        "bookmarks_url": "https://senkuro.com/users/tnt/bookmarks",
+    },
 ]
 
 ALL_CHECK_ACCOUNTS = FARM_ACCOUNTS + [
     {
-        "idx": 5,
+        "idx": 9,
         "acc_id": "acc_main",
         "id": "cesium254",
         "label": "Main (Cesium254)",
@@ -183,6 +266,10 @@ ALLOWED_TRADE_SLUGS = {
     "ainz",
     "catswat",
     "wolfrice",
+    "lanar",
+    "canva",
+    "raya",
+    "tnt",
     "cesium254",
 }
 
@@ -211,6 +298,28 @@ SESSIONS_DIR = BASE_DIR / ".sessions"
 BIN_DIR = BASE_DIR / "bin"
 SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 BIN_DIR.mkdir(parents=True, exist_ok=True)
+KNOWN_IDS_CACHE_FILE = SESSIONS_DIR / "known_user_ids.json"
+if KNOWN_IDS_CACHE_FILE.exists():
+    try:
+        _cached_ids = json.loads(KNOWN_IDS_CACHE_FILE.read_text(encoding="utf-8"))
+        if isinstance(_cached_ids, dict):
+            for _k, _v in _cached_ids.items():
+                if isinstance(_v, str) and _v.startswith("VVNFU"):
+                    KNOWN_USER_IDS[_k] = _v
+    except Exception:
+        pass
+
+
+def save_known_user_id(slug: str, uid: str) -> None:
+    if not slug or not isinstance(uid, str) or not uid.startswith("VVNFU"):
+        return
+    if KNOWN_USER_IDS.get(slug) == uid:
+        return
+    KNOWN_USER_IDS[slug] = uid
+    try:
+        KNOWN_IDS_CACHE_FILE.write_text(json.dumps(KNOWN_USER_IDS, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
 
 OPERA_244_CANDIDATE_POOL = [
     "77.111.244.37",
@@ -253,7 +362,7 @@ def get_collapsible_reply_keyboard() -> dict:
     rows = [
         [{"text": "▶️ Фарм (8 ч)"}, {"text": "📊 Статус"}, {"text": "🛑 СТОП"}],
         [{"text": "🪙 Баланс"}, {"text": "🎴 Паки"}, {"text": "🎟 Промокод"}],
-        [{"text": "⚒️ Кузня+Трейд"}, {"text": "🔄 Чекать 5"}],
+        [{"text": "⚒️ Кузня+Трейд"}, {"text": "🔄 Чекать 9"}],
     ]
     if DEBUG_MODE:
         rows.append([{"text": "📸 Экран"}, {"text": "📜 Лог"}])
@@ -460,8 +569,8 @@ is_port_open = is_local_port_open
 
 def _stitch_screens_2x2_png(screens: list[tuple[str, bytes]]) -> Optional[bytes]:
     """
-    Склеивает от 2 до 4 скриншотов аккаунтов в ЕДИНУЮ картинку-плитку 2x2 (слева сверху #1, справа сверху #2,
-    слева снизу #3, справа снизу #4), чтобы кнопка «📸 Экран» присылала РОВНО 1 СООБЩЕНИЕ вместо 4 отдельных!
+    Склеивает от 2 до 8 скриншотов аккаунтов в ЕДИНУЮ HD-картинку (2x2 для 2..4 экранов или 2x4 для 5..8 экранов),
+    чтобы кнопка «📸 Экран» присылала РОВНО 1 СООБЩЕНИЕ со всеми 8 аккаунтами!
     """
     if not screens:
         return None
@@ -471,18 +580,25 @@ def _stitch_screens_2x2_png(screens: list[tuple[str, bytes]]) -> Optional[bytes]
         import io
         from PIL import Image, ImageDraw
 
-        tile_w, tile_h = 1280, 900
-        canvas = Image.new("RGB", (tile_w * 2, tile_h * 2), (18, 18, 22))
-        positions = [(0, 0), (tile_w, 0), (0, tile_h), (tile_w, tile_h)]
+        count = min(8, len(screens))
+        cols = 2
+        rows = 2 if count <= 4 else ((count + 1) // 2)
+        tile_w = 1280 if rows <= 2 else 960
+        tile_h = 900 if rows <= 2 else 675
+
+        canvas = Image.new("RGB", (tile_w * cols, tile_h * rows), (18, 18, 22))
         draw = ImageDraw.Draw(canvas)
 
-        for idx, (label_txt, png_b) in enumerate(screens[:4]):
-            px, py = positions[idx]
+        for idx, (label_txt, png_b) in enumerate(screens[:8]):
+            col_i = idx % cols
+            row_i = idx // cols
+            px = col_i * tile_w
+            py = row_i * tile_h
             try:
                 im = Image.open(io.BytesIO(png_b)).convert("RGB")
                 im = im.resize((tile_w - 4, tile_h - 4))
                 canvas.paste(im, (px + 2, py + 2))
-                draw.rectangle([px + 8, py + 8, px + 230, py + 34], fill=(0, 0, 0))
+                draw.rectangle([px + 8, py + 8, px + 240, py + 34], fill=(0, 0, 0))
                 draw.text((px + 14, py + 14), f"#{idx + 1} {label_txt}", fill=(80, 255, 120))
             except Exception:
                 pass
@@ -589,8 +705,8 @@ def configure_telegram_bot_profile() -> None:
 
     commands = [
         {"command": "menu", "description": "📋 Открыть панель управления"},
-        {"command": "check", "description": "🔄 Проверить карты и осколки (5 аккаунтов)"},
-        {"command": "balance", "description": "🪙 Баланс монет на 4 аккаунтах"},
+        {"command": "check", "description": "🔄 Проверить карты и осколки (9 аккаунтов)"},
+        {"command": "balance", "description": "🪙 Баланс монет на 8 аккаунтах"},
         {"command": "packs", "description": "🎴 Крутить паки Хардкор (480 монет)"},
         {"command": "forge", "description": "⚒️ Переплавка карт до S + трейд на основу"},
         {"command": "farm", "description": "▶️ Запустить 8-часовой фарм манги"},
@@ -768,7 +884,7 @@ def verify_proxy_exit_ip(local_port: int, timeout: float = 3.0) -> tuple[bool, s
 
 
 class AccountProxyManager:
-    """Поднимает и контролирует 4 изолированных VPN-туннеля (строго разные IP на каждый из 4 аккаунтов)."""
+    """Поднимает и контролирует 8 изолированных VPN-туннеля (строго разные IP на каждый из 4 аккаунтов)."""
 
     def __init__(self) -> None:
         self.procs: dict[str, subprocess.Popen] = {}
@@ -843,33 +959,40 @@ class AccountProxyManager:
                     elif ok and ip:
                         used_ips.add(ip)
 
-        regions = ["AM", "AS", "EU"] if not pinned_ip.startswith("77.111.244.") else ["EU", "AM", "AS"]
-        for idx_try, region in enumerate(regions, start=1):
-            self._stop_proc(aid)
-            b_path = self._write_blacklist(aid, used_ips)
-            args = [
-                exe_path,
-                "-bind-address", f"127.0.0.1:{port}",
-                "-country", region,
-                "-discover-repeat", "3",
-                "-proxy-blacklist", b_path,
-                "-server-selection", "first" if idx_try == 1 else "random",
-                "-bootstrap-dns", "https://1.1.1.1/dns-query,https://8.8.8.8/dns-query",
-            ]
-            proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.procs[aid] = proc
-            for _ in range(25):
-                if proc.poll() is not None or self._port_open(port):
-                    break
-                time.sleep(0.2)
-            if self._port_open(port):
-                ok, ip = verify_proxy_exit_ip(port, timeout=3.0)
-                if ok and ip not in used_ips and not ip.startswith("77.111.247."):
-                    self.active_ips[aid] = ip
-                    log_debug(f"[VPN] {acc['id']} ({region}): закреплен уникальный IP {ip} (порт {port})")
-                    return f"http://127.0.0.1:{port}"
-                elif ok and ip:
-                    used_ips.add(ip)
+        if pinned_ip.startswith("77.111.245."):
+            regions = ["AS", "AM", "EU"]
+        elif pinned_ip.startswith("77.111.246."):
+            regions = ["AM", "AS", "EU"]
+        else:
+            regions = ["EU", "AM", "AS"]
+
+        for region in regions:
+            for sub_try, sel_mode in enumerate(("first", "random", "random"), start=1):
+                self._stop_proc(aid)
+                b_path = self._write_blacklist(aid, used_ips)
+                args = [
+                    exe_path,
+                    "-bind-address", f"127.0.0.1:{port}",
+                    "-country", region,
+                    "-discover-repeat", "5",
+                    "-proxy-blacklist", b_path,
+                    "-server-selection", sel_mode,
+                    "-bootstrap-dns", "https://1.1.1.1/dns-query,https://8.8.8.8/dns-query",
+                ]
+                proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                self.procs[aid] = proc
+                for _ in range(25):
+                    if proc.poll() is not None or self._port_open(port):
+                        break
+                    time.sleep(0.2)
+                if self._port_open(port):
+                    ok, ip = verify_proxy_exit_ip(port, timeout=3.0)
+                    if ok and ip not in used_ips and not ip.startswith("77.111.247."):
+                        self.active_ips[aid] = ip
+                        log_debug(f"[VPN] {acc['id']} ({region} #{sub_try}): закреплен уникальный IP {ip} (порт {port})")
+                        return f"http://127.0.0.1:{port}"
+                    elif ok and ip:
+                        used_ips.add(ip)
 
         self._stop_proc(aid)
         return None
@@ -1500,12 +1623,14 @@ async def check_is_authenticated_on_senkuro(page: Page, acc_slug: str, intercept
     v_data = (v_res.get("data") or {}).get("viewer") or {}
     v_user = v_data.get("user") if isinstance(v_data.get("user"), dict) else v_data
     if isinstance(v_user, dict) and v_user.get("id"):
+        save_known_user_id(acc_slug, str(v_user["id"]))
         return v_user
 
     if not dom_state.get("hasLoginBtn") and "senkuro.com" in str(dom_state.get("url", "")) and "/auth/" not in str(dom_state.get("url", "")):
         u_res = await gql_call(page, GQL_FETCH_USER_BY_SLUG, {"slug": acc_slug}, "fetchUserBySlug")
         u_obj = (u_res.get("data") or {}).get("user") or {}
         if isinstance(u_obj, dict) and u_obj.get("id"):
+            save_known_user_id(acc_slug, str(u_obj["id"]))
             log_debug(f"[AUTH DOM+SLUG OK] {acc_slug}: вход подтвержден по отсутствию кнопки 'Войти' (id={u_obj['id']})")
             return u_obj
         if dom_state.get("hasTokenCookie") or dom_state.get("hasProfileLink"):
@@ -1514,6 +1639,35 @@ async def check_is_authenticated_on_senkuro(page: Page, acc_slug: str, intercept
             return {"id": real_uid, "slug": acc_slug, "points": 0}
 
     return None
+
+
+async def ensure_real_user_id(page: Page, slug: str, candidate_uid: str = "") -> str:
+    """
+    Гарантирует получение настоящего GraphQL ID (VVNFU...) для любого из 8 аккаунтов
+    (включая новые аккаунты lanar, canva, raya, tnt) через fetchUserBySlug / fetchViewer.
+    """
+    if isinstance(candidate_uid, str) and candidate_uid.startswith("VVNFU"):
+        save_known_user_id(slug, candidate_uid)
+        return candidate_uid
+    cached = KNOWN_USER_IDS.get(slug, "")
+    if isinstance(cached, str) and cached.startswith("VVNFU"):
+        return cached
+    for _ in range(3):
+        u_res = await gql_call(page, GQL_FETCH_USER_BY_SLUG, {"slug": slug}, "fetchUserBySlug")
+        u_obj = (u_res.get("data") or {}).get("user") or {}
+        if isinstance(u_obj, dict) and str(u_obj.get("id") or "").startswith("VVNFU"):
+            uid_str = str(u_obj["id"])
+            save_known_user_id(slug, uid_str)
+            return uid_str
+        v_res = await gql_call(page, GQL_FETCH_VIEWER, {}, "fetchViewer")
+        v_data = (v_res.get("data") or {}).get("viewer") or {}
+        v_user = v_data.get("user") if isinstance(v_data.get("user"), dict) else v_data
+        if isinstance(v_user, dict) and str(v_user.get("id") or "").startswith("VVNFU"):
+            uid_str = str(v_user["id"])
+            save_known_user_id(slug, uid_str)
+            return uid_str
+        await asyncio.sleep(1.0)
+    return candidate_uid or slug
 
 
 def _cdp_ws_call_sync(ws_url: str, method: str, params: Optional[dict] = None, timeout_sec: float = 4.0) -> dict:
@@ -1621,7 +1775,7 @@ def _run_xdotool(args_list: list[str]) -> None:
 
 def login_via_native_chrome_sync(acc: dict, proxy_url: Optional[str]) -> tuple[Optional[str], list[dict], Optional[bytes], str]:
     """
-    Точная копия рабочего движка входа из Senkuro_Kaggle_Server_v6_5_Ready.ipynb (который успешно входит во все 4/4 аккаунта):
+    Точная копия рабочего движка входа из Senkuro_Kaggle_Server_v6_5_Ready.ipynb (который успешно входит во все 4/8 аккаунта):
     1) Запускает отдельный изолированный процесс /usr/bin/google-chrome-stable (subprocess.Popen) со своей папкой профиля
        (.sessions/chrome_profile_<id>) и своим индивидуальным VPN-прокси (127.0.0.1:2534X).
     2) Поскольку Google Chrome 156 игнорирует флаг --load-extension, скрипт инжектируется напрямую в главную вкладку
@@ -2026,6 +2180,10 @@ async def ensure_logged_in(context: BrowserContext, acc: dict) -> tuple[Page, Op
         return page, user_obj
 
     if not acc.get("login") or not acc.get("password"):
+        log_debug(
+            f"[AUTH NO SECRET] {acc['id']}: не задан пароль в Secrets GitHub Actions! "
+            f"Добавьте секрет SENKURO_PASS_{acc.get('idx')} (или общий секрет SENKURO_PASSWORDS) в Settings -> Secrets -> Actions."
+        )
         return page, None
 
     proxy_port = 25340 + int(acc.get("idx", 1))
@@ -2163,7 +2321,7 @@ async def run_promo_code_activation(promo_code: str) -> None:
         return
 
     send_tg_message(
-        f"⏳ Запускаю 4 изолированных IP-туннеля, вхожу на 4 аккаунта и активирую промокод <code>{code_clean}</code>...",
+        f"⏳ Запускаю 8 изолированных IP-туннеля, вхожу на 8 аккаунтов и активирую промокод <code>{code_clean}</code>...",
         add_keyboard=False,
     )
 
@@ -2177,8 +2335,8 @@ async def run_promo_code_activation(promo_code: str) -> None:
             for acc in FARM_ACCOUNTS:
                 proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
                 ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
-                log_debug(f"[BALANCE STEP] #{acc['idx']}/4 {acc['id']} -> IP: {ip_used}")
-                send_tg_message(f"⏳ <b>[{acc['idx']}/4] {acc['id']}</b> (IP: <code>{ip_used}</code>): проверяю вход и баланс...", add_keyboard=False)
+                log_debug(f"[BALANCE STEP] #{acc['idx']}/8 {acc['id']} -> IP: {ip_used}")
+                send_tg_message(f"⏳ <b>[{acc['idx']}/8] {acc['id']}</b> (IP: <code>{ip_used}</code>): проверяю вход и баланс...", add_keyboard=False)
                 context = await create_account_context(browser, acc, proxy_url)
                 try:
                     page, user_obj = await ensure_logged_in(context, acc)
@@ -2256,7 +2414,7 @@ async def run_promo_code_activation(promo_code: str) -> None:
     finally:
         proxy_mgr.stop_all()
 
-    report_lines.insert(1, f"📊 Итог проверки: монеты реально увеличились на <b>{success_count} из 4</b> аккаунтов.\n")
+    report_lines.insert(1, f"📊 Итог проверки: монеты реально увеличились на <b>{success_count} из 8</b> аккаунтов.\n")
     send_tg_message("\n".join(report_lines), add_keyboard=True)
 
 
@@ -2267,10 +2425,10 @@ async def run_promo_code_activation(promo_code: str) -> None:
 async def run_check_coins_balance() -> None:
     global FARM_STOP_FLAG
     FARM_STOP_FLAG = False
-    """Проверяет баланс сенкоинов на всех 4 фарм-аккаунтах и возвращает базовую панель кнопок."""
-    send_tg_message("🪙 Вхожу на 4 фарм-аккаунта под своими IP и проверяю баланс сенкоинов...", add_keyboard=False)
+    """Проверяет баланс сенкоинов на всех 8 фарм-аккаунтах и возвращает базовую панель кнопок."""
+    send_tg_message("🪙 Вхожу на 8 фарм-аккаунтов под своими IP и проверяю баланс сенкоинов...", add_keyboard=False)
     proxy_mgr = AccountProxyManager()
-    lines = ["🪙 <b>Баланс сенкоинов на 4 фарм-аккаунтах:</b>\n"]
+    lines = ["🪙 <b>Баланс сенкоинов на 8 фарм-аккаунтах:</b>\n"]
     total_coins = 0
     total_packs_possible = 0
 
@@ -2282,8 +2440,8 @@ async def run_check_coins_balance() -> None:
                 ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
                 if FARM_STOP_FLAG:
                     break
-                log_debug(f"[BALANCE STEP] #{acc['idx']}/4 {acc['id']} -> IP: {ip_used}")
-                send_tg_message(f"⏳ <b>[{acc['idx']}/4] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): вхожу в изолированный профиль Chrome и проверяю баланс...", add_keyboard=False)
+                log_debug(f"[BALANCE STEP] #{acc['idx']}/8 {acc['id']} -> IP: {ip_used}")
+                send_tg_message(f"⏳ <b>[{acc['idx']}/8] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): вхожу в изолированный профиль Chrome и проверяю баланс...", add_keyboard=False)
                 context = await create_account_context(browser, acc, proxy_url)
                 try:
                     page, user_obj = await ensure_logged_in(context, acc)
@@ -2304,7 +2462,7 @@ async def run_check_coins_balance() -> None:
     finally:
         proxy_mgr.stop_all()
 
-    lines.append(f"\n💰 <b>Всего монет на 4 аккаунтах:</b> {total_coins} 🪙 (доступно прокруток Хардкор: <b>{total_packs_possible}</b>)")
+    lines.append(f"\n💰 <b>Всего монет на 8 аккаунтах:</b> {total_coins} 🪙 (доступно прокруток Хардкор: <b>{total_packs_possible}</b>)")
     full_msg = "\n".join(lines)
     send_tg_message(full_msg, add_keyboard=True)
     if DEBUG_MODE:
@@ -2333,7 +2491,7 @@ def choose_best_unlocked_card_index(result_cards: list[dict], has_premium: bool 
 
 async def roll_hardcore_packs_for_account(page: Page, acc: dict, user_obj: dict) -> list[str]:
     logs: list[str] = []
-    user_id = user_obj["id"]
+    user_id = await ensure_real_user_id(page, acc["id"], str(user_obj.get("id") or ""))
     try:
         await page.goto("https://senkuro.com/packs/for-hardcore-gamers", wait_until="domcontentloaded", timeout=35000)
     except Exception:
@@ -2470,7 +2628,7 @@ async def run_all_packs_opening() -> None:
     global FARM_STOP_FLAG
     FARM_STOP_FLAG = False
     send_tg_message(
-        "🎰 Открываю 4 изолированных профиля Chrome под своими IP и кручу паки «Хардкор» (480 🪙) с человеческими паузами...",
+        "🎰 Открываю 8 изолированных профиля Chrome под своими IP и кручу паки «Хардкор» (480 🪙) с человеческими паузами...",
         add_keyboard=False,
     )
     proxy_mgr = AccountProxyManager()
@@ -2486,7 +2644,7 @@ async def run_all_packs_opening() -> None:
                         break
                     proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
                     ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
-                    log_debug(f"[PACKS STEP] #{acc['idx']}/4 {acc['id']} -> IP: {ip_used}")
+                    log_debug(f"[PACKS STEP] #{acc['idx']}/8 {acc['id']} -> IP: {ip_used}")
                     context = await create_account_context(browser, acc, proxy_url)
                     page, user_obj = await ensure_logged_in(context, acc)
                     open_contexts.append((acc, context, page, user_obj, ip_used))
@@ -2497,7 +2655,7 @@ async def run_all_packs_opening() -> None:
                     if not user_obj:
                         report_lines.append(f"❌ <b>{acc['id']}</b> (IP: <code>{ip_used}</code>): ошибка входа\n")
                         continue
-                    send_tg_message(f"🎴 <b>[{acc['idx']}/4] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): кручу паки «Хардкор»...", add_keyboard=False)
+                    send_tg_message(f"🎴 <b>[{acc['idx']}/8] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): кручу паки «Хардкор»...", add_keyboard=False)
                     acc_logs = await roll_hardcore_packs_for_account(page, acc, user_obj)
                     report_lines.append(f"👤 <b>{acc['id']}</b> (IP: <code>{ip_used}</code>): " + "\n".join(acc_logs) + "\n")
                     await context.storage_state(path=str(get_session_file(acc["id"])))
@@ -2739,7 +2897,7 @@ async def run_smart_forge_and_trade_pipeline() -> None:
     global FARM_STOP_FLAG
     FARM_STOP_FLAG = False
     send_tg_message(
-        "⚒️ Запускаю умную Кузницу («Переплавка» 3 в 1) и межаккаунтный обмен на 4 аккаунтах с человеческими задержками...",
+        "⚒️ Запускаю умную Кузницу («Переплавка» 3 в 1) и межаккаунтный обмен на 8 аккаунтах с человеческими задержками...",
         add_keyboard=False,
     )
 
@@ -2757,8 +2915,8 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                         break
                     proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
                     ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
-                    log_debug(f"[FORGE STEP] #{acc['idx']}/4 {acc['id']} -> IP: {ip_used}")
-                    send_tg_message(f"⚒️ <b>[{acc['idx']}/4] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): подключаю кузню и проверяю карты...", add_keyboard=False)
+                    log_debug(f"[FORGE STEP] #{acc['idx']}/8 {acc['id']} -> IP: {ip_used}")
+                    send_tg_message(f"⚒️ <b>[{acc['idx']}/8] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): подключаю кузню и проверяю карты...", add_keyboard=False)
                     ctx = await create_account_context(browser, acc, proxy_url)
                     contexts.append(ctx)
                     page, user_obj = await ensure_logged_in(ctx, acc)
@@ -2769,9 +2927,7 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                         await asyncio.sleep(random.uniform(1.8, 3.0))
                     except Exception:
                         pass
-                    real_acc_uid = KNOWN_USER_IDS.get(acc["id"], user_obj["id"])
-                    if not str(real_acc_uid).startswith("VVNFU"):
-                        real_acc_uid = KNOWN_USER_IDS.get(acc["id"], user_obj["id"])
+                    real_acc_uid = await ensure_real_user_id(page, acc["id"], str(user_obj.get("id") or ""))
                     state_map[acc["id"]] = {
                         "acc": acc,
                         "context": ctx,
@@ -2793,10 +2949,10 @@ async def run_smart_forge_and_trade_pipeline() -> None:
 
                 await refresh_farm_state(state_map)
 
-                # Если на всех 4 аккаунтах слоты кузни = 0/5, сразу сообщаем точное время до сброса!
+                # Если на всех 8 аккаунтах слоты кузни = 0/5, сразу сообщаем точное время до сброса!
                 initial_free_slots = sum(st["available_slots"] for st in state_map.values())
                 if initial_free_slots <= 0:
-                    reset_lines = ["⏳ <b>На всех 4 фарм-аккаунтах сейчас 0 из 5 доступных попыток переплавки в Кузне:</b>\n"]
+                    reset_lines = ["⏳ <b>На всех 8 фарм-аккаунтах сейчас 0 из 5 доступных попыток переплавки в Кузне:</b>\n"]
                     for aid, st in state_map.items():
                         rst_str = format_reset_at_human(st.get("reset_at"))
                         inv_str = format_text_only_inventory_summary(st["cards_nodes"], st["shards_nodes"])
@@ -2893,8 +3049,8 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                         break
                     await forge_local_triples_on_account(st)
 
-                # 3. Межаккаунтный обмен и переплавка между 4 фарм-аккаунтами (с человеческими паузами!)
-                for _ in range(15):
+                # 3. Межаккаунтный обмен и переплавка между 8 фарм-аккаунтами (с человеческими паузами!)
+                for _ in range(30):
                     if FARM_STOP_FLAG:
                         break
                     await refresh_farm_state(state_map)
@@ -3406,7 +3562,7 @@ def format_farm_status_message(status_obj: dict) -> str:
     lines = [
         "📊 <b>Статус 8-часового фарма манги:</b>",
         f"⏱ <b>Отработано:</b> {hh} ч {mm} мин из {total_hours:g} ч",
-        f"📖 <b>Читают главы сейчас:</b> <b>{reading_cnt}/4</b> аккаунтов | 🌐 <b>Уникальных IP:</b> <b>{unique_ips}/4</b>\n",
+        f"📖 <b>Читают главы сейчас:</b> <b>{reading_cnt}/8</b> аккаунтов | 🌐 <b>Уникальных IP:</b> <b>{unique_ips}/8</b>\n",
     ]
     for acc_info in status_obj.get("accounts", []):
         is_rd = acc_info.get("is_reading", False)
@@ -3428,7 +3584,7 @@ async def run_check_farm_status() -> None:
     else:
         send_tg_message(
             "⚪ <b>Сейчас 8-часовой фарм манги не активен</b> (или уже завершил 8-часовой таймер).\n\n"
-            "Нажмите кнопку <b>«▶️ Запустить фарм (8 ч)»</b> ниже, чтобы запустить чтение манги на всех 4 аккаунтах!",
+            "Нажмите кнопку <b>«▶️ Запустить фарм (8 ч)»</b> ниже, чтобы запустить чтение манги на всех 8 аккаунтах!",
             add_keyboard=True,
         )
 
@@ -3449,8 +3605,8 @@ async def run_farm_segment(part_mode: str = "farm_part1") -> None:
 
     if is_part1:
         send_tg_message(
-            "🚀 <b>Запускаю 8-часовой фарм манги на всех 4 аккаунтах!</b>\n"
-            "Поднимаю виртуальный экран, 4 уникальных IP, вхожу в аккаунты, выбираю мангу снизу закладок и пришлю сводку через ~45 сек...",
+            "🚀 <b>Запускаю 8-часовой фарм манги на всех 8 аккаунтах!</b>\n"
+            "Поднимаю виртуальный экран, 8 уникальных IP, вхожу в аккаунты, выбираю мангу снизу закладок и пришлю сводку через ~45 сек...",
             add_keyboard=False,
         )
 
@@ -3481,7 +3637,7 @@ async def run_farm_segment(part_mode: str = "farm_part1") -> None:
                     }
                 )
 
-            # Ждем до 60 сек, пока все 4 аккаунта откроют чтение главы (/chapters/)
+            # Ждем до 60 сек, пока все 8 аккаунтов откроют чтение главы (/chapters/)
             for _ in range(12):
                 await asyncio.sleep(5)
                 for s in farm_sessions:
@@ -3489,7 +3645,7 @@ async def run_farm_segment(part_mode: str = "farm_part1") -> None:
                         await s["page"].evaluate(FULL_FARM_USERSCRIPT_V9)
                     except Exception:
                         pass
-                if sum(1 for s in farm_sessions if "/chapters/" in s["page"].url) == 4:
+                if sum(1 for s in farm_sessions if "/chapters/" in s["page"].url) == len(FARM_ACCOUNTS):
                     break
 
             def collect_snapshot(active_flag: bool = True) -> dict:
@@ -3619,7 +3775,7 @@ async def run_farm_segment(part_mode: str = "farm_part1") -> None:
                 publish_live_farm_status(final_snap)
                 send_tg_message(
                     "🏁 <b>8 часов фарма манги полностью завершены!</b>\n"
-                    "Все 4 аккаунта остановлены, прогресс чтения и сессии сохранены.\n\n"
+                    "Все 8 аккаунтов остановлены, прогресс чтения и сессии сохранены.\n\n"
                     + format_farm_status_message(final_snap),
                     add_keyboard=True,
                 )
@@ -3789,7 +3945,7 @@ async def fetch_all_pages_via_graphql(page: Page, captured_req: dict, modifier_v
 
 async def scrape_account_cards_public(browser, account: dict) -> dict:
     """
-    Для КАЖДОГО из 5 аккаунтов создаёт свежий изолированный BrowserContext с service_workers='block',
+    Для КАЖДОГО из 9 аккаунтов создаёт свежий изолированный BrowserContext с service_workers='block',
     чтобы Service Worker от 1-го аккаунта НИКОГДА не блокировал перехват запросов на 2..5 аккаунтах!
     """
     context = await browser.new_context(
@@ -3951,7 +4107,7 @@ def send_account_report(text: str, photo_urls: list[str], add_reply_button: bool
 
 
 async def run_check_all_5_accounts() -> None:
-    log_debug("[TASK START] Запуск проверки всех 5 аккаунтов (поочерёдно с изолированными контекстами)...")
+    log_debug("[TASK START] Запуск проверки всех 9 аккаунтов (поочерёдно с изолированными контекстами)...")
     async with async_playwright() as p:
         browser = await launch_senkuro_browser(p)
         for idx, acc in enumerate(ALL_CHECK_ACCOUNTS):
@@ -3966,11 +4122,11 @@ async def run_check_all_5_accounts() -> None:
             await asyncio.sleep(2.0)
         await browser.close()
     if DEBUG_MODE:
-        upload_debug_log_to_github_noop("check_5_accounts")
+        upload_debug_log_to_github_noop("check_9_accounts")
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v24.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v25.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -4033,8 +4189,8 @@ async def run_background_8h_farm(base_elapsed_minutes: int = 0, segment_hours: f
 
     if base_elapsed_minutes == 0:
         send_tg_message(
-            "🚀 <b>Запускаю 8-часовой фарм манги на всех 4 аккаунтах!</b>\n"
-            "Поднимаю виртуальный экран, 4 уникальных IP, вхожу в аккаунты, выбираю мангу снизу закладок и пришлю сводку через ~40 сек...",
+            "🚀 <b>Запускаю 8-часовой фарм манги на всех 8 аккаунтах!</b>\n"
+            "Поднимаю виртуальный экран, 8 уникальных IP, вхожу в аккаунты, выбираю мангу снизу закладок и пришлю сводку через ~40 сек...",
             add_keyboard=True,
         )
     else:
@@ -4056,9 +4212,9 @@ async def run_background_8h_farm(base_elapsed_minutes: int = 0, segment_hours: f
                     break
                 proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
                 ip_used = proxy_mgr.active_ips.get(acc["acc_id"], acc["pinned_ip"])
-                log_debug(f"[FARM STEP] #{acc['idx']}/4 {acc['id']} -> IP: {ip_used}")
+                log_debug(f"[FARM STEP] #{acc['idx']}/8 {acc['id']} -> IP: {ip_used}")
                 send_tg_message(
-                    f"⏳ <b>[Фарм {acc['idx']}/4] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): вхожу в профиль, открываю закладки и листаю в самый низ...",
+                    f"⏳ <b>[Фарм {acc['idx']}/8] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): вхожу в профиль, открываю закладки и листаю в самый низ...",
                     add_keyboard=False,
                 )
                 ctx = await create_account_context(browser, acc, proxy_url)
@@ -4084,7 +4240,7 @@ async def run_background_8h_farm(base_elapsed_minutes: int = 0, segment_hours: f
                         await s["page"].evaluate(FULL_FARM_USERSCRIPT_V9)
                     except Exception:
                         pass
-                if sum(1 for s in farm_sessions if "/chapters/" in s["page"].url) == 4:
+                if sum(1 for s in farm_sessions if "/chapters/" in s["page"].url) == len(FARM_ACCOUNTS):
                     break
 
             def collect_snapshot(active_flag: bool = True) -> dict:
@@ -4209,7 +4365,7 @@ async def run_background_8h_farm(base_elapsed_minutes: int = 0, segment_hours: f
                 log_debug(f"[FARM COMPLETE] 8 часов фарма ({final_elapsed} мин) полностью отработаны!")
                 send_tg_message(
                     "🏁 <b>8 часов фарма манги полностью завершены!</b>\n"
-                    "Все 4 аккаунта остановлены, прогресс чтения и сессии сохранены.\n\n"
+                    "Все 8 аккаунтов остановлены, прогресс чтения и сессии сохранены.\n\n"
                     + format_farm_status_message(final_snap),
                     add_keyboard=True,
                 )
@@ -4254,7 +4410,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     FARM_STOP_FLAG = False
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v24.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v25.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -4338,7 +4494,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            send_full_debug_log_to_user("Полный лог работы комбайна v24.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v25.0")
             return
 
         if data == "check_farm_status":
@@ -4353,21 +4509,21 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "Введите промокод в чат 👇"})
             send_tg_message(
                 "🎟 <b>Просто напишите и отправьте промокод одним словом в этот чат:</b>\n\n"
-                "Сервер откроет 4 уникальных IP, зайдёт на каждый из 4 аккаунтов, введёт промокод, "
+                "Сервер откроет 8 уникальных IP, зайдёт на каждый из 4 аккаунтов, введёт промокод, "
                 "<b>реально проверит увеличение баланса монет</b> и пришлёт результат!",
                 add_keyboard=True,
             )
             return
 
         action_map = {
-            "start_farm_8h": ("farm", "▶️ Запускаю 8-часовой фарм манги на 4 аккаунтах!"),
-            "check_balance": ("balance", "🪙 Проверяю баланс сенкоинов на 4 фарм-аккаунтах..."),
+            "start_farm_8h": ("farm", "▶️ Запускаю 8-часовой фарм манги на 8 аккаунтах!"),
+            "check_balance": ("balance", "🪙 Проверяю баланс сенкоинов на 8 фарм-аккаунтах..."),
             "roll_packs": ("packs", "🎴 Запускаю прокрутку паков «Хардкор» (480 🪙)..."),
             "run_forge": ("forge", "⚒️ Запускаю Переплавку (Кузня) + Трейд на основу..."),
-            "check_senkuro": ("check", "🔄 Проверяю карты и осколки всех 5 аккаунтов..."),
+            "check_senkuro": ("check", "🔄 Проверяю карты и осколки всех 9 аккаунтов..."),
             "run_all": ("all", "🚀 Запускаю полный цикл (Паки + Переплавка + Трейд)..."),
         }
-        act_code, act_label = action_map.get(data, ("check", "🔄 Проверяю карты и осколки всех 5 аккаунтов..."))
+        act_code, act_label = action_map.get(data, ("check", "🔄 Проверяю карты и осколки всех 9 аккаунтов..."))
         tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": act_label})
 
         if act_code == "farm":
@@ -4387,7 +4543,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if lower in ("/start", "/menu", "/help", "меню"):
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v24.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v25.0</b>\n\n"
                 "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
                 "или просто напишите промокод одним словом в чат:",
                 add_keyboard=True,
@@ -4400,7 +4556,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
-            send_full_debug_log_to_user("Полный лог работы комбайна v24.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v25.0")
             return
 
         if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
@@ -4454,8 +4610,11 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             "⚒️ кузня + трейд": "forge",
             "⚒️ переплавка + трейд": "forge",
             "/check": "check",
+            "🔄 чекать 9": "check",
+            "🔄 чекать 9 акков": "check",
             "🔄 чекать 5": "check",
             "🔄 чекать 5 акков": "check",
+            "🔄 проверить 9 аккаунтов": "check",
             "🔄 проверить 5 аккаунтов": "check",
             "🚀 всё": "all",
             "🚀 сделать всё": "all",
@@ -4476,7 +4635,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
         if promo_code:
             send_tg_message(
                 f"🎟 Принят промокод <code>{promo_code}</code>!\n"
-                "⏳ Открываю 4 уникальных IP, захожу на 4 аккаунта, ввожу промокод и проверяю реальное увеличение баланса монет (~40 сек)...",
+                "⏳ Открываю 8 уникальных IP, захожу на 8 аккаунтов, ввожу промокод и проверяю реальное увеличение баланса монет (~40 сек)...",
                 add_keyboard=True,
             )
             await task_queue.put(("promo", promo_code))
@@ -4499,7 +4658,7 @@ async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: fl
     log_debug(f"[DAEMON READY] Прямой Telegram Long Polling запущен (offset={offset}) — сервер 100% готов!")
     if os.environ.get("GH_EVENT_NAME") == "push":
         send_tg_message(
-            "🟢 <b>Сервер полностью запущен и готов к работе (v24.0)!</b>\n\n"
+            "🟢 <b>Сервер полностью запущен и готов к работе (v25.0)!</b>\n\n"
             "Браузер Google Chrome и виртуальный экран готовы — теперь любая кнопка сработает сразу 👇:",
             add_keyboard=True,
         )
@@ -4548,7 +4707,7 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v24.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v25.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",
