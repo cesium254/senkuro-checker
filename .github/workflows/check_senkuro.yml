@@ -253,9 +253,13 @@ jobs:
       - name: Run Senkuro Automation Combine v25.0 (Direct Telegram Engine)
         id: run_bot
         env:
+          WORKFLOW_YML_VERSION: "v25.1"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
           SENKURO_PASSWORDS: ${{ secrets.SENKURO_PASSWORDS }}
+          SENKURO_PASSWORD: ${{ secrets.SENKURO_PASSWORD }}
+          PASSWORDS: ${{ secrets.PASSWORDS }}
+          PASSWORD: ${{ secrets.PASSWORD }}
           SENKURO_PASS_NEW: ${{ secrets.SENKURO_PASS_NEW }}
           SENKURO_PASS: ${{ secrets.SENKURO_PASS }}
           SENKURO_PASS_1: ${{ secrets.SENKURO_PASS_1 }}
@@ -351,9 +355,13 @@ jobs:
       - name: Run Senkuro Automation Combine v25.0 (Part 2 — Hours 4 to 8)
         id: run_bot_p2
         env:
+          WORKFLOW_YML_VERSION: "v25.1"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
           SENKURO_PASSWORDS: ${{ secrets.SENKURO_PASSWORDS }}
+          SENKURO_PASSWORD: ${{ secrets.SENKURO_PASSWORD }}
+          PASSWORDS: ${{ secrets.PASSWORDS }}
+          PASSWORD: ${{ secrets.PASSWORD }}
           SENKURO_PASS_NEW: ${{ secrets.SENKURO_PASS_NEW }}
           SENKURO_PASS: ${{ secrets.SENKURO_PASS }}
           SENKURO_PASS_1: ${{ secrets.SENKURO_PASS_1 }}
@@ -433,9 +441,13 @@ jobs:
 
       - name: Run Senkuro Automation Combine v25.0 (Part 3 — Finish Remaining 8h Farm)
         env:
+          WORKFLOW_YML_VERSION: "v25.1"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
           SENKURO_PASSWORDS: ${{ secrets.SENKURO_PASSWORDS }}
+          SENKURO_PASSWORD: ${{ secrets.SENKURO_PASSWORD }}
+          PASSWORDS: ${{ secrets.PASSWORDS }}
+          PASSWORD: ${{ secrets.PASSWORD }}
           SENKURO_PASS_NEW: ${{ secrets.SENKURO_PASS_NEW }}
           SENKURO_PASS: ${{ secrets.SENKURO_PASS }}
           SENKURO_PASS_1: ${{ secrets.SENKURO_PASS_1 }}

@@ -110,6 +110,10 @@ KNOWN_USER_IDS: dict[str, str] = {
     "ainz": "VVNFUjoyNTQxMzk3NTk2NjI3NDUxNDk",
     "catswat": "VVNFUjoyNTQxNDA2Mjg1Mzc5ODQ1NzM",
     "wolfrice": "VVNFUjoyNTQxNDQ2NTA5MDkwNzUwMDU",
+    "lanar": "VVNFUjoyNTY3ODk1MDgyMTE2MjM0NjQ",
+    "canva": "VVNFUjoyNTY3OTA1NTY3ODc2MjM0NjQ",
+    "raya": "VVNFUjoyNTY3OTE0MDI4NjI2MjYzNDQ",
+    "tnt": "VVNFUjoyNTY3OTIxOTEyMjQwMDYxODQ",
     "cesium254": "VVNFUjoxODAxNDM0ODEzOTI0ODE4MDE",
 }
 
@@ -117,27 +121,71 @@ KNOWN_USER_IDS: dict[str, str] = {
 def get_secret_password(idx: int, slug: str, login_email: str) -> str:
     """
     Безопасно загружает пароль аккаунта из Secrets GitHub Actions (никаких паролей в открытом коде!):
-    Поддерживает как отдельные секреты SENKURO_PASS_1 .. SENKURO_PASS_8,
-    так и единый многострочный секрет SENKURO_PASSWORDS (по 1 паролю на строку или в формате slug:пароль),
-    либо общий секрет SENKURO_PASS_NEW (для новых аккаунтов 5..8) / SENKURO_PASS.
+    Поддерживает любые варианты имени секрета (SENKURO_PASSWORDS, SENKURO_PASSWORD, SENKURO_PASS, PASSWORDS,
+    SENKURO_PASS_1..8) и любые форматы записи (многострочный 1:пароль, 1=пароль, однострочный через пробел,
+    список без ключей на 8 или 4 строки).
     """
-    direct = os.environ.get(f"SENKURO_PASS_{idx}", "").strip()
-    if direct:
-        return direct
+    for k_env in (f"SENKURO_PASS_{idx}", f"SENKURO_PASSWORD_{idx}", f"PASS_{idx}"):
+        direct = os.environ.get(k_env, "").strip()
+        if direct:
+            return direct
 
-    bulk = os.environ.get("SENKURO_PASSWORDS", "").strip()
+    bulk_sources = [
+        os.environ.get("SENKURO_PASSWORDS", "").strip(),
+        os.environ.get("SENKURO_PASSWORD", "").strip(),
+        os.environ.get("PASSWORDS", "").strip(),
+        os.environ.get("PASSWORD", "").strip(),
+        os.environ.get("SENKURO_PASS", "").strip(),
+    ]
+    bulk = next((b for b in bulk_sources if b), "")
     if bulk:
+        valid_keys = {
+            str(idx),
+            f"#{idx}",
+            f"№{idx}",
+            f"acc_{idx}",
+            f"acc{idx}",
+            f"account_{idx}",
+            f"account{idx}",
+            slug.lower(),
+            login_email.lower(),
+        }
         lines = [ln.strip() for ln in bulk.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+        # 1. Построчный разбор вида "1:пароль", "1=пароль", "lanar:пароль"
         for ln in lines:
             for sep in (":", "="):
                 if sep in ln:
                     k, v = ln.split(sep, 1)
-                    k_clean = k.strip().lower()
-                    if k_clean in (str(idx), f"acc_{idx}", slug.lower(), login_email.lower()):
-                        return v.strip()
-        if len(lines) >= idx and ":" not in lines[idx - 1] and "=" not in lines[idx - 1]:
-            return lines[idx - 1]
-        if len(lines) == 1 and ":" not in lines[0] and "=" not in lines[0]:
+                    k_clean = k.strip().lower().lstrip("#№")
+                    if k.strip().lower() in valid_keys or k_clean in valid_keys:
+                        # Если в одной строке записано несколько пар через пробел ("1:pass1 2:pass2")
+                        v_clean = v.strip()
+                        m_next = re.search(r"\s+(?:#|№|acc_?)?[1-8]\s*[:=]", v_clean)
+                        if m_next:
+                            v_clean = v_clean[:m_next.start()].strip()
+                        if v_clean:
+                            return v_clean
+        # 2. Если все пары записаны в одну строку через пробел/запятую/точку с запятой
+        inline_matches = re.findall(
+            r"(?:^|[\s,;]+)(?:#|№|acc_?)?([1-8]|ber_turtle|ainz|catswat|wolfrice|lanar|canva|raya|tnt)\s*[:=]\s*([^\s,;]+)",
+            bulk,
+            flags=re.IGNORECASE,
+        )
+        for k_m, v_m in inline_matches:
+            if k_m.lower() in valid_keys:
+                return v_m.strip()
+        # 3. Если просто 8 строк с паролями без номеров
+        if len(lines) >= idx:
+            cand = lines[idx - 1]
+            if not re.match(r"^(?:#|№|acc_?)?[1-8]\s*[:=]", cand):
+                return cand
+        # 4. Если передано ровно 4 строки (только для новых аккаунтов 5..8)
+        if len(lines) == 4 and idx >= 5:
+            cand = lines[idx - 5]
+            if not re.match(r"^(?:#|№|acc_?)?[1-8]\s*[:=]", cand):
+                return cand
+        # 5. Если передана ровно 1 строка (единый общий пароль)
+        if len(lines) == 1 and not re.match(r"^(?:#|№|acc_?)?[1-8]\s*[:=]", lines[0]):
             return lines[0]
 
     if idx >= 5:
@@ -2179,10 +2227,19 @@ async def ensure_logged_in(context: BrowserContext, acc: dict) -> tuple[Page, Op
         await context.storage_state(path=str(get_session_file(acc["id"])))
         return page, user_obj
 
+    if not acc.get("login"):
+        acc["login"] = os.environ.get(f"SENKURO_LOGIN_{acc.get('idx')}", acc.get("login", "")).strip()
+    if not acc.get("password"):
+        acc["password"] = get_secret_password(int(acc.get("idx", 1)), str(acc.get("id", "")), str(acc.get("login", "")))
     if not acc.get("login") or not acc.get("password"):
+        yml_ver = os.environ.get("WORKFLOW_YML_VERSION", "").strip()
+        env_diag = (
+            "Причина: на GitHub НЕ обновлён файл .github/workflows/check_senkuro.yml (работает старый workflow v24, который не передаёт SENKURO_PASSWORDS в скрипт)!"
+            if not yml_ver
+            else f"Причина: секрет SENKURO_PASSWORDS пуст в окружении (yml={yml_ver}). Проверьте, что секрет добавлен в Repository secrets под именем SENKURO_PASSWORDS."
+        )
         log_debug(
-            f"[AUTH NO SECRET] {acc['id']}: не задан пароль в Secrets GitHub Actions! "
-            f"Добавьте секрет SENKURO_PASS_{acc.get('idx')} (или общий секрет SENKURO_PASSWORDS) в Settings -> Secrets -> Actions."
+            f"[AUTH NO SECRET] {acc['id']}: пароль не получен из GitHub Secrets! {env_diag}"
         )
         return page, None
 
@@ -4598,6 +4655,8 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         text_btn_map = {
             "/balance": "balance",
+            "/relogin": "balance",
+            "relogin": "balance",
             "🪙 баланс": "balance",
             "🪙 баланс монет": "balance",
             "🪙 баланс монет (4 акка)": "balance",
@@ -4655,7 +4714,12 @@ async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: fl
             offset = int(initial_upds[-1]["update_id"]) + 1
             write_saved_tg_offset(offset)
 
-    log_debug(f"[DAEMON READY] Прямой Telegram Long Polling запущен (offset={offset}) — сервер 100% готов!")
+    yml_ver = os.environ.get("WORKFLOW_YML_VERSION", "OLD_v24_NO_SECRETS")
+    loaded_idxs = [str(a["idx"]) for a in FARM_ACCOUNTS if a.get("password")]
+    log_debug(
+        f"[DAEMON READY] Прямой Telegram Long Polling запущен (offset={offset}, workflow={yml_ver}, "
+        f"пароли загружены для {len(loaded_idxs)}/8 акков: {loaded_idxs or 'НЕТ (обновите .github/workflows/check_senkuro.yml!)'}) — сервер 100% готов!"
+    )
     if os.environ.get("GH_EVENT_NAME") == "push":
         send_tg_message(
             "🟢 <b>Сервер полностью запущен и готов к работе (v25.0)!</b>\n\n"
