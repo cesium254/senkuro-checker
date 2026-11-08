@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v26.0 (8 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
+SENKURO FULL AUTOMATION COMBINE v27.0 (8 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -427,43 +427,86 @@ def get_main_inline_keyboard() -> dict:
     return get_collapsible_reply_keyboard()
 
 
-def tg_request(method: str, payload: dict) -> dict:
+def tg_request(method: str, payload: dict, max_retries: int = 4) -> dict:
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print(f"[DRY-RUN] {method}: {json.dumps(payload, ensure_ascii=False)[:300]}")
         return {"ok": True}
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            res_data = json.loads(resp.read().decode("utf-8"))
-            print(f"[TG OK] {method}")
-            return res_data
-    except urllib.error.HTTPError as e:
-        err_body = e.read().decode("utf-8", errors="ignore")
-        print(f"[TG ERROR] {method} ({e.code}): {err_body}")
-        return {"ok": False, "error": err_body}
-    except Exception as e:
-        print(f"[TG ERROR] {method}: {e}")
-        return {"ok": False, "error": str(e)}
+
+    for attempt in range(1, max_retries + 1):
+        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=35) as resp:
+                res_data = json.loads(resp.read().decode("utf-8"))
+                print(f"[TG OK] {method}")
+                return res_data
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="ignore")
+            if e.code == 429 and attempt < max_retries:
+                retry_after = 5
+                try:
+                    err_json = json.loads(err_body)
+                    retry_after = int((err_json.get("parameters") or {}).get("retry_after") or 5)
+                except Exception:
+                    pass
+                wait_s = max(2, min(retry_after + 1, 35))
+                log_debug(f"[TG 429 WAIT] Лимит Telegram на {method}, жду {wait_s} сек (попытка {attempt}/{max_retries})...")
+                time.sleep(wait_s)
+                continue
+            log_debug(f"[TG ERROR] {method} ({e.code}): {err_body}")
+            return {"ok": False, "error_code": e.code, "error": err_body}
+        except Exception as e:
+            if attempt < max_retries:
+                time.sleep(2.0)
+                continue
+            log_debug(f"[TG ERROR] {method}: {e}")
+            return {"ok": False, "error": str(e)}
+    return {"ok": False, "error": "max_retries_exceeded"}
+
+
+def _split_long_tg_text(text: str, limit: int = 3800) -> list[str]:
+    if len(text) <= limit:
+        return [text]
+    parts: list[str] = []
+    cur_lines: list[str] = []
+    cur_len = 0
+    for line in text.splitlines(keepends=True):
+        if cur_len + len(line) > limit and cur_lines:
+            parts.append("".join(cur_lines).rstrip())
+            cur_lines = [line]
+            cur_len = len(line)
+        else:
+            cur_lines.append(line)
+            cur_len += len(line)
+    if cur_lines:
+        parts.append("".join(cur_lines).rstrip())
+    return parts or [text[:limit]]
 
 
 def send_tg_message(text: str, add_keyboard: bool = True, force_reply_kb: bool = False) -> dict:
-    payload: dict[str, Any] = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True,
-    }
-    if add_keyboard or force_reply_kb:
-        payload["reply_markup"] = get_collapsible_reply_keyboard()
-    res = tg_request("sendMessage", payload)
-    if not res.get("ok"):
-        log_debug(f"[TG WARN] sendMessage HTML failed ({res}), повтор без parse_mode...")
-        payload_plain = dict(payload)
-        payload_plain.pop("parse_mode", None)
-        res = tg_request("sendMessage", payload_plain)
-    return res
+    chunks = _split_long_tg_text(text, limit=3800)
+    last_res: dict[str, Any] = {"ok": False}
+    for i, chunk_text in enumerate(chunks):
+        is_last = i == len(chunks) - 1
+        payload: dict[str, Any] = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": chunk_text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+        if (add_keyboard or force_reply_kb) and is_last:
+            payload["reply_markup"] = get_collapsible_reply_keyboard()
+        res = tg_request("sendMessage", payload)
+        if not res.get("ok"):
+            log_debug(f"[TG WARN] sendMessage HTML failed ({res}), повтор без parse_mode...")
+            payload_plain = dict(payload)
+            payload_plain.pop("parse_mode", None)
+            res = tg_request("sendMessage", payload_plain)
+        last_res = res
+        if not is_last:
+            time.sleep(0.8)
+    return last_res
 
 
 def send_tg_multipart(method: str, file_field: str, filename: str, file_bytes: bytes, mime_type: str, extra_fields: dict[str, str]) -> dict:
@@ -4108,41 +4151,151 @@ def build_account_message(account: dict, current: dict) -> tuple[str, list[str]]
     return "\n".join(lines), card_photos
 
 
+def _download_and_normalize_card_photo(url: str) -> Optional[bytes]:
+    """Скачивает картинку карты с CDN Senkuro и конвертирует в чистый JPEG для 100% приёма Telegram."""
+    import io
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+                "Referer": "https://senkuro.com/",
+                "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw_bytes = resp.read()
+        if not raw_bytes:
+            return None
+        try:
+            from PIL import Image
+            with Image.open(io.BytesIO(raw_bytes)) as im:
+                if getattr(im, "is_animated", False):
+                    im.seek(0)
+                rgb = im.convert("RGB")
+                if rgb.width > 1200 or rgb.height > 1200:
+                    rgb.thumbnail((1200, 1200))
+                out = io.BytesIO()
+                rgb.save(out, format="JPEG", quality=88)
+                return out.getvalue()
+        except Exception:
+            return raw_bytes
+    except Exception as e:
+        log_debug(f"[CARD IMG DL WARN] Не удалось скачать {url}: {e}")
+        return None
+
+
+def _send_media_chunk_binary_fallback(chunk_urls: list[str], caption: str = "") -> bool:
+    """Резервная отправка альбома карт бинарными файлами (multipart), если Telegram не смог скачать URL с CDN Senkuro."""
+    files_to_send: list[tuple[str, bytes]] = []
+    for idx, u in enumerate(chunk_urls):
+        img_bytes = _download_and_normalize_card_photo(u)
+        if img_bytes:
+            files_to_send.append((f"photo_{idx}", img_bytes))
+
+    if not files_to_send:
+        return False
+
+    if len(files_to_send) == 1:
+        extra = {"chat_id": str(TELEGRAM_CHAT_ID)}
+        if caption:
+            extra["caption"] = caption
+            extra["parse_mode"] = "HTML"
+        res = send_tg_multipart("sendPhoto", "photo", "card_0.jpg", files_to_send[0][1], "image/jpeg", extra)
+        return bool(res.get("ok"))
+
+    boundary = f"----SenkuroMediaGroup{int(time.time() * 1000)}"
+    media_manifest = []
+    for idx, (field_name, _) in enumerate(files_to_send):
+        item: dict[str, Any] = {"type": "photo", "media": f"attach://{field_name}"}
+        if idx == 0 and caption:
+            item["caption"] = caption
+            item["parse_mode"] = "HTML"
+        media_manifest.append(item)
+
+    body = bytearray()
+    for k, v in (("chat_id", str(TELEGRAM_CHAT_ID)), ("media", json.dumps(media_manifest, ensure_ascii=False))):
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(f'Content-Disposition: form-data; name="{k}"\r\n\r\n'.encode("utf-8"))
+        body.extend(f"{v}\r\n".encode("utf-8"))
+
+    for idx, (field_name, img_bytes) in enumerate(files_to_send):
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(f'Content-Disposition: form-data; name="{field_name}"; filename="card_{idx}.jpg"\r\n'.encode("utf-8"))
+        body.extend(b"Content-Type: image/jpeg\r\n\r\n")
+        body.extend(img_bytes)
+        body.extend(b"\r\n")
+    body.extend(f"--{boundary}--\r\n".encode("utf-8"))
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMediaGroup"
+    for attempt in range(1, 4):
+        req = urllib.request.Request(
+            url,
+            data=bytes(body),
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=45) as resp:
+                res_data = json.loads(resp.read().decode("utf-8"))
+                if res_data.get("ok"):
+                    log_debug(f"[CHECK 5 ALBUM FALLBACK OK] Отправлено {len(files_to_send)} фото через прямую загрузку")
+                    return True
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="ignore")
+            if e.code == 429 and attempt < 3:
+                retry_after = 5
+                try:
+                    retry_after = int((json.loads(err_body).get("parameters") or {}).get("retry_after") or 5)
+                except Exception:
+                    pass
+                time.sleep(max(2, min(retry_after + 1, 35)))
+                continue
+            log_debug(f"[CHECK 5 ALBUM FALLBACK ERR] ({e.code}): {err_body}")
+            break
+        except Exception as e:
+            log_debug(f"[CHECK 5 ALBUM FALLBACK ERR] {e}")
+            break
+    return False
+
+
+def _send_single_photo_chunk(chunk: list[str], caption: str = "") -> bool:
+    if len(chunk) == 1:
+        payload: dict[str, Any] = {"chat_id": TELEGRAM_CHAT_ID, "photo": chunk[0]}
+        if caption:
+            payload["caption"] = caption
+            payload["parse_mode"] = "HTML"
+        res = tg_request("sendPhoto", payload)
+        if res.get("ok"):
+            return True
+        log_debug(f"[CHECK 5 PHOTO FALLBACK] Прямой URL не прошёл, качаю фото напрямую...")
+        return _send_media_chunk_binary_fallback(chunk, caption=caption)
+    else:
+        media = []
+        for idx, url in enumerate(chunk):
+            item: dict[str, Any] = {"type": "photo", "media": url}
+            if idx == 0 and caption:
+                item["caption"] = caption
+                item["parse_mode"] = "HTML"
+            media.append(item)
+        res = tg_request("sendMediaGroup", {"chat_id": TELEGRAM_CHAT_ID, "media": media})
+        if res.get("ok"):
+            return True
+        log_debug(f"[CHECK 5 ALBUM FALLBACK] sendMediaGroup по URL не прошёл ({res.get('error', '')[:120]}), загружаю {len(chunk)} фото напрямую...")
+        return _send_media_chunk_binary_fallback(chunk, caption=caption)
+
+
 def send_account_report(text: str, photo_urls: list[str], add_reply_button: bool = False) -> None:
     chunks = [photo_urls[i : i + 10] for i in range(0, len(photo_urls), 10)]
 
     if chunks and not add_reply_button and len(chunks) == 1:
-        chunk = chunks[0]
-        if len(chunk) == 1:
-            res = tg_request(
-                "sendPhoto",
-                {
-                    "chat_id": TELEGRAM_CHAT_ID,
-                    "photo": chunk[0],
-                    "caption": text,
-                    "parse_mode": "HTML",
-                },
-            )
-            if res.get("ok"):
-                return
-        else:
-            media = []
-            for idx, url in enumerate(chunk):
-                item: dict[str, Any] = {"type": "photo", "media": url}
-                if idx == 0:
-                    item["caption"] = text
-                    item["parse_mode"] = "HTML"
-                media.append(item)
-            res = tg_request("sendMediaGroup", {"chat_id": TELEGRAM_CHAT_ID, "media": media})
-            if res.get("ok"):
-                return
+        if _send_single_photo_chunk(chunks[0], caption=text):
+            return
 
-    for chunk in chunks:
-        if len(chunk) == 1:
-            tg_request("sendPhoto", {"chat_id": TELEGRAM_CHAT_ID, "photo": chunk[0]})
-        else:
-            media = [{"type": "photo", "media": url} for url in chunk]
-            tg_request("sendMediaGroup", {"chat_id": TELEGRAM_CHAT_ID, "media": media})
+    for c_idx, chunk in enumerate(chunks):
+        _send_single_photo_chunk(chunk, caption="")
+        if c_idx < len(chunks) - 1:
+            time.sleep(1.5)
 
     msg_payload: dict[str, Any] = {
         "chat_id": TELEGRAM_CHAT_ID,
@@ -4175,7 +4328,7 @@ async def run_check_all_5_accounts() -> None:
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v26.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v27.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -4459,7 +4612,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     FARM_STOP_FLAG = False
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v26.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v27.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -4543,7 +4696,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            send_full_debug_log_to_user("Полный лог работы комбайна v26.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v27.0")
             return
 
         if data == "check_farm_status":
@@ -4592,7 +4745,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if lower in ("/start", "/menu", "/help", "меню"):
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v26.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v27.0</b>\n\n"
                 "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
                 "или просто напишите промокод одним словом в чат:",
                 add_keyboard=True,
@@ -4605,7 +4758,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
-            send_full_debug_log_to_user("Полный лог работы комбайна v26.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v27.0")
             return
 
         if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
@@ -4714,7 +4867,7 @@ async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: fl
     )
     if os.environ.get("GH_EVENT_NAME") == "push":
         send_tg_message(
-            "🟢 <b>Сервер полностью запущен и готов к работе (v26.0)!</b>\n\n"
+            "🟢 <b>Сервер полностью запущен и готов к работе (v27.0)!</b>\n\n"
             "Браузер Google Chrome и виртуальный экран готовы — теперь любая кнопка сработает сразу 👇:",
             add_keyboard=True,
         )
@@ -4763,7 +4916,7 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v26.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v27.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",
