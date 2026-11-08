@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v27.0 (8 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
+SENKURO FULL AUTOMATION COMBINE v28.0 (8 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -4152,44 +4152,52 @@ def build_account_message(account: dict, current: dict) -> tuple[str, list[str]]
 
 
 def _download_and_normalize_card_photo(url: str) -> Optional[bytes]:
-    """Скачивает картинку карты с CDN Senkuro и конвертирует в чистый JPEG для 100% приёма Telegram."""
+    """Скачивает картинку карты с CDN Senkuro (с 3 попытками) и конвертирует в чистый JPEG для 100% приёма Telegram."""
     import io
-    try:
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-                "Referer": "https://senkuro.com/",
-                "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            raw_bytes = resp.read()
-        if not raw_bytes:
-            return None
+    raw_bytes = None
+    for attempt in range(1, 4):
         try:
-            from PIL import Image
-            with Image.open(io.BytesIO(raw_bytes)) as im:
-                if getattr(im, "is_animated", False):
-                    im.seek(0)
-                rgb = im.convert("RGB")
-                if rgb.width > 1200 or rgb.height > 1200:
-                    rgb.thumbnail((1200, 1200))
-                out = io.BytesIO()
-                rgb.save(out, format="JPEG", quality=88)
-                return out.getvalue()
-        except Exception:
-            return raw_bytes
-    except Exception as e:
-        log_debug(f"[CARD IMG DL WARN] Не удалось скачать {url}: {e}")
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+                    "Referer": "https://senkuro.com/",
+                    "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                raw_bytes = resp.read()
+            if raw_bytes:
+                break
+        except Exception as e:
+            if attempt == 3:
+                log_debug(f"[CARD IMG DL WARN] Не удалось скачать {url} (попытка {attempt}/3): {e}")
+            else:
+                time.sleep(1.0)
+    if not raw_bytes:
         return None
+    try:
+        from PIL import Image
+        with Image.open(io.BytesIO(raw_bytes)) as im:
+            if getattr(im, "is_animated", False):
+                im.seek(0)
+            rgb = im.convert("RGB")
+            if rgb.width > 1200 or rgb.height > 1200:
+                rgb.thumbnail((1200, 1200))
+            out = io.BytesIO()
+            rgb.save(out, format="JPEG", quality=88)
+            return out.getvalue()
+    except Exception:
+        return raw_bytes
 
 
 def _send_media_chunk_binary_fallback(chunk_urls: list[str], caption: str = "") -> bool:
     """Резервная отправка альбома карт бинарными файлами (multipart), если Telegram не смог скачать URL с CDN Senkuro."""
+    from concurrent.futures import ThreadPoolExecutor
     files_to_send: list[tuple[str, bytes]] = []
-    for idx, u in enumerate(chunk_urls):
-        img_bytes = _download_and_normalize_card_photo(u)
+    with ThreadPoolExecutor(max_workers=min(5, max(1, len(chunk_urls)))) as pool:
+        results = list(pool.map(_download_and_normalize_card_photo, chunk_urls))
+    for idx, img_bytes in enumerate(results):
         if img_bytes:
             files_to_send.append((f"photo_{idx}", img_bytes))
 
@@ -4328,7 +4336,7 @@ async def run_check_all_5_accounts() -> None:
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v27.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v28.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -4494,7 +4502,7 @@ async def run_background_8h_farm(base_elapsed_minutes: int = 0, segment_hours: f
                 # Сразу сохраняем файл резюме фарма на диск, чтобы при любом переходе между этапами прогресс не терялся!
                 try:
                     FARM_RESUME_FILE.write_text(
-                        json.dumps({"active": True, "elapsed_minutes": max(1, initial_snap["elapsed_minutes"])}),
+                        json.dumps({"active": True, "elapsed_minutes": max(1, initial_snap["elapsed_minutes"]), "saved_at": time.time(), "run_id": os.environ.get("GITHUB_RUN_ID", "")}),
                         encoding="utf-8",
                     )
                 except Exception:
@@ -4530,7 +4538,7 @@ async def run_background_8h_farm(base_elapsed_minutes: int = 0, segment_hours: f
                     publish_live_farm_status(snap)
                     try:
                         FARM_RESUME_FILE.write_text(
-                            json.dumps({"active": True, "elapsed_minutes": max(1, snap["elapsed_minutes"])}),
+                            json.dumps({"active": True, "elapsed_minutes": max(1, snap["elapsed_minutes"]), "saved_at": time.time(), "run_id": os.environ.get("GITHUB_RUN_ID", "")}),
                             encoding="utf-8",
                         )
                     except Exception:
@@ -4576,7 +4584,7 @@ async def run_background_8h_farm(base_elapsed_minutes: int = 0, segment_hours: f
                 saved_min = max(1, final_elapsed)
                 log_debug(f"[FARM HANDOFF] Этап завершён на {saved_min}/480 мин — сохраняю farm_resume.json для следующего этапа!")
                 FARM_RESUME_FILE.write_text(
-                    json.dumps({"active": True, "elapsed_minutes": saved_min}),
+                    json.dumps({"active": True, "elapsed_minutes": saved_min, "saved_at": time.time(), "run_id": os.environ.get("GITHUB_RUN_ID", "")}),
                     encoding="utf-8",
                 )
 
@@ -4594,7 +4602,7 @@ async def run_background_8h_farm(base_elapsed_minutes: int = 0, segment_hours: f
             log_debug(f"[FARM CANCEL HANDOFF] Джоб завершается на {saved_min}/480 мин — сохраняю farm_resume.json!")
             try:
                 FARM_RESUME_FILE.write_text(
-                    json.dumps({"active": True, "elapsed_minutes": saved_min}),
+                    json.dumps({"active": True, "elapsed_minutes": saved_min, "saved_at": time.time(), "run_id": os.environ.get("GITHUB_RUN_ID", "")}),
                     encoding="utf-8",
                 )
             except Exception:
@@ -4612,7 +4620,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     FARM_STOP_FLAG = False
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v27.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v28.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -4696,7 +4704,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            send_full_debug_log_to_user("Полный лог работы комбайна v27.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v28.0")
             return
 
         if data == "check_farm_status":
@@ -4745,7 +4753,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if lower in ("/start", "/menu", "/help", "меню"):
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v27.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v28.0</b>\n\n"
                 "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
                 "или просто напишите промокод одним словом в чат:",
                 add_keyboard=True,
@@ -4758,7 +4766,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
-            send_full_debug_log_to_user("Полный лог работы комбайна v27.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v28.0")
             return
 
         if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
@@ -4867,7 +4875,7 @@ async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: fl
     )
     if os.environ.get("GH_EVENT_NAME") == "push":
         send_tg_message(
-            "🟢 <b>Сервер полностью запущен и готов к работе (v27.0)!</b>\n\n"
+            "🟢 <b>Сервер полностью запущен и готов к работе (v28.0)!</b>\n\n"
             "Браузер Google Chrome и виртуальный экран готовы — теперь любая кнопка сработает сразу 👇:",
             add_keyboard=True,
         )
@@ -4916,7 +4924,7 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v27.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v28.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",
@@ -4953,17 +4961,36 @@ async def async_main() -> None:
         except Exception as e:
             print(f"[EARLY QUEUE WARNING] {e}")
 
-    # 2. Проверяем, нужно ли автоматически продолжить 8-часовой фарм с сохраненной минуты
-    if args.action == "farm_part2" or FARM_RESUME_FILE.exists():
-        elapsed_prev = 240
-        try:
-            if FARM_RESUME_FILE.exists():
+    # 2. Проверяем, нужно ли автоматически продолжить 8-часовой фарм с сохраненной минуты.
+    # ВАЖНО: продолжаем фарм ТОЛЬКО во 2-м и 3-м джобах одного и того же запуска (IS_CONTINUATION_JOB=true или farm_part2),
+    # а при обычном старте (push / расписание / первый джоб) удаляем старый farm_resume.json из кэша GitHub Actions,
+    # чтобы давно остановленный фарм НИКОГДА сам не воскресал из старого кэша!
+    is_continuation = (args.action == "farm_part2") or (os.environ.get("IS_CONTINUATION_JOB", "").strip().lower() == "true")
+    should_resume_farm = False
+    elapsed_prev = 240
+    if FARM_RESUME_FILE.exists():
+        if is_continuation:
+            try:
                 st_data = json.loads(FARM_RESUME_FILE.read_text(encoding="utf-8"))
-                elapsed_prev = int(st_data.get("elapsed_minutes") or 240)
-        except Exception:
-            pass
+                saved_at = float(st_data.get("saved_at") or 0)
+                cur_run_id = os.environ.get("GITHUB_RUN_ID", "").strip()
+                file_run_id = str(st_data.get("run_id") or "").strip()
+                # Проверяем, что файл создан в текущем workflow run (или не старше 20 минут)
+                if st_data.get("active") and (not cur_run_id or not file_run_id or cur_run_id == file_run_id) and (saved_at == 0 or (time.time() - saved_at) < 1800):
+                    elapsed_prev = int(st_data.get("elapsed_minutes") or 240)
+                    should_resume_farm = True
+                else:
+                    log_debug("[FARM CACHE CLEAN] Удалён устаревший farm_resume.json из прошлого запуска.")
+                    FARM_RESUME_FILE.unlink(missing_ok=True)
+            except Exception:
+                FARM_RESUME_FILE.unlink(missing_ok=True)
+        else:
+            log_debug("[FARM CACHE CLEAN] Очищен старый farm_resume.json из кэша GitHub Actions при новом запуске сервера.")
+            FARM_RESUME_FILE.unlink(missing_ok=True)
+
+    if should_resume_farm:
         rem_hours = max(0.25, (480 - elapsed_prev) / 60.0)
-        log_debug(f"[FARM AUTO-RESUME] Обнаружен незаконченный 8ч фарм (уже прошло {elapsed_prev} мин из 480, осталось {rem_hours:.2f} ч)!")
+        log_debug(f"[FARM AUTO-RESUME] Продолжаю 8ч фарм во 2/3 этапе (уже прошло {elapsed_prev} мин из 480, осталось {rem_hours:.2f} ч)!")
         ACTIVE_FARM_TASK = asyncio.create_task(run_background_8h_farm(elapsed_prev, min(4.0, rem_hours)))
     elif args.action not in ("daemon", "menu"):
         if args.action in ("farm", "farm_part1"):

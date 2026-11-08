@@ -1,4 +1,4 @@
-name: Senkuro Full Automation Combine v27.0
+name: Senkuro Full Automation Combine v28.0
 
 on:
   push:
@@ -189,7 +189,7 @@ jobs:
                           "🚀 сделать всё (паки+кузня)": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                       }
                       if low in ("/start", "/menu", "/help", "меню"):
-                          send_msg("🤖 <b>Панель управления фермой Senkuro v27.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
+                          send_msg("🤖 <b>Панель управления фермой Senkuro v28.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
                       elif low in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
                           if os.path.exists(QUEUE_FILE):
                               os.remove(QUEUE_FILE)
@@ -250,10 +250,10 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v27.0 (Direct Telegram Engine)
+      - name: Run Senkuro Automation Combine v28.0 (Direct Telegram Engine)
         id: run_bot
         env:
-          WORKFLOW_YML_VERSION: "v27.0"
+          WORKFLOW_YML_VERSION: "v28.0"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
           SENKURO_PASSWORDS: ${{ secrets.SENKURO_PASSWORDS }}
@@ -274,6 +274,7 @@ jobs:
           SENKURO_PROMO_CODE: ${{ github.event.inputs.promo_code || '' }}
           GH_EVENT_NAME: ${{ github.event_name }}
         run: |
+          rm -f .sessions/farm_resume.json
           if [ -f /tmp/early_poller.pid ]; then
             kill $(cat /tmp/early_poller.pid) 2>/dev/null || true
             sleep 1
@@ -321,6 +322,9 @@ jobs:
           restore-keys: |
             senkuro-sessions-v18-
 
+      - name: Clean Stale Farm Resume From Cache Before Artifact Restore
+        run: rm -f .sessions/farm_resume.json
+
       - name: Restore Login Sessions & Farm Resume State from Part 1 (Overwrites Cache)
         continue-on-error: true
         uses: actions/download-artifact@v4
@@ -344,10 +348,11 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v27.0 (Part 2 — Hours 4 to 8)
+      - name: Run Senkuro Automation Combine v28.0 (Part 2 — Hours 4 to 8)
         id: run_bot_p2
         env:
-          WORKFLOW_YML_VERSION: "v27.0"
+          WORKFLOW_YML_VERSION: "v28.0"
+          IS_CONTINUATION_JOB: "true"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
           SENKURO_PASSWORDS: ${{ secrets.SENKURO_PASSWORDS }}
@@ -400,6 +405,9 @@ jobs:
           restore-keys: |
             senkuro-sessions-v18-
 
+      - name: Clean Stale Farm Resume From Cache Before Artifact Restore
+        run: rm -f .sessions/farm_resume.json
+
       - name: Restore Login Sessions & Farm Resume State from Part 2 (Overwrites Cache)
         continue-on-error: true
         uses: actions/download-artifact@v4
@@ -423,9 +431,10 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v27.0 (Part 3 — Finish Remaining 8h Farm)
+      - name: Run Senkuro Automation Combine v28.0 (Part 3 — Finish Remaining 8h Farm)
         env:
-          WORKFLOW_YML_VERSION: "v27.0"
+          WORKFLOW_YML_VERSION: "v28.0"
+          IS_CONTINUATION_JOB: "true"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
           SENKURO_PASSWORDS: ${{ secrets.SENKURO_PASSWORDS }}
