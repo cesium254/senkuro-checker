@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v29.0 (8 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
+SENKURO FULL AUTOMATION COMBINE v30.0 (8 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -410,7 +410,7 @@ def get_collapsible_reply_keyboard() -> dict:
     rows = [
         [{"text": "▶️ Фарм (8 ч)"}, {"text": "📊 Статус"}, {"text": "🛑 СТОП"}],
         [{"text": "🪙 Баланс"}, {"text": "🎴 Паки"}, {"text": "🎟 Промокод"}],
-        [{"text": "⚒️ Кузня+Трейд"}, {"text": "🔄 Чекать 9"}],
+        [{"text": "⚒️ Кузня+Трейд"}, {"text": "🤝 Трейд"}, {"text": "🔄 Чекать 9"}],
     ]
     if DEBUG_MODE:
         rows.append([{"text": "📸 Экран"}, {"text": "📜 Лог"}])
@@ -800,6 +800,7 @@ def configure_telegram_bot_profile() -> None:
         {"command": "balance", "description": "🪙 Баланс монет на 8 аккаунтах"},
         {"command": "packs", "description": "🎴 Крутить паки Хардкор (480 монет)"},
         {"command": "forge", "description": "⚒️ Переплавка карт до S + трейд на основу"},
+        {"command": "trade", "description": "🤝 Трейд выбранных карт на основу / принять трейд"},
         {"command": "farm", "description": "▶️ Запустить 8-часовой фарм манги"},
         {"command": "status", "description": "📊 Статус фарма (читают или нет)"},
         {"command": "screen", "description": "📸 Посмотреть экран браузера (Скриншот)"},
@@ -3076,29 +3077,103 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                                 borrow_units.extend(take_m)
                                 borrow_desc_parts.append(f"{len(take_m)}×{RANK_BADGE.get(low_r, low_r)}")
                     if borrow_units:
-                        best_rec = max(state_map.values(), key=lambda s: s["available_slots"])
-                        req_payload = compress_card_units_for_gql(borrow_units)
-                        await asyncio.sleep(random.uniform(3.0, 5.0))
-                        b_res = await gql_call(
-                            best_rec["page"],
-                            GQL_SUGGEST_CARD_TRADE,
-                            {
-                                "input": {
-                                    "userId": main_uid,
-                                    "offer": [],
-                                    "request": req_payload,
-                                    "description": [],
-                                }
-                            },
-                            "suggestCardTrade",
+                        def _count_unlocked_shards(st_obj: dict) -> int:
+                            return sum(int(n.get("quantity") or 1) for n in st_obj["shards_nodes"] if not n.get("locked") and int(n.get("quantity") or 0) > 0)
+
+                        def _count_unlocked_f_cards(st_obj: dict) -> int:
+                            return sum(
+                                int(n.get("quantity") or 1)
+                                for n in st_obj["cards_nodes"]
+                                if not n.get("locked") and int(n.get("quantity") or 0) > 0 and str((n.get("card") or {}).get("rank") or "").upper() == "F"
+                            )
+
+                        def _count_unlocked_any_cards(st_obj: dict) -> int:
+                            return sum(int(n.get("quantity") or 1) for n in st_obj["cards_nodes"] if not n.get("locked") and int(n.get("quantity") or 0) > 0)
+
+                        # Выбираем аккаунт со свободными слотами Кузни, на котором ЕСТЬ осколки (в приоритете аккаунты с наибольшим числом осколков) или F-карта для обмена!
+                        eligible_borrowers = [
+                            s for s in state_map.values()
+                            if s["available_slots"] > 0 and (_count_unlocked_shards(s) > 0 or _count_unlocked_any_cards(s) > 0)
+                        ]
+                        best_rec = (
+                            max(
+                                eligible_borrowers,
+                                key=lambda s: (
+                                    1 if _count_unlocked_shards(s) > 0 else 0,
+                                    _count_unlocked_shards(s),
+                                    s["available_slots"],
+                                    _count_unlocked_f_cards(s),
+                                ),
+                            )
+                            if eligible_borrowers
+                            else None
                         )
-                        trade_created_obj = (b_res.get("data") or {}).get("suggestCardTrade") or {}
+                        req_payload = compress_card_units_for_gql(borrow_units)
+
+                        # ВАЖНО (правило нового UI Senkuro): при запросе карт с основы поле offer НЕ может быть пустым ([]),
+                        # иначе на основе серая неактивная кнопка «Принять обмен»!
+                        # Приоритет 1: даём взамен 1 осколок (самого младшего ранга).
+                        # Приоритет 2 (если осколков 0): даём взамен 1 карту F-ранга (или самую младшую).
+                        rank_prio = {"F": 0, "D": 1, "C": 2, "B": 3, "A": 4, "S": 5, "R": 6}
+                        borrow_offer_payload = []
+                        borrow_offer_desc = ""
+
+                        unlocked_shards_for_borrow = []
+                        for s_node in (best_rec["shards_nodes"] if best_rec else []):
+                            if s_node.get("locked"):
+                                continue
+                            s_cid = (s_node.get("card") or {}).get("id") or s_node.get("cardId")
+                            s_qty = int(s_node.get("quantity") or 1)
+                            s_mod = int(s_node.get("modifier") or 1)
+                            s_rnk = str((s_node.get("card") or {}).get("rank") or "?").upper()
+                            if s_cid and s_qty > 0:
+                                unlocked_shards_for_borrow.append((rank_prio.get(s_rnk, 9), s_cid, s_mod, s_rnk))
+                        if unlocked_shards_for_borrow:
+                            unlocked_shards_for_borrow.sort(key=lambda x: x[0])
+                            _, b_cid, b_mod, b_rnk = unlocked_shards_for_borrow[0]
+                            borrow_offer_payload = [{"cardId": b_cid, "modifier": b_mod, "quantity": 1}]
+                            borrow_offer_desc = f"1 осколок [{b_rnk}]"
+                        else:
+                            unlocked_cards_for_borrow = []
+                            for c_node in (best_rec["cards_nodes"] if best_rec else []):
+                                if c_node.get("locked"):
+                                    continue
+                                c_cid = (c_node.get("card") or {}).get("id") or c_node.get("cardId")
+                                c_qty = int(c_node.get("quantity") or 1)
+                                c_mod = int(c_node.get("modifier") or 0)
+                                c_rnk = str((c_node.get("card") or {}).get("rank") or "?").upper()
+                                if c_cid and c_qty > 0:
+                                    unlocked_cards_for_borrow.append((rank_prio.get(c_rnk, 9), c_cid, c_mod, c_rnk))
+                            if unlocked_cards_for_borrow:
+                                unlocked_cards_for_borrow.sort(key=lambda x: x[0])
+                                _, b_cid, b_mod, b_rnk = unlocked_cards_for_borrow[0]
+                                borrow_offer_payload = [{"cardId": b_cid, "modifier": b_mod, "quantity": 1}]
+                                borrow_offer_desc = f"1 карту [{b_rnk}]"
+
+                        trade_created_obj = {}
+                        if best_rec and borrow_offer_payload:
+                            await asyncio.sleep(random.uniform(3.0, 5.0))
+                            b_res = await gql_call(
+                                best_rec["page"],
+                                GQL_SUGGEST_CARD_TRADE,
+                                {
+                                    "input": {
+                                        "userId": main_uid,
+                                        "offer": borrow_offer_payload,
+                                        "request": req_payload,
+                                        "description": [],
+                                    }
+                                },
+                                "suggestCardTrade",
+                            )
+                            trade_created_obj = (b_res.get("data") or {}).get("suggestCardTrade") or {}
                         if trade_created_obj.get("success"):
                             b_summary = ", ".join(borrow_desc_parts)
+                            offer_note = f" (взамен предложен <b>{borrow_offer_desc}</b>, чтобы кнопка «Принять обмен» была активна)" if borrow_offer_desc else ""
                             send_tg_message(
                                 f"🤝 <b>Запрос карт B-ранга и ниже с основы <a href='{MAIN_ACCOUNT_URL}'>{MAIN_ACCOUNT_SLUG}</a>!</b>\n\n"
                                 f"Аккаунт <b>{best_rec['acc']['id']}</b> (свободно слотов кузни: {best_rec['available_slots']}/5) "
-                                f"запросил с вашей основы все карты младше A-ранга ({b_summary}).\n"
+                                f"запросил с вашей основы все карты младше A-ранга ({b_summary}){offer_note}.\n"
                                 "👉 <b>Пожалуйста, подтвердите входящий обмен на сайте (проверяю каждые 10 сек., жду до 2.5 минут)...</b>",
                                 add_keyboard=False,
                             )
@@ -3276,9 +3351,11 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                                 high_rank_offers.append({"cardId": cid, "modifier": mod, "quantity": qty})
                                 acc_cards_cnt[rank] += qty
 
-                        # Когда отправляется карта A/S/R хотя бы с одного аккаунта — со ВСЕХ 4 аккаунтов также скидываем осколки напрямую на основу!
+                        # Когда отправляется карта A/S/R хотя бы с одного аккаунта — со ВСЕХ 8 аккаунтов также скидываем осколки на основу,
+                        # НО строго оставляем 1 осколок в резерве на каждом фарм-аккаунте (чтобы всегда был предмет для встречного трейда с основой)!
                         all_offer_entries = list(high_rank_offers)
                         acc_shards_cnt: Counter = Counter()
+                        unlocked_shard_items = []
                         for node in st["shards_nodes"]:
                             if node.get("locked"):
                                 continue
@@ -3287,8 +3364,20 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                             mod = int(node.get("modifier") or 1)
                             rank = str((node.get("card") or {}).get("rank") or "?").upper()
                             if cid and qty > 0:
-                                all_offer_entries.append({"cardId": cid, "modifier": mod, "quantity": qty})
-                                acc_shards_cnt[rank] += qty
+                                unlocked_shard_items.append({"cid": cid, "qty": qty, "mod": mod, "rank": rank})
+
+                        rank_prio_sh = {"F": 0, "D": 1, "C": 2, "B": 3, "A": 4, "S": 5, "R": 6}
+                        unlocked_shard_items.sort(key=lambda x: rank_prio_sh.get(x["rank"], 9))
+                        reserved_one_shard = False
+                        for sh_it in unlocked_shard_items:
+                            send_q = sh_it["qty"]
+                            if not reserved_one_shard:
+                                # Оставляем 1 самый младший осколок на аккаунте про запас!
+                                send_q -= 1
+                                reserved_one_shard = True
+                            if send_q > 0:
+                                all_offer_entries.append({"cardId": sh_it["cid"], "modifier": sh_it["mod"], "quantity": send_q})
+                                acc_shards_cnt[sh_it["rank"]] += send_q
 
                         if not all_offer_entries:
                             continue
@@ -3353,6 +3442,290 @@ async def run_smart_forge_and_trade_pipeline() -> None:
             await browser.close()
     finally:
         proxy_mgr.stop_all()
+
+    send_tg_message("\n".join(report_lines), add_keyboard=True)
+
+
+# ==============================================================================
+# 8.5. СЦЕНАРИЙ 3.5: РУЧНОЙ ТРЕЙД ВЫБРАННЫХ КАРТ С ФЕРМЫ НА ОСНОВУ (БЕЗ КУЗНИ)
+# ==============================================================================
+
+WAITING_FOR_TRADE_INPUT: bool = False
+
+RANK_TOKEN_MAP: dict[str, str] = {
+    "r": "R", "р": "R",
+    "s": "S", "ы": "S", "сс": "S",
+    "a": "A", "а": "A",
+    "b": "B", "в": "B", "б": "B",
+    "c": "C", "с": "C", "ц": "C",
+    "d": "D", "д": "D",
+    "f": "F", "ф": "F",
+}
+
+
+def parse_custom_trade_spec(raw_spec: str) -> Optional[dict]:
+    """
+    Разбирает команду ручного трейда с индивидуальной привязкой рангов к каждому аккаунту!
+    Поддерживаемые форматы (через пробел, запятую или слитно):
+      - '1B 2C 4D 5C' или '1 B, 2 C, 4 D, 5 C' -> с #1 ранг B, с #2 ранг C, с #4 ранг D, с #5 ранг C
+      - '1 B C, 3 B, 5 C D, 6 D' -> с #1 ранги B и C, с #3 ранг B, с #5 ранги C и D, с #6 ранг D
+      - '1 B' -> с аккаунта #1 ранг B
+      - '1 B C' -> с аккаунта #1 ранги B и C
+      - '1 4 B' или '1-4 B' -> с аккаунтов #1 и #4 ранг B
+      - 'все B' (или просто 'B') -> со всех 8 аккаунтов ранг B
+      - '5 все' -> с аккаунта #5 все незакреплённые карты всех рангов (F, D, C, B, A, S, R)
+    """
+    s = (raw_spec or "").strip()
+    if not s:
+        return None
+    if s.lower().startswith("/trade"):
+        s = s[6:].strip()
+    if not s:
+        return None
+
+    # Заменяем запятые, точки с запятой, слэши и плюсы на пробелы
+    norm = re.sub(r"[,;/+|]+", " ", s.lower()).strip()
+    raw_words = [w for w in norm.split() if w]
+    if not raw_words:
+        return None
+
+    # Предварительно разбиваем слитные токены вроде "1b", "6bc", "2вс" на ["1", "b"], ["6", "b", "c"]
+    expanded_tokens: list[str] = []
+    for w in raw_words:
+        m_combo = re.match(r"^([1-8](?:-[1-8])?)([rрsыaаbвбcсцdдfф]+)$", w)
+        if m_combo:
+            expanded_tokens.append(m_combo.group(1))
+            for ch in m_combo.group(2):
+                expanded_tokens.append(ch)
+            continue
+        # Если написано несколько букв рангов слитно (например "bc" или "вс" или "bcd")
+        if len(w) in (2, 3, 4) and w not in ("все", "всё", "all", "акк", "оск") and all(ch in RANK_TOKEN_MAP for ch in w):
+            for ch in w:
+                expanded_tokens.append(ch)
+            continue
+        expanded_tokens.append(w)
+
+    slug_to_idx = {acc["id"].lower(): int(acc["idx"]) for acc in FARM_ACCOUNTS}
+    acc_to_ranks: dict[int, list[str]] = {}
+    current_accs: list[int] = []
+    current_accs_have_ranks: bool = False
+
+    def _add_ranks_to_current_accs(ranks_list: list[str]) -> None:
+        nonlocal current_accs, current_accs_have_ranks
+        if not current_accs:
+            current_accs = [int(a["idx"]) for a in FARM_ACCOUNTS]
+        current_accs_have_ranks = True
+        for a_idx in current_accs:
+            if a_idx not in acc_to_ranks:
+                acc_to_ranks[a_idx] = []
+            for r_code in ranks_list:
+                if r_code not in acc_to_ranks[a_idx]:
+                    acc_to_ranks[a_idx].append(r_code)
+
+    def _push_account_idxs(new_idxs: list[int]) -> None:
+        nonlocal current_accs, current_accs_have_ranks
+        if current_accs_have_ranks:
+            current_accs = []
+            current_accs_have_ranks = False
+        for idx_val in new_idxs:
+            if idx_val not in current_accs:
+                current_accs.append(idx_val)
+
+    for i_tok, tok in enumerate(expanded_tokens):
+        if tok == "с" and i_tok == 0 and len(expanded_tokens) > 1 and (
+            expanded_tokens[1].isdigit() or re.match(r"^[1-8]-[1-8]$", expanded_tokens[1]) or expanded_tokens[1] in ("все", "всё", "all")
+        ):
+            continue
+        if tok in ("карты", "карта", "ранг", "ранга", "рангов", "акк", "аккаунт", "аккаунты", "на", "основу", "трейд", "обмен", "и"):
+            continue
+
+        if tok in ("все", "всё", "all", "*"):
+            # Если перед "все" ещё не выбраны аккаунты (или предыдущим аккаунтам уже назначены ранги) — значит "все аккаунты"
+            if not current_accs or current_accs_have_ranks:
+                _push_account_idxs([int(a["idx"]) for a in FARM_ACCOUNTS])
+            else:
+                # Иначе (например "5 все" или "1 3 все") — значит все ранги для выбранных аккаунтов!
+                _add_ranks_to_current_accs(["R", "S", "A", "B", "C", "D", "F"])
+            continue
+
+        if tok in slug_to_idx:
+            _push_account_idxs([slug_to_idx[tok]])
+            continue
+
+        m_range = re.match(r"^([1-8])-([1-8])$", tok)
+        if m_range:
+            a_i, b_i = int(m_range.group(1)), int(m_range.group(2))
+            _push_account_idxs(list(range(min(a_i, b_i), max(a_i, b_i) + 1)))
+            continue
+
+        if tok.isdigit() and 1 <= int(tok) <= 8:
+            _push_account_idxs([int(tok)])
+            continue
+
+        if tok in RANK_TOKEN_MAP:
+            _add_ranks_to_current_accs([RANK_TOKEN_MAP[tok]])
+            continue
+
+        # Любой неизвестный токен означает, что это не команда трейда (например, обычный промокод)
+        return None
+
+    # Если остались выбранные аккаунты без указания ранга в конце (например, пользователь написал просто некорректную строку без рангов)
+    if not acc_to_ranks or not current_accs_have_ranks:
+        return None
+
+    return {"plan": acc_to_ranks}
+
+
+def get_trade_prompt_message() -> str:
+    acc_hint = ", ".join(f"<b>#{a['idx']}</b> ({a['id']})" for a in FARM_ACCOUNTS)
+    return (
+        "🤝 <b>Отправка нужных карт с фермы на основу (БЕЗ Кузни):</b>\n\n"
+        "Напишите в чат, <b>с каких аккаунтов (1–8)</b> и <b>какие ранги (F, D, C, B, A, S)</b> отправить вам на основу <b>cesium254</b> "
+        "(можно указывать как один аккаунт, так и сразу несколько разных аккаунтов с разными рангами!):\n\n"
+        "• <code>1 B</code> — отправить ранг <b>B</b> с аккаунта <b>#1</b>\n"
+        "• <code>1 B C</code> — отправить ранги <b>B и C</b> с аккаунта <b>#1</b>\n"
+        "• <code>1B 2C 4D 5C</code> (или <code>1 B, 3 B, 5 C, 6 D</code>) — отправить с <b>#1</b> ранг B, с <b>#2</b> ранг C, с <b>#4</b> ранг D, с <b>#5</b> ранг C\n"
+        "• <code>1 4 B</code> (или <code>1-4 B</code>) — отправить ранг <b>B</b> с аккаунтов <b>#1 и #4</b>\n"
+        "• <code>все B</code> (или просто <code>B</code>) — собрать все карты ранга <b>B</b> со всех 8 аккаунтов\n"
+        "• <code>5 все</code> — отправить все незакреплённые карты с аккаунта <b>#5</b>\n\n"
+        f"📋 <b>Аккаунты:</b> {acc_hint}\n"
+        "<i>(Писать можно слитно, через пробел или через запятую, на английской или русской раскладке: F/Ф, D/Д, C/С/Ц, B/В/Б, A/А, S)</i>"
+    )
+
+
+async def run_custom_trade_command(spec_str: str) -> None:
+    parsed = parse_custom_trade_spec(spec_str)
+    if not parsed or not parsed.get("plan"):
+        send_tg_message(
+            "⚠️ <b>Не удалось распознать аккаунты и ранги для трейда.</b>\n\n" + get_trade_prompt_message(),
+            add_keyboard=True,
+        )
+        return
+
+    plan: dict[int, list[str]] = parsed["plan"]
+    selected_accounts = [a for a in FARM_ACCOUNTS if int(a["idx"]) in plan]
+
+    plan_summary_parts = []
+    for acc in selected_accounts:
+        idx_v = int(acc["idx"])
+        r_badges = "+".join(RANK_BADGE.get(r, r) for r in plan[idx_v])
+        plan_summary_parts.append(f"<b>#{idx_v} ({acc['id']})</b> ➡️ {r_badges}")
+
+    send_tg_message(
+        f"🤝 <b>Запускаю отправку карт на основу <a href='{MAIN_ACCOUNT_URL}'>{MAIN_ACCOUNT_SLUG}</a> (без Кузни):</b>\n"
+        + "\n".join(f"• {p_str}" for p_str in plan_summary_parts),
+        add_keyboard=True,
+    )
+
+    proxy_mgr = AccountProxyManager()
+    report_lines = [
+        f"🤝 <b>Отчёт отправки карт на основу <a href='{MAIN_ACCOUNT_URL}'>{MAIN_ACCOUNT_SLUG}</a>:</b>\n",
+    ]
+    total_sent_cards: Counter = Counter()
+
+    try:
+        async with async_playwright() as p:
+            browser = await launch_senkuro_browser(p)
+            main_uid: Optional[str] = KNOWN_USER_IDS.get(MAIN_ACCOUNT_SLUG)
+
+            for acc in selected_accounts:
+                if FARM_STOP_FLAG:
+                    break
+                aid = acc["id"]
+                idx_v = int(acc["idx"])
+                acc_target_ranks = plan.get(idx_v, [])
+                if not acc_target_ranks:
+                    continue
+
+                proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
+                ctx = await create_account_context(browser, acc, proxy_url)
+                try:
+                    page, user_obj = await ensure_logged_in(ctx, acc)
+                    if not user_obj or not user_obj.get("id"):
+                        report_lines.append(f"❌ <b>#{idx_v} {aid}</b>: не удалось авторизоваться")
+                        continue
+                    uid = str(user_obj["id"])
+
+                    if not main_uid:
+                        m_res = await gql_call(page, GQL_FETCH_USER_BY_SLUG, {"slug": MAIN_ACCOUNT_SLUG}, "fetchUserBySlug")
+                        m_usr = (m_res.get("data") or {}).get("user")
+                        if isinstance(m_usr, dict) and m_usr.get("id"):
+                            main_uid = str(m_usr["id"])
+
+                    if not main_uid:
+                        report_lines.append(f"❌ <b>#{idx_v} {aid}</b>: не удалось получить ID основного аккаунта {MAIN_ACCOUNT_SLUG}")
+                        continue
+
+                    offer_entries = []
+                    acc_c_cnt: Counter = Counter()
+                    c_nodes = await fetch_all_user_cards_gql(page, uid, modifier_val=0)
+                    for node in c_nodes:
+                        if node.get("locked"):
+                            continue
+                        cid = (node.get("card") or {}).get("id") or node.get("cardId")
+                        qty = int(node.get("quantity") or 1)
+                        mod = int(node.get("modifier") or 0)
+                        rnk = str((node.get("card") or {}).get("rank") or "?").upper()
+                        if cid and qty > 0 and rnk in acc_target_ranks:
+                            offer_entries.append({"cardId": cid, "modifier": mod, "quantity": qty})
+                            acc_c_cnt[rnk] += qty
+
+                    if offer_entries:
+                        sent_ok = False
+                        last_err = ""
+                        for i in range(0, len(offer_entries), 50):
+                            chunk = offer_entries[i : i + 50]
+                            await asyncio.sleep(random.uniform(2.5, 4.2))
+                            s_res = await gql_call(
+                                page,
+                                GQL_SUGGEST_CARD_TRADE,
+                                {
+                                    "input": {
+                                        "userId": main_uid,
+                                        "offer": chunk,
+                                        "request": [],
+                                        "description": [],
+                                    }
+                                },
+                                "suggestCardTrade",
+                            )
+                            if ((s_res.get("data") or {}).get("suggestCardTrade") or {}).get("success"):
+                                sent_ok = True
+                            else:
+                                errs = s_res.get("errors") or []
+                                if errs:
+                                    last_err = str(errs[0].get("message") or "")
+                        if sent_ok:
+                            for r_k, q_v in acc_c_cnt.items():
+                                total_sent_cards[r_k] += q_v
+                            c_desc = ", ".join(f"<b>{acc_c_cnt[r]}</b>×{RANK_BADGE.get(r, r)}" for r in RANK_ORDER if acc_c_cnt.get(r))
+                            report_lines.append(f"🎁 <b>#{idx_v} {aid}</b> ➡️ отправлено на основу: {c_desc}")
+                        else:
+                            report_lines.append(f"⚠️ <b>#{idx_v} {aid}</b>: ошибка отправки трейда ({last_err or 'ошибка API'})")
+                    else:
+                        req_r_str = ", ".join(acc_target_ranks)
+                        report_lines.append(f"ℹ️ <b>#{idx_v} {aid}</b>: нет незакреплённых карт ранга {req_r_str}")
+
+                    await ctx.storage_state(path=str(get_session_file(aid)))
+                finally:
+                    ACTIVE_BROWSER_PAGES.pop(aid, None)
+                    try:
+                        await ctx.close()
+                    except Exception:
+                        pass
+            await browser.close()
+    finally:
+        proxy_mgr.stop_all()
+
+    report_lines.append("")
+    if sum(total_sent_cards.values()) > 0:
+        c_sum = ", ".join(f"<b>{total_sent_cards[r]}</b> {RANK_BADGE.get(r, r)}" for r in RANK_ORDER if total_sent_cards.get(r))
+        report_lines.append(
+            f"✅ <b>Итого отправлено на основу <a href='{MAIN_ACCOUNT_URL}'>{MAIN_ACCOUNT_SLUG}</a>:</b> "
+            f"<b>{sum(total_sent_cards.values())}</b> карт ({c_sum}) — можете сразу принимать их на основе!"
+        )
+    else:
+        report_lines.append("ℹ️ <b>Ни одной карты выбранных рангов для отправки не найдено.</b>")
 
     send_tg_message("\n".join(report_lines), add_keyboard=True)
 
@@ -3481,6 +3854,33 @@ FULL_FARM_USERSCRIPT_V9 = r"""
         if (path.includes('/auth/')) return;
         const bodyTxt = document.body ? (document.body.innerText || '') : '';
         if (bodyTxt.includes('Приготовьтесь к приключениям')) return;
+
+        // ЭТАП 0: Авто-закрытие таблички 18+ («Подтверди возраст» -> «Больше не спрашивать» + «Мне есть 18»)
+        if (bodyTxt.includes('Подтверди возраст') || bodyTxt.includes('Мне есть 18')) {
+            const ageBtn = Array.from(document.querySelectorAll('button, [role="button"]')).find(el => {
+                const t = (el.innerText || el.textContent || '').trim();
+                return (t.includes('Мне есть 18') || t.includes('Мне исполнилось 18')) && isElementVisible(el);
+            });
+            if (ageBtn) {
+                const dontAsk = Array.from(document.querySelectorAll('label, span, div')).find(el => {
+                    const t = (el.innerText || el.textContent || '').trim();
+                    return t === 'Больше не спрашивать' && isElementVisible(el);
+                });
+                if (dontAsk && !window.__senkuroAgeDontAskClicked) {
+                    window.__senkuroAgeDontAskClicked = true;
+                    const prevBox = dontAsk.previousElementSibling;
+                    if (prevBox && isElementVisible(prevBox)) {
+                        triggerClick(prevBox);
+                    } else {
+                        triggerClick(dontAsk);
+                    }
+                    setTimeout(() => triggerClick(ageBtn), 180);
+                    return;
+                }
+                triggerClick(ageBtn);
+                return;
+            }
+        }
 
         // ЭТАП 2 СБОРА КАРТЫ: закрываем полноэкранную модалку полученной карты
         const continueDrop = findVisibleContinueModal();
@@ -4336,7 +4736,7 @@ async def run_check_all_5_accounts() -> None:
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v29.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v30.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -4627,7 +5027,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     FARM_STOP_FLAG = False
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v29.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v30.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -4639,6 +5039,8 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
         await run_all_packs_opening()
     elif action == "forge":
         await run_smart_forge_and_trade_pipeline()
+    elif action == "trade":
+        await run_custom_trade_command(promo_code)
     elif action in ("farm", "farm_part1"):
         if ACTIVE_FARM_TASK and not ACTIVE_FARM_TASK.done():
             send_tg_message(
@@ -4667,7 +5069,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
 
 
 async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
-    global FARM_STOP_FLAG, ACTIVE_FARM_TASK, ACTIVE_JOB_TASK, CURRENT_FARM_STATUS
+    global FARM_STOP_FLAG, ACTIVE_FARM_TASK, ACTIVE_JOB_TASK, CURRENT_FARM_STATUS, WAITING_FOR_TRADE_INPUT
 
     cb = upd.get("callback_query")
     if cb:
@@ -4713,7 +5115,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            send_full_debug_log_to_user("Полный лог работы комбайна v29.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v30.0")
             return
 
         if data == "check_farm_status":
@@ -4762,7 +5164,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if lower in ("/start", "/menu", "/help", "меню"):
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v29.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v30.0</b>\n\n"
                 "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
                 "или просто напишите промокод одним словом в чат:",
                 add_keyboard=True,
@@ -4775,7 +5177,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
-            send_full_debug_log_to_user("Полный лог работы комбайна v29.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v30.0")
             return
 
         if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
@@ -4810,11 +5212,17 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("🎟 промокод", "🎟 ввести промокод"):
+            WAITING_FOR_TRADE_INPUT = False
             send_tg_message(
                 "🎟 <b>Просто напишите и отправьте промокод одним словом в этот чат:</b>\n"
                 "(окошко принудительного ответа убрано, чтобы ничего не залипало!)",
                 add_keyboard=True,
             )
+            return
+
+        if lower in ("🤝 трейд", "трейд", "/trade"):
+            WAITING_FOR_TRADE_INPUT = True
+            send_tg_message(get_trade_prompt_message(), add_keyboard=True)
             return
 
         text_btn_map = {
@@ -4844,11 +5252,36 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             "🚀 сделать всё (паки+кузня)": "all",
         }
         if lower in text_btn_map:
+            WAITING_FOR_TRADE_INPUT = False
             act_c = text_btn_map[lower]
             send_tg_message(f"⏳ Запускаю задачу <code>{act_c}</code>...", add_keyboard=True)
             await task_queue.put((act_c, ""))
             return
 
+        # Проверяем, является ли сообщение командой ручного Трейда (например: "1B 2C 4D 5C", "1 B, 3 B, 5 C", "1 B C", "все B")
+        is_explicit_trade_cmd = (
+            lower.startswith("/trade ")
+            or WAITING_FOR_TRADE_INPUT
+            or (" " in raw_text)
+            or ("," in raw_text)
+            or len(raw_text) <= 3
+            or bool(re.match(r"^[1-8][rрsыaаbвбcсцdдfф]+$", lower))
+        )
+        if is_explicit_trade_cmd:
+            parsed_tr = parse_custom_trade_spec(raw_text)
+            if parsed_tr:
+                WAITING_FOR_TRADE_INPUT = False
+                await task_queue.put(("trade", raw_text))
+                return
+            elif WAITING_FOR_TRADE_INPUT and not re.match(r"^[A-Za-z0-9_-]{5,32}$", raw_text):
+                send_tg_message(
+                    "⚠️ <b>Не понял формат трейда.</b> Примеры: <code>1 B</code>, <code>1 B C</code>, <code>1B 2C 4D 5C</code> или <code>1 B, 3 B, 5 C, 6 D</code>.\n\n"
+                    + get_trade_prompt_message(),
+                    add_keyboard=True,
+                )
+                return
+
+        WAITING_FOR_TRADE_INPUT = False
         promo_code = ""
         if lower.startswith("/promo "):
             promo_code = raw_text[7:].strip().upper()
@@ -4886,7 +5319,7 @@ async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: fl
     )
     if os.environ.get("GH_EVENT_NAME") == "push":
         send_tg_message(
-            "🟢 <b>Сервер полностью запущен и готов к работе (v29.0)!</b>\n\n"
+            "🟢 <b>Сервер полностью запущен и готов к работе (v30.0)!</b>\n\n"
             "Браузер Google Chrome и виртуальный экран готовы — теперь любая кнопка сработает сразу 👇:",
             add_keyboard=True,
         )
@@ -4935,11 +5368,11 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v29.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v30.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",
-        choices=["check", "menu", "daemon", "promo", "balance", "packs", "forge", "farm", "farm_part1", "farm_part2", "farm_status", "all"],
+        choices=["check", "menu", "daemon", "promo", "balance", "packs", "forge", "trade", "farm", "farm_part1", "farm_part2", "farm_status", "all"],
     )
     parser.add_argument(
         "--promo-code",

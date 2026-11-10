@@ -1,4 +1,4 @@
-name: Senkuro Full Automation Combine v29.0
+name: Senkuro Full Automation Combine v30.0
 
 on:
   push:
@@ -58,7 +58,7 @@ jobs:
               "keyboard": [
                   [{"text": "▶️ Фарм (8 ч)"}, {"text": "📊 Статус"}, {"text": "🛑 СТОП"}],
                   [{"text": "🪙 Баланс"}, {"text": "🎴 Паки"}, {"text": "🎟 Промокод"}],
-                  [{"text": "⚒️ Кузня+Трейд"}, {"text": "🔄 Чекать 9"}],
+                  [{"text": "⚒️ Кузня+Трейд"}, {"text": "🤝 Трейд"}, {"text": "🔄 Чекать 9"}],
                   [{"text": "📸 Экран"}, {"text": "📜 Лог"}],
               ],
               "resize_keyboard": True,
@@ -189,7 +189,7 @@ jobs:
                           "🚀 сделать всё (паки+кузня)": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                       }
                       if low in ("/start", "/menu", "/help", "меню"):
-                          send_msg("🤖 <b>Панель управления фермой Senkuro v29.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
+                          send_msg("🤖 <b>Панель управления фермой Senkuro v30.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
                       elif low in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
                           if os.path.exists(QUEUE_FILE):
                               os.remove(QUEUE_FILE)
@@ -198,6 +198,15 @@ jobs:
                           send_msg("⚪ <b>Сейчас 8-часовой фарм манги не запущен.</b>\nНажмите <b>«▶️ Фарм (8 ч)»</b> в нижнем меню 🎛!")
                       elif low in ("🎟 промокод", "🎟 ввести промокод"):
                           send_msg("🎟 <b>Просто напишите и отправьте промокод одним словом в этот чат:</b>")
+                      elif low in ("🤝 трейд", "трейд", "/trade"):
+                          send_msg(
+                              "🤝 <b>Отправка нужных карт с фермы на основу (БЕЗ Кузни):</b>\n\n"
+                              "Напишите в чат, с каких аккаунтов (1–8) и какие ранги (F, D, C, B, A, S) отправить на основу:\n"
+                              "• <code>1 B</code> — отправить ранг B с аккаунта #1\n"
+                              "• <code>1 B C</code> — отправить ранги B и C с аккаунта #1\n"
+                              "• <code>1B 2C 4D 5C</code> (или <code>1 B, 3 B, 5 C, 6 D</code>) — разные ранги с разных аккаунтов за раз!\n"
+                              "• <code>все B</code> — собрать ранг B со всех 8 аккаунтов"
+                          )
                       elif low in ("📸 экран", "📸 посмотреть экран", "/screen", "📜 лог", "📜 полный лог", "/log"):
                           send_msg("⏳ Догружаю основной движок браузера (~15 сек) — сразу после старта кнопка сработает мгновенно!")
                       elif low in btn_map:
@@ -205,10 +214,14 @@ jobs:
                           append_queue(act_c, "")
                           send_msg(f"⏳ <b>{lbl}</b>\nПодготавливаю браузер (~20 сек) и сразу пришлю отчёт!")
                       else:
-                          pcode = txt[7:].strip().upper() if low.startswith("/promo ") else (txt.upper() if not txt.startswith("/") and re.match(r"^[A-Za-z0-9_-]{4,32}$", txt) else "")
-                          if pcode:
-                              append_queue("promo", pcode)
-                              send_msg(f"🎟 Принят промокод <code>{pcode}</code>!\n⏳ Подготавливаю браузер (~20 сек) и проверяю начисление монет на 8 аккаунтах...")
+                          if low.startswith("/trade ") or (" " in txt and not low.startswith("/promo ")) or ("," in txt) or len(txt) <= 3:
+                              append_queue("trade", txt)
+                              send_msg(f"🤝 Принята команда трейда <code>{txt}</code>!\n⏳ Подготавливаю браузер (~20 сек) и сразу выполняю обмен без Кузни...")
+                          else:
+                              pcode = txt[7:].strip().upper() if low.startswith("/promo ") else (txt.upper() if not txt.startswith("/") and re.match(r"^[A-Za-z0-9_-]{4,32}$", txt) else "")
+                              if pcode:
+                                  append_queue("promo", pcode)
+                                  send_msg(f"🎟 Принят промокод <code>{pcode}</code>!\n⏳ Подготавливаю браузер (~20 сек) и проверяю начисление монет на 8 аккаунтах...")
               time.sleep(0.5)
           EOF
           nohup python3 /tmp/early_poller.py >/tmp/early_poller.log 2>&1 &
@@ -250,10 +263,10 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v29.0 (Direct Telegram Engine)
+      - name: Run Senkuro Automation Combine v30.0 (Direct Telegram Engine)
         id: run_bot
         env:
-          WORKFLOW_YML_VERSION: "v29.0"
+          WORKFLOW_YML_VERSION: "v30.0"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
           SENKURO_PASSWORDS: ${{ secrets.SENKURO_PASSWORDS }}
@@ -348,10 +361,10 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v29.0 (Part 2 — Hours 4 to 8)
+      - name: Run Senkuro Automation Combine v30.0 (Part 2 — Hours 4 to 8)
         id: run_bot_p2
         env:
-          WORKFLOW_YML_VERSION: "v29.0"
+          WORKFLOW_YML_VERSION: "v30.0"
           IS_CONTINUATION_JOB: "true"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
@@ -429,9 +442,9 @@ jobs:
             chmod +x bin/opera-proxy
           fi
 
-      - name: Run Senkuro Automation Combine v29.0 (Part 3 — Finish Remaining 8h Farm)
+      - name: Run Senkuro Automation Combine v30.0 (Part 3 — Finish Remaining 8h Farm)
         env:
-          WORKFLOW_YML_VERSION: "v29.0"
+          WORKFLOW_YML_VERSION: "v30.0"
           IS_CONTINUATION_JOB: "true"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
