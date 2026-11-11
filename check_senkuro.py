@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v30.0 (8 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
+SENKURO FULL AUTOMATION COMBINE v31.0 (8 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -4736,7 +4736,7 @@ async def run_check_all_5_accounts() -> None:
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v30.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v31.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -5027,7 +5027,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     FARM_STOP_FLAG = False
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v30.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v31.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -5066,6 +5066,75 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
         await run_smart_forge_and_trade_pipeline()
     elif action == "check":
         await run_check_all_5_accounts()
+    elif action == "log":
+        send_full_debug_log_to_user("Полный лог работы комбайна v31.0")
+    elif action == "screen":
+        await send_live_screen_snapshot()
+
+
+
+async def perform_hard_stop_and_reset(task_queue: asyncio.Queue) -> None:
+    """
+    Экстренная полная остановка всех текущих процессов (фарм, кузня, трейд, паки, браузеры Chrome и прокси)
+    с мгновенным перезапуском внутреннего состояния сервера в режим чистого ожидания новых команд!
+    """
+    global FARM_STOP_FLAG, ACTIVE_JOB_TASK, ACTIVE_FARM_TASK, CURRENT_FARM_STATUS, WAITING_FOR_TRADE_INPUT
+    log_debug("[HARD STOP & RESET] Получена команда 🛑 СТОП — принудительно останавливаю все задачи, браузеры и прокси...")
+    FARM_STOP_FLAG = True
+    WAITING_FOR_TRADE_INPUT = False
+
+    try:
+        FARM_RESUME_FILE.write_text(
+            json.dumps({"active": False, "stopped": True, "elapsed_minutes": 0, "saved_at": 0}),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+    try:
+        EARLY_QUEUE_FILE.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    while not task_queue.empty():
+        try:
+            task_queue.get_nowait()
+            task_queue.task_done()
+        except Exception:
+            break
+
+    tasks_to_cancel = []
+    if ACTIVE_JOB_TASK and not ACTIVE_JOB_TASK.done():
+        ACTIVE_JOB_TASK.cancel()
+        tasks_to_cancel.append(ACTIVE_JOB_TASK)
+    if ACTIVE_FARM_TASK and not ACTIVE_FARM_TASK.done():
+        ACTIVE_FARM_TASK.cancel()
+        tasks_to_cancel.append(ACTIVE_FARM_TASK)
+
+    if tasks_to_cancel:
+        try:
+            await asyncio.wait_for(asyncio.gather(*tasks_to_cancel, return_exceptions=True), timeout=3.0)
+        except Exception:
+            pass
+
+    ACTIVE_JOB_TASK = None
+    ACTIVE_FARM_TASK = None
+    ACTIVE_BROWSER_PAGES.clear()
+    CURRENT_FARM_STATUS = {"active": False, "accounts": []}
+    publish_live_farm_status(CURRENT_FARM_STATUS)
+
+    # Принудительно закрываем все зависшие процессы Chrome и opera-proxy на уровне ОС,
+    # чтобы освободить все порты 25341..25348 и память для мгновенного приёма новых команд!
+    if not sys.platform.startswith("win"):
+        for proc_pattern in ("google-chrome", "chromium", "chrome", "opera-proxy"):
+            try:
+                subprocess.run(["pkill", "-9", "-f", proc_pattern], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+
+    await asyncio.sleep(0.5)
+    FARM_STOP_FLAG = False
+    log_debug("[HARD STOP & RESET OK] Все процессы очищены, сервер перезапущен и ждёт новых команд!")
 
 
 async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
@@ -5083,27 +5152,11 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if data == "stop_all_farm":
-            tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "🛑 Останавливаю фарм и все задачи..."})
-            FARM_STOP_FLAG = True
-            try:
-                FARM_RESUME_FILE.write_text(json.dumps({"active": False, "stopped": True, "elapsed_minutes": 0, "saved_at": 0}), encoding="utf-8")
-            except Exception:
-                pass
-            while not task_queue.empty():
-                try:
-                    task_queue.get_nowait()
-                    task_queue.task_done()
-                except Exception:
-                    break
-            if ACTIVE_JOB_TASK and not ACTIVE_JOB_TASK.done():
-                ACTIVE_JOB_TASK.cancel()
-            if ACTIVE_FARM_TASK and not ACTIVE_FARM_TASK.done():
-                ACTIVE_FARM_TASK.cancel()
-            CURRENT_FARM_STATUS = {"active": False, "accounts": []}
-            publish_live_farm_status(CURRENT_FARM_STATUS)
+            tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "🛑 Сбрасываю все процессы и перезапускаю готовность..."})
+            await perform_hard_stop_and_reset(task_queue)
             send_tg_message(
-                "🛑 <b>Фарм и все активные задачи полностью остановлены!</b>\n\n"
-                "Сессии сохранены. Сервер остаётся на связи — можете сразу запускать любую задачу кнопкой ниже:",
+                "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
+                "🟢 <b>Сервер перезапущен в чистый режим ожидания (v31.0)</b> — можете сразу нажимать любую кнопку ниже:",
                 add_keyboard=True,
             )
             return
@@ -5115,7 +5168,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            send_full_debug_log_to_user("Полный лог работы комбайна v30.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v31.0")
             return
 
         if data == "check_farm_status":
@@ -5164,7 +5217,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if lower in ("/start", "/menu", "/help", "меню"):
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v30.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v31.0</b>\n\n"
                 "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
                 "или просто напишите промокод одним словом в чат:",
                 add_keyboard=True,
@@ -5177,27 +5230,16 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
-            send_full_debug_log_to_user("Полный лог работы комбайна v30.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v31.0")
             return
 
         if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
-            FARM_STOP_FLAG = True
-            try:
-                FARM_RESUME_FILE.write_text(json.dumps({"active": False, "stopped": True, "elapsed_minutes": 0, "saved_at": 0}), encoding="utf-8")
-            except Exception:
-                pass
-            while not task_queue.empty():
-                try:
-                    task_queue.get_nowait()
-                    task_queue.task_done()
-                except Exception:
-                    break
-            if ACTIVE_JOB_TASK and not ACTIVE_JOB_TASK.done():
-                ACTIVE_JOB_TASK.cancel()
-            if ACTIVE_FARM_TASK and not ACTIVE_FARM_TASK.done():
-                ACTIVE_FARM_TASK.cancel()
-            CURRENT_FARM_STATUS = {"active": False, "accounts": []}
-            send_tg_message("🛑 <b>Все активные задачи и очередь полностью остановлены!</b>", add_keyboard=True)
+            await perform_hard_stop_and_reset(task_queue)
+            send_tg_message(
+                "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
+                "🟢 <b>Сервер перезапущен в чистый режим ожидания (v31.0)</b> — можете сразу нажимать любую кнопку ниже:",
+                add_keyboard=True,
+            )
             return
 
         if lower in ("/status", "📊 статус", "📊 статус фарма", "📊 проверить статус фарма"):
@@ -5317,9 +5359,9 @@ async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: fl
         f"[DAEMON READY] Прямой Telegram Long Polling запущен (offset={offset}, workflow={yml_ver}, "
         f"пароли загружены для {len(loaded_idxs)}/8 акков: {loaded_idxs or 'НЕТ (обновите .github/workflows/check_senkuro.yml!)'}) — сервер 100% готов!"
     )
-    if os.environ.get("GH_EVENT_NAME") == "push":
+    if os.environ.get("GH_EVENT_NAME") in ("push", "workflow_dispatch") and os.environ.get("IS_CONTINUATION_JOB") != "true":
         send_tg_message(
-            "🟢 <b>Сервер полностью запущен и готов к работе (v30.0)!</b>\n\n"
+            "🟢 <b>Сервер полностью запущен и готов к работе (v31.0)!</b>\n\n"
             "Браузер Google Chrome и виртуальный экран готовы — теперь любая кнопка сработает сразу 👇:",
             add_keyboard=True,
         )
@@ -5337,9 +5379,29 @@ async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: fl
         await asyncio.sleep(0.3)
 
 
+async def _drain_early_queue_into_tasks(task_queue: asyncio.Queue) -> None:
+    if EARLY_QUEUE_FILE.exists():
+        try:
+            lines = EARLY_QUEUE_FILE.read_text(encoding="utf-8").strip().splitlines()
+            EARLY_QUEUE_FILE.unlink(missing_ok=True)
+            for ln in lines:
+                if not ln.strip():
+                    continue
+                obj = json.loads(ln)
+                e_act = str(obj.get("action") or "").strip().lower()
+                e_prm = str(obj.get("promo_code") or "").strip()
+                if e_act == "farm":
+                    await execute_single_action("farm", "")
+                elif e_act:
+                    await task_queue.put((e_act, e_prm))
+        except Exception as e:
+            log_debug(f"[EARLY QUEUE DRAIN WARN] {e}")
+
+
 async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> None:
     global ACTIVE_JOB_TASK, FARM_STOP_FLAG
     while time.time() < deadline_ts:
+        await _drain_early_queue_into_tasks(task_queue)
         try:
             item = await asyncio.wait_for(task_queue.get(), timeout=2.0)
         except asyncio.TimeoutError:
@@ -5368,7 +5430,7 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v30.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v31.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",
@@ -5379,6 +5441,18 @@ async def async_main() -> None:
         default=os.environ.get("SENKURO_PROMO_CODE", "").strip(),
     )
     args = parser.parse_args()
+
+    # Гарантированно сигнализируем early_poller.py о старте основного движка и убиваем процесс раннего поллера,
+    # чтобы он НИКОГДА не перехватывал сообщения после запуска основного скрипта!
+    try:
+        Path("/tmp/senkuro_main_ready.flag").write_text("1", encoding="utf-8")
+    except Exception:
+        pass
+    if not sys.platform.startswith("win"):
+        try:
+            subprocess.run(["pkill", "-9", "-f", "early_poller.py"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
 
     configure_telegram_bot_profile()
 

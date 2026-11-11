@@ -1,4 +1,4 @@
-name: Senkuro Full Automation Combine v30.0
+name: Senkuro Full Automation Combine v31.0
 
 on:
   push:
@@ -23,7 +23,7 @@ permissions:
 
 concurrency:
   group: senkuro-direct-telegram-bot
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
 
 jobs:
   run-senkuro-bot:
@@ -120,8 +120,9 @@ jobs:
                   "<i>Дождитесь зелёного сообщения <b>«🟢 Сервер полностью запущен!»</b> (или нажмите кнопку сейчас — она встанет в очередь и запустится сразу после старта, только не нажимайте «🛑 СТОП» во время загрузки).</i>"
               )
 
-          # 4. Слушаем нажатия кнопок, пока подготавливается окружение (~25 сек)
-          while True:
+          # 4. Слушаем нажатия кнопок только во время старта (~15-25 сек) и гарантированно выходим при запуске основного скрипта!
+          start_ts = time.time()
+          while not os.path.exists("/tmp/senkuro_main_ready.flag") and (time.time() - start_ts < 75):
               res = tg_call("getUpdates", {"offset": offset, "timeout": 2}, timeout=6)
               for upd in res.get("result") or []:
                   uid = int(upd.get("update_id") or 0)
@@ -189,11 +190,11 @@ jobs:
                           "🚀 сделать всё (паки+кузня)": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                       }
                       if low in ("/start", "/menu", "/help", "меню"):
-                          send_msg("🤖 <b>Панель управления фермой Senkuro v30.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
+                          send_msg("🤖 <b>Панель управления фермой Senkuro v31.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
                       elif low in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
                           if os.path.exists(QUEUE_FILE):
                               os.remove(QUEUE_FILE)
-                          send_msg("🛑 <b>Все задачи и очередь остановлены!</b>")
+                          send_msg("🛑 <b>Все активные процессы и очередь сброшены!</b>\n🟢 Завершаю перезапуск сервера (~10 сек) и жду новых команд 👇:")
                       elif low in ("/status", "📊 статус", "📊 статус фарма", "📊 проверить статус фарма"):
                           send_msg("⚪ <b>Сейчас 8-часовой фарм манги не запущен.</b>\nНажмите <b>«▶️ Фарм (8 ч)»</b> в нижнем меню 🎛!")
                       elif low in ("🎟 промокод", "🎟 ввести промокод"):
@@ -207,8 +208,12 @@ jobs:
                               "• <code>1B 2C 4D 5C</code> (или <code>1 B, 3 B, 5 C, 6 D</code>) — разные ранги с разных аккаунтов за раз!\n"
                               "• <code>все B</code> — собрать ранг B со всех 8 аккаунтов"
                           )
-                      elif low in ("📸 экран", "📸 посмотреть экран", "/screen", "📜 лог", "📜 полный лог", "/log"):
-                          send_msg("⏳ Догружаю основной движок браузера (~15 сек) — сразу после старта кнопка сработает мгновенно!")
+                      elif low in ("📜 лог", "📜 полный лог", "/log", "лог", "логи"):
+                          append_queue("log", "")
+                          send_msg("📜 <b>Запрос лога принят!</b> Пришлю файл лога сразу после старта движка (~10 сек)...")
+                      elif low in ("📸 экран", "📸 посмотреть экран", "/screen", "экран", "скрин"):
+                          append_queue("screen", "")
+                          send_msg("📸 <b>Запрос снимка экрана принят!</b> Пришлю скриншот сразу после старта движка (~10 сек)...")
                       elif low in btn_map:
                           act_c, lbl = btn_map[low]
                           append_queue(act_c, "")
@@ -224,9 +229,10 @@ jobs:
                                   send_msg(f"🎟 Принят промокод <code>{pcode}</code>!\n⏳ Подготавливаю браузер (~20 сек) и проверяю начисление монет на 8 аккаунтах...")
               time.sleep(0.5)
           EOF
+          rm -f /tmp/senkuro_main_ready.flag
           nohup python3 /tmp/early_poller.py >/tmp/early_poller.log 2>&1 &
           echo $! > /tmp/early_poller.pid
-          sleep 3
+          sleep 2
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -247,26 +253,29 @@ jobs:
             senkuro-sessions-v18-
             senkuro-sessions-v17-
 
-      - name: Install Playwright, Chromium, Xvfb, xdotool & Openbox
+      - name: Fast Install Playwright & Display Tools (No APT Lock Hang)
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb xdotool openbox
-          pip install -q playwright pillow
+          if ! command -v xvfb-run >/dev/null 2>&1; then
+            timeout 35s sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
+            timeout 35s sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xvfb openbox || true
+          fi
+          pip install -q --timeout 20 --retries 2 playwright pillow
           if [ ! -x /usr/bin/google-chrome-stable ]; then
-            playwright install --with-deps chromium
+            playwright install chromium
           fi
 
       - name: Download Opera VPN Proxy (for 8 unique IPs)
         run: |
           mkdir -p bin .sessions
           if [ ! -f bin/opera-proxy ]; then
-            curl -L -sS https://github.com/Alexey71/opera-proxy/releases/latest/download/opera-proxy.linux-amd64 -o bin/opera-proxy
-            chmod +x bin/opera-proxy
+            curl -L -sS --connect-timeout 10 --max-time 35 --retry 2 https://github.com/Alexey71/opera-proxy/releases/latest/download/opera-proxy.linux-amd64 -o bin/opera-proxy || true
+            chmod +x bin/opera-proxy 2>/dev/null || true
           fi
 
-      - name: Run Senkuro Automation Combine v30.0 (Direct Telegram Engine)
+      - name: Run Senkuro Automation Combine v31.0 (Direct Telegram Engine)
         id: run_bot
         env:
-          WORKFLOW_YML_VERSION: "v30.0"
+          WORKFLOW_YML_VERSION: "v31.0"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
           SENKURO_PASSWORDS: ${{ secrets.SENKURO_PASSWORDS }}
@@ -290,11 +299,13 @@ jobs:
           if [ "${GH_EVENT_NAME}" = "push" ]; then
             rm -f .sessions/farm_resume.json
           fi
+          touch /tmp/senkuro_main_ready.flag
           if [ -f /tmp/early_poller.pid ]; then
-            kill $(cat /tmp/early_poller.pid) 2>/dev/null || true
-            sleep 1
+            kill -9 $(cat /tmp/early_poller.pid) 2>/dev/null || true
           fi
-          xvfb-run -a --server-args="-screen 0 1280x900x24" bash -c "openbox >/dev/null 2>&1 & sleep 1 && python check_senkuro.py --action '${SENKURO_ACTION}' --promo-code '${SENKURO_PROMO_CODE}'"
+          pkill -9 -f early_poller.py 2>/dev/null || true
+          sleep 1
+          xvfb-run -a --server-args="-screen 0 1280x900x24" bash -c "(command -v openbox >/dev/null 2>&1 && openbox >/dev/null 2>&1 &) || true; sleep 1 && python check_senkuro.py --action '${SENKURO_ACTION}' --promo-code '${SENKURO_PROMO_CODE}'"
 
       - name: Save Sessions & State Artifact for Part 2 Continuation
         if: always()
@@ -345,26 +356,29 @@ jobs:
           name: senkuro-farm-sessions-${{ github.run_id }}
           path: .sessions/
 
-      - name: Install Playwright, Chromium, Xvfb, xdotool & Openbox
+      - name: Fast Install Playwright & Display Tools (No APT Lock Hang)
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb xdotool openbox
-          pip install -q playwright pillow
+          if ! command -v xvfb-run >/dev/null 2>&1; then
+            timeout 35s sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
+            timeout 35s sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xvfb openbox || true
+          fi
+          pip install -q --timeout 20 --retries 2 playwright pillow
           if [ ! -x /usr/bin/google-chrome-stable ]; then
-            playwright install --with-deps chromium
+            playwright install chromium
           fi
 
       - name: Download Opera VPN Proxy (for 8 unique IPs)
         run: |
           mkdir -p bin .sessions
           if [ ! -f bin/opera-proxy ]; then
-            curl -L -sS https://github.com/Alexey71/opera-proxy/releases/latest/download/opera-proxy.linux-amd64 -o bin/opera-proxy
-            chmod +x bin/opera-proxy
+            curl -L -sS --connect-timeout 10 --max-time 35 --retry 2 https://github.com/Alexey71/opera-proxy/releases/latest/download/opera-proxy.linux-amd64 -o bin/opera-proxy || true
+            chmod +x bin/opera-proxy 2>/dev/null || true
           fi
 
-      - name: Run Senkuro Automation Combine v30.0 (Part 2 — Hours 4 to 8)
+      - name: Run Senkuro Automation Combine v31.0 (Part 2 — Hours 4 to 8)
         id: run_bot_p2
         env:
-          WORKFLOW_YML_VERSION: "v30.0"
+          WORKFLOW_YML_VERSION: "v31.0"
           IS_CONTINUATION_JOB: "true"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
@@ -383,7 +397,9 @@ jobs:
           SENKURO_PASS_7: ${{ secrets.SENKURO_PASS_7 }}
           SENKURO_PASS_8: ${{ secrets.SENKURO_PASS_8 }}
         run: |
-          xvfb-run -a --server-args="-screen 0 1280x900x24" bash -c "openbox >/dev/null 2>&1 & sleep 1 && python check_senkuro.py --action 'daemon'"
+          touch /tmp/senkuro_main_ready.flag
+          pkill -9 -f early_poller.py 2>/dev/null || true
+          xvfb-run -a --server-args="-screen 0 1280x900x24" bash -c "(command -v openbox >/dev/null 2>&1 && openbox >/dev/null 2>&1 &) || true; sleep 1 && python check_senkuro.py --action 'daemon'"
 
       - name: Save Sessions & State Artifact for Part 3 Continuation
         if: always()
@@ -426,25 +442,28 @@ jobs:
           name: senkuro-farm-sessions-p2-${{ github.run_id }}
           path: .sessions/
 
-      - name: Install Playwright, Chromium, Xvfb, xdotool & Openbox
+      - name: Fast Install Playwright & Display Tools (No APT Lock Hang)
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb xdotool openbox
-          pip install -q playwright pillow
+          if ! command -v xvfb-run >/dev/null 2>&1; then
+            timeout 35s sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
+            timeout 35s sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xvfb openbox || true
+          fi
+          pip install -q --timeout 20 --retries 2 playwright pillow
           if [ ! -x /usr/bin/google-chrome-stable ]; then
-            playwright install --with-deps chromium
+            playwright install chromium
           fi
 
       - name: Download Opera VPN Proxy (for 8 unique IPs)
         run: |
           mkdir -p bin .sessions
           if [ ! -f bin/opera-proxy ]; then
-            curl -L -sS https://github.com/Alexey71/opera-proxy/releases/latest/download/opera-proxy.linux-amd64 -o bin/opera-proxy
-            chmod +x bin/opera-proxy
+            curl -L -sS --connect-timeout 10 --max-time 35 --retry 2 https://github.com/Alexey71/opera-proxy/releases/latest/download/opera-proxy.linux-amd64 -o bin/opera-proxy || true
+            chmod +x bin/opera-proxy 2>/dev/null || true
           fi
 
-      - name: Run Senkuro Automation Combine v30.0 (Part 3 — Finish Remaining 8h Farm)
+      - name: Run Senkuro Automation Combine v31.0 (Part 3 — Finish Remaining 8h Farm)
         env:
-          WORKFLOW_YML_VERSION: "v30.0"
+          WORKFLOW_YML_VERSION: "v31.0"
           IS_CONTINUATION_JOB: "true"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
@@ -463,5 +482,7 @@ jobs:
           SENKURO_PASS_7: ${{ secrets.SENKURO_PASS_7 }}
           SENKURO_PASS_8: ${{ secrets.SENKURO_PASS_8 }}
         run: |
-          xvfb-run -a --server-args="-screen 0 1280x900x24" bash -c "openbox >/dev/null 2>&1 & sleep 1 && python check_senkuro.py --action 'daemon'"
+          touch /tmp/senkuro_main_ready.flag
+          pkill -9 -f early_poller.py 2>/dev/null || true
+          xvfb-run -a --server-args="-screen 0 1280x900x24" bash -c "(command -v openbox >/dev/null 2>&1 && openbox >/dev/null 2>&1 &) || true; sleep 1 && python check_senkuro.py --action 'daemon'"
 
