@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v31.0 (8 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
+SENKURO FULL AUTOMATION COMBINE v32.0 (8 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -1452,6 +1452,47 @@ def _strip_bad_gql_field(query_str: str, bad_field: str) -> str:
     return re.sub(r"\b" + re.escape(bad_field) + r"\b", "", query_str)
 
 
+def _direct_python_gql_fallback(payload: dict, token: str = "") -> dict:
+    """
+    Прямой серверный GraphQL-запрос из Python (через активный туннель Opera VPN или напрямую),
+    полностью обходящий любые браузерные ограничения CORS / ServiceWorker / редиректы!
+    """
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "App-Version": APP_VERSION,
+        "Origin": "https://senkuro.com",
+        "Referer": "https://senkuro.com/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+    }
+    if token:
+        headers["Authorization"] = token if token.startswith("Bearer ") else f"Bearer {token}"
+
+    body_bytes = json.dumps(payload).encode("utf-8")
+
+    # Сначала пробуем через любой открытый локальный порт Opera VPN (25341..25348), затем напрямую
+    candidate_ports = [25340 + i for i in range(1, 9) if is_local_port_open(25340 + i)]
+    openers = []
+    for p_num in candidate_ports[:2]:
+        ph = urllib.request.ProxyHandler({"http": f"http://127.0.0.1:{p_num}", "https": f"http://127.0.0.1:{p_num}"})
+        openers.append((f"proxy:{p_num}", urllib.request.build_opener(ph)))
+    openers.append(("direct", urllib.request.build_opener()))
+
+    last_err = "Failed to fetch"
+    for label_op, opener in openers:
+        try:
+            req = urllib.request.Request(GRAPHQL_API_URL, data=body_bytes, headers=headers, method="POST")
+            with opener.open(req, timeout=15) as resp:
+                raw_txt = resp.read().decode("utf-8", errors="ignore")
+                data_obj = json.loads(raw_txt)
+                if isinstance(data_obj, dict) and ("data" in data_obj or "errors" in data_obj):
+                    return data_obj
+        except Exception as e:
+            last_err = f"{label_op}: {e}"
+            continue
+    return {"errors": [{"message": f"PythonFallbackError: {last_err}"}]}
+
+
 async def gql_call(page: Page, query: str, variables: Optional[dict] = None, operation_name: Optional[str] = None) -> dict:
     cur_query = query
     for attempt in range(6):
@@ -1459,57 +1500,102 @@ async def gql_call(page: Page, query: str, variables: Optional[dict] = None, ope
         if operation_name:
             payload["operationName"] = operation_name
 
-        result = await page.evaluate(
-            """async ({ apiUrl, appVersion, bodyPayload }) => {
-                function getCookie(name) {
-                    const m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/([.$?*|{}()\[\]\\/+^])/g, '\\$1') + '=([^;]*)'));
-                    return m ? decodeURIComponent(m[1]) : '';
-                }
-                let token = getCookie('access_token') || getCookie('token') || '';
-                if (!token) {
-                    try {
-                        for (let i = 0; i < localStorage.length; i++) {
-                            const k = localStorage.key(i) || '';
-                            const v = localStorage.getItem(k) || '';
-                            if (k.toLowerCase().includes('token') && v.length > 20 && !v.startsWith('{')) {
-                                token = v.replace(/^"|"$/g, '');
-                                break;
+        # Уровень 1: Браузерный fetch без заголовка Cache-Control (чтобы не ломать CORS preflight OPTIONS на api.senkuro.com)
+        eval_out = {"res": {}, "token": ""}
+        try:
+            eval_out = await page.evaluate(
+                """async ({ apiUrl, appVersion, bodyPayload }) => {
+                    function getCookie(name) {
+                        const m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/([.$?*|{}()\[\]\\/+^])/g, '\\$1') + '=([^;]*)'));
+                        return m ? decodeURIComponent(m[1]) : '';
+                    }
+                    let token = getCookie('access_token') || getCookie('token') || '';
+                    if (!token) {
+                        try {
+                            for (let i = 0; i < localStorage.length; i++) {
+                                const k = localStorage.key(i) || '';
+                                const v = localStorage.getItem(k) || '';
+                                if (k.toLowerCase().includes('token') && v.length > 20 && !v.startsWith('{')) {
+                                    token = v.replace(/^"|"$/g, '');
+                                    break;
+                                }
                             }
-                        }
-                    } catch (e) {}
-                }
-                const headers = {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                    'App-Version': appVersion,
-                    'Cache-Control': 'no-cache'
-                };
-                if (token) {
-                    headers['Authorization'] = token.startsWith('Bearer ') ? token : ('Bearer ' + token);
-                }
-                try {
-                    const resp = await fetch(apiUrl + '?_t=' + Date.now(), {
-                        method: 'POST',
-                        headers: headers,
-                        credentials: 'include',
-                        cache: 'no-store',
-                        body: JSON.stringify(bodyPayload)
-                    });
-                    const json = await resp.json();
-                    return json;
-                } catch (err) {
-                    return { errors: [{ message: String(err) }] };
-                }
-            }""",
-            {"apiUrl": GRAPHQL_API_URL, "appVersion": APP_VERSION, "bodyPayload": payload},
-        )
-        res = result or {}
+                        } catch (e) {}
+                    }
+                    const headers = {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        'App-Version': appVersion
+                    };
+                    if (token) {
+                        headers['Authorization'] = token.startsWith('Bearer ') ? token : ('Bearer ' + token);
+                    }
+                    try {
+                        const resp = await fetch(apiUrl, {
+                            method: 'POST',
+                            headers: headers,
+                            credentials: 'include',
+                            cache: 'no-store',
+                            body: JSON.stringify(bodyPayload)
+                        });
+                        const json = await resp.json();
+                        return { res: json, token: token };
+                    } catch (err) {
+                        return { res: { errors: [{ message: String(err) }] }, token: token };
+                    }
+                }""",
+                {"apiUrl": GRAPHQL_API_URL, "appVersion": APP_VERSION, "bodyPayload": payload},
+            )
+        except Exception as e_eval:
+            eval_out = {"res": {"errors": [{"message": str(e_eval)}]}, "token": ""}
+
+        res = (eval_out or {}).get("res") or {}
+        extracted_token = str((eval_out or {}).get("token") or "")
         errs = res.get("errors") or []
+        err_msgs = " | ".join(str(e.get("message") or "") for e in errs if isinstance(e, dict))
+
+        # Уровень 2: Если браузерный fetch выдал Failed to fetch / NetworkError (например из-за CORS или редиректа),
+        # мгновенно отправляем запрос через нативный сетевой стек Playwright (page.context.request.post), который НЕ подвержен CORS!
+        if errs and any(w in err_msgs for w in ("Failed to fetch", "NetworkError", "Load failed", "Target closed", "Execution context")):
+            try:
+                pw_headers = {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "App-Version": APP_VERSION,
+                    "Origin": "https://senkuro.com",
+                    "Referer": "https://senkuro.com/",
+                }
+                if extracted_token:
+                    pw_headers["Authorization"] = extracted_token if extracted_token.startswith("Bearer ") else f"Bearer {extracted_token}"
+                pw_resp = await page.context.request.post(
+                    GRAPHQL_API_URL,
+                    headers=pw_headers,
+                    data=json.dumps(payload),
+                    timeout=15000,
+                )
+                if pw_resp.ok:
+                    pw_json = await pw_resp.json()
+                    if isinstance(pw_json, dict) and not pw_json.get("errors"):
+                        log_debug(f"[GQL OK via ContextAPI] op={operation_name} -> keys={list((pw_json.get('data') or {}).keys())}")
+                        return pw_json
+                    elif isinstance(pw_json, dict):
+                        res = pw_json
+                        errs = res.get("errors") or []
+                        err_msgs = " | ".join(str(e.get("message") or "") for e in errs if isinstance(e, dict))
+            except Exception as pw_e:
+                log_debug(f"[GQL ContextAPI WARN] op={operation_name}: {pw_e}")
+
+        # Уровень 3: Если и ContextAPI не достучался — прямой запрос из Python через активный туннель Opera VPN!
+        if errs and any(w in err_msgs for w in ("Failed to fetch", "NetworkError", "Load failed", "Target closed", "Execution context")):
+            py_res = await asyncio.to_thread(_direct_python_gql_fallback, payload, extracted_token)
+            if isinstance(py_res, dict) and not py_res.get("errors"):
+                log_debug(f"[GQL OK via PythonProxy] op={operation_name} -> keys={list((py_res.get('data') or {}).keys())}")
+                return py_res
+
         if not errs:
             log_debug(f"[GQL OK] op={operation_name} -> keys={list((res.get('data') or {}).keys())}")
             return res
 
-        err_msgs = " | ".join(str(e.get("message") or "") for e in errs if isinstance(e, dict))
         log_debug(f"[GQL WARN #{attempt+1}] op={operation_name} errors={err_msgs[:300]}")
         m_bad = re.search(r'(?:Cannot query field|Unknown field) "([A-Za-z0-9_]+)"', err_msgs)
         if m_bad:
@@ -4435,20 +4521,21 @@ async def fetch_all_pages_via_graphql(page: Page, captured_req: dict, modifier_v
     return parse_graphql_edges(raw_edges or [])
 
 
-async def scrape_account_cards_public(browser, account: dict) -> dict:
+async def scrape_account_cards_public(browser, account: dict, proxy_mgr: Optional[AccountProxyManager] = None) -> dict:
     """
-    Для КАЖДОГО из 9 аккаунтов создаёт свежий изолированный BrowserContext с service_workers='block',
-    чтобы Service Worker от 1-го аккаунта НИКОГДА не блокировал перехват запросов на 2..5 аккаунтах!
+    Проверяет карты и осколки аккаунта через туннель Opera VPN + сохранённую сессию + гарантированный KNOWN_USER_IDS,
+    чтобы проверка НИКОГДА не блокировалась по IP датацентра и не теряла UID!
     """
-    context = await browser.new_context(
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-        viewport={"width": 1280, "height": 900},
-        locale="ru-RU",
-        service_workers="block",
-    )
+    acc_slug = account["id"]
+    farm_acc = next((a for a in FARM_ACCOUNTS if a["id"] == acc_slug), FARM_ACCOUNTS[0])
+    proxy_url = None
+    if proxy_mgr is not None:
+        proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, farm_acc)
+
+    context = await create_account_context(browser, farm_acc, proxy_url)
     page = await context.new_page()
-    ACTIVE_BROWSER_PAGES[f"check_{account['id']}"] = page
-    log_debug(f"[CHECK 5] Проверка {account['label']} -> {account['url']}")
+    ACTIVE_BROWSER_PAGES[f"check_{acc_slug}"] = page
+    log_debug(f"[CHECK 9] Проверка {account['label']} -> {account['url']} (proxy={proxy_url or 'direct'})")
     captured_req: dict[str, Any] = {}
     intercepted_user_id: list[str] = []
 
@@ -4473,54 +4560,68 @@ async def scrape_account_cards_public(browser, account: dict) -> dict:
     page.on("request", on_request)
 
     try:
-        await page.goto(account["url"], wait_until="domcontentloaded", timeout=40000)
-        await page.wait_for_timeout(1500)
+        try:
+            await page.goto(account["url"], wait_until="domcontentloaded", timeout=35000)
+            await page.wait_for_timeout(1200)
+        except Exception as nav_e:
+            log_debug(f"[CHECK 9 GOTO WARN] {acc_slug}: {nav_e}")
 
-        # Способ 1 (Самый быстрый — 1 сек): прямой GraphQL запрос всех страниц карт и осколков по userId
-        u_res = await gql_call(page, GQL_FETCH_USER_BY_SLUG, {"slug": account["id"]}, "fetchUserBySlug")
-        uid = ((u_res.get("data") or {}).get("user") or {}).get("id") or (intercepted_user_id[0] if intercepted_user_id else None)
-        log_debug(f"[CHECK 5 UID] {account['id']}: uid={uid}")
+        # Способ 1 (Гарантированный UID из KNOWN_USER_IDS + прямой GraphQL с 3-уровневой защитой от Failed to fetch)
+        uid = KNOWN_USER_IDS.get(acc_slug)
+        if not uid:
+            u_res = await gql_call(page, GQL_FETCH_USER_BY_SLUG, {"slug": acc_slug}, "fetchUserBySlug")
+            uid = ((u_res.get("data") or {}).get("user") or {}).get("id") or (intercepted_user_id[0] if intercepted_user_id else None)
+        log_debug(f"[CHECK 9 UID] {acc_slug}: uid={uid}")
 
         if uid:
-            c_nodes = await fetch_all_user_cards_gql(page, uid, modifier_val=0)
-            s_nodes = await fetch_all_user_cards_gql(page, uid, modifier_val=1)
-            cards = parse_graphql_edges(c_nodes)
-            shards = parse_graphql_edges(s_nodes)
-            log_debug(f"[CHECK 5 DIRECT GQL] {account['id']}: карт={len(cards)}, осколков={len(shards)}")
-            if cards or shards:
+            # Проверяем первую страницу карт через gql_call, чтобы убедиться, что GraphQL-ответ реально получен без ошибок
+            probe_res = await gql_call(page, GQL_FETCH_USER_CARDS_FULL, {"userId": uid, "modifier": {"include": [0]}}, "fetchUserCards")
+            gql_ok = isinstance((probe_res.get("data") or {}).get("userCards"), dict) and not probe_res.get("errors")
+            if gql_ok:
+                c_nodes = await fetch_all_user_cards_gql(page, uid, modifier_val=0)
+                s_nodes = await fetch_all_user_cards_gql(page, uid, modifier_val=1)
+                cards = parse_graphql_edges(c_nodes)
+                shards = parse_graphql_edges(s_nodes)
+                log_debug(f"[CHECK 9 DIRECT GQL] {acc_slug}: карт={len(cards)}, осколков={len(shards)}")
                 return {"cards": cards, "shards": shards, "error": None}
 
         # Способ 2: перехваченный запрос fetchUserCards от самой страницы
-        for _ in range(10):
+        for _ in range(8):
             if captured_req:
                 break
-            await page.wait_for_timeout(500)
+            await page.wait_for_timeout(400)
 
         if captured_req:
-            cards = await fetch_all_pages_via_graphql(page, captured_req, modifier_val=0)
-            shards = await fetch_all_pages_via_graphql(page, captured_req, modifier_val=1)
-            log_debug(f"[CHECK 5 GQL CAPTURED] {account['id']}: карт={len(cards)}, осколков={len(shards)}")
+            cards = await fetch_all_pages_via_graphql(page, captured_req, modifier_val=0, override_user_id=uid)
+            shards = await fetch_all_pages_via_graphql(page, captured_req, modifier_val=1, override_user_id=uid)
+            log_debug(f"[CHECK 9 GQL CAPTURED] {acc_slug}: карт={len(cards)}, осколков={len(shards)}")
             if cards or shards:
                 return {"cards": cards, "shards": shards, "error": None}
 
-        # Резерв 2 (из оригинального рабочего check_orig.py): прямое считывание карточек и вкладки «Осколки» из DOM!
-        await page.wait_for_timeout(2500)
+        # Способ 3: считывание из DOM
+        await page.wait_for_timeout(2000)
         cards = await extract_items_from_dom(page)
         shards = []
         shard_tab = page.locator("text=/Осколки/i").first
         if await shard_tab.count() > 0:
             await shard_tab.click()
-            await page.wait_for_timeout(2000)
+            await page.wait_for_timeout(1800)
             shards = await extract_items_from_dom(page)
-        log_debug(f"[CHECK 5 DOM FALLBACK] {account['id']}: карт={len(cards)}, осколков={len(shards)}")
+        log_debug(f"[CHECK 9 DOM FALLBACK] {acc_slug}: карт={len(cards)}, осколков={len(shards)}")
         return {"cards": cards, "shards": shards, "error": None}
     except Exception as e:
-        log_debug(f"[CHECK 5 ERROR] {account['id']}: {e}")
+        log_debug(f"[CHECK 9 ERROR] {acc_slug}: {e}")
         return {"cards": [], "shards": [], "error": str(e)}
     finally:
-        ACTIVE_BROWSER_PAGES.pop(f"check_{account['id']}", None)
-        await page.close()
-        await context.close()
+        ACTIVE_BROWSER_PAGES.pop(f"check_{acc_slug}", None)
+        try:
+            await page.close()
+        except Exception:
+            pass
+        try:
+            await context.close()
+        except Exception:
+            pass
 
 
 def format_rank_breakdown(items: list[dict]) -> str:
@@ -4717,26 +4818,32 @@ def send_account_report(text: str, photo_urls: list[str], add_reply_button: bool
 
 
 async def run_check_all_5_accounts() -> None:
-    log_debug("[TASK START] Запуск проверки всех 9 аккаунтов (поочерёдно с изолированными контекстами)...")
-    async with async_playwright() as p:
-        browser = await launch_senkuro_browser(p)
-        for idx, acc in enumerate(ALL_CHECK_ACCOUNTS):
-            acc_data = await scrape_account_cards_public(browser, acc)
-            is_last = idx == len(ALL_CHECK_ACCOUNTS) - 1
-            if acc_data["error"]:
-                err_msg = f"⚠️ <b><a href=\"{acc['url']}\">{acc['label']}</a></b>: ошибка загрузки ({acc_data['error']})"
-                send_account_report(err_msg, [], add_reply_button=is_last)
-                continue
-            text, card_photos = build_account_message(acc, acc_data)
-            send_account_report(text, card_photos, add_reply_button=is_last)
-            await asyncio.sleep(2.0)
-        await browser.close()
+    log_debug("[TASK START] Запуск проверки всех 9 аккаунтов (через Opera VPN + сохранённые сессии + KNOWN_USER_IDS)...")
+    proxy_mgr = AccountProxyManager()
+    try:
+        async with async_playwright() as p:
+            browser = await launch_senkuro_browser(p)
+            for idx, acc in enumerate(ALL_CHECK_ACCOUNTS):
+                if FARM_STOP_FLAG:
+                    break
+                acc_data = await scrape_account_cards_public(browser, acc, proxy_mgr)
+                is_last = idx == len(ALL_CHECK_ACCOUNTS) - 1
+                if acc_data["error"]:
+                    err_msg = f"⚠️ <b><a href=\"{acc['url']}\">{acc['label']}</a></b>: ошибка загрузки ({acc_data['error']})"
+                    send_account_report(err_msg, [], add_reply_button=is_last)
+                    continue
+                text, card_photos = build_account_message(acc, acc_data)
+                send_account_report(text, card_photos, add_reply_button=is_last)
+                await asyncio.sleep(1.5)
+            await browser.close()
+    finally:
+        proxy_mgr.stop_all()
     if DEBUG_MODE:
         upload_debug_log_to_github_noop("check_9_accounts")
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v31.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v32.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -5027,7 +5134,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     FARM_STOP_FLAG = False
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v31.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v32.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -5067,7 +5174,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     elif action == "check":
         await run_check_all_5_accounts()
     elif action == "log":
-        send_full_debug_log_to_user("Полный лог работы комбайна v31.0")
+        send_full_debug_log_to_user("Полный лог работы комбайна v32.0")
     elif action == "screen":
         await send_live_screen_snapshot()
 
@@ -5156,7 +5263,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             await perform_hard_stop_and_reset(task_queue)
             send_tg_message(
                 "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
-                "🟢 <b>Сервер перезапущен в чистый режим ожидания (v31.0)</b> — можете сразу нажимать любую кнопку ниже:",
+                "🟢 <b>Сервер перезапущен в чистый режим ожидания (v32.0)</b> — можете сразу нажимать любую кнопку ниже:",
                 add_keyboard=True,
             )
             return
@@ -5168,7 +5275,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            send_full_debug_log_to_user("Полный лог работы комбайна v31.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v32.0")
             return
 
         if data == "check_farm_status":
@@ -5217,7 +5324,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if lower in ("/start", "/menu", "/help", "меню"):
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v31.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v32.0</b>\n\n"
                 "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
                 "или просто напишите промокод одним словом в чат:",
                 add_keyboard=True,
@@ -5230,14 +5337,14 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
-            send_full_debug_log_to_user("Полный лог работы комбайна v31.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v32.0")
             return
 
         if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
             await perform_hard_stop_and_reset(task_queue)
             send_tg_message(
                 "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
-                "🟢 <b>Сервер перезапущен в чистый режим ожидания (v31.0)</b> — можете сразу нажимать любую кнопку ниже:",
+                "🟢 <b>Сервер перезапущен в чистый режим ожидания (v32.0)</b> — можете сразу нажимать любую кнопку ниже:",
                 add_keyboard=True,
             )
             return
@@ -5361,7 +5468,7 @@ async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: fl
     )
     if os.environ.get("GH_EVENT_NAME") in ("push", "workflow_dispatch") and os.environ.get("IS_CONTINUATION_JOB") != "true":
         send_tg_message(
-            "🟢 <b>Сервер полностью запущен и готов к работе (v31.0)!</b>\n\n"
+            "🟢 <b>Сервер полностью запущен и готов к работе (v32.0)!</b>\n\n"
             "Браузер Google Chrome и виртуальный экран готовы — теперь любая кнопка сработает сразу 👇:",
             add_keyboard=True,
         )
@@ -5430,7 +5537,7 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v31.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v32.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",
