@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v35.0 (12 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
+SENKURO FULL AUTOMATION COMBINE v36.0 (12 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -585,18 +585,63 @@ def send_tg_multipart(method: str, file_field: str, filename: str, file_bytes: b
     try:
         with urllib.request.urlopen(req, timeout=35) as resp:
             return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        err_body = ""
+        try:
+            err_body = e.read().decode("utf-8", errors="ignore")
+        except Exception:
+            pass
+        log_debug(f"[TG MULTIPART ERROR] {method}: HTTP {e.code} -> {err_body[:240]}")
+        return {"ok": False, "error_code": e.code, "error": err_body}
     except Exception as e:
         log_debug(f"[TG MULTIPART ERROR] {method}: {e}")
         return {"ok": False, "error": str(e)}
 
 
-def send_tg_photo_bytes(png_bytes: bytes, caption: str = "", add_keyboard: bool = False) -> dict:
-    fields = {"chat_id": str(TELEGRAM_CHAT_ID), "parse_mode": "HTML"}
-    if caption:
-        fields["caption"] = caption[:1000]
+def _safe_trim_html_caption(caption: str, max_len: int = 960) -> str:
+    """Обрезает подпись к фото строго по целым строкам, чтобы НИКОГДА не разорвать HTML-теги <b> или <code>!"""
+    if not caption or len(caption) <= max_len:
+        return caption
+    out_lines: list[str] = []
+    cur_len = 0
+    for ln in caption.splitlines():
+        add_len = len(ln) + (1 if out_lines else 0)
+        if cur_len + add_len > max_len:
+            break
+        out_lines.append(ln)
+        cur_len += add_len
+    return "\n".join(out_lines)
+
+
+def send_tg_photo_bytes(img_bytes: bytes, caption: str = "", add_keyboard: bool = False) -> dict:
+    is_jpeg = len(img_bytes) > 3 and img_bytes[:3] == b"\xff\xd8\xff"
+    fname = "screen.jpg" if is_jpeg else "screen.png"
+    mtype = "image/jpeg" if is_jpeg else "image/png"
+
+    safe_cap = _safe_trim_html_caption(caption, 960) if caption else ""
+    fields: dict[str, str] = {"chat_id": str(TELEGRAM_CHAT_ID), "parse_mode": "HTML"}
+    if safe_cap:
+        fields["caption"] = safe_cap
     if add_keyboard:
         fields["reply_markup"] = json.dumps(get_collapsible_reply_keyboard(), ensure_ascii=False)
-    return send_tg_multipart("sendPhoto", "photo", "screen.png", png_bytes, "image/png", fields)
+
+    res = send_tg_multipart("sendPhoto", "photo", fname, img_bytes, mtype, fields)
+    if res.get("ok"):
+        return res
+
+    # Резерв 1: если Telegram вернул 400 из-за HTML-разметки в подписи — очищаем теги и отправляем без parse_mode!
+    plain_fields: dict[str, str] = {"chat_id": str(TELEGRAM_CHAT_ID)}
+    if safe_cap:
+        plain_cap = re.sub(r"<[^>]+>", "", safe_cap)
+        plain_fields["caption"] = plain_cap[:960]
+    if add_keyboard:
+        plain_fields["reply_markup"] = json.dumps(get_collapsible_reply_keyboard(), ensure_ascii=False)
+    res2 = send_tg_multipart("sendPhoto", "photo", fname, img_bytes, mtype, plain_fields)
+    if res2.get("ok"):
+        return res2
+
+    # Резерв 2: отправка файлом без сжатия (sendDocument), если картинка нестандартного размера
+    return send_tg_multipart("sendDocument", "document", fname, img_bytes, mtype, plain_fields)
 
 
 def upload_debug_log_to_github_noop(reason: str = "task") -> Optional[str]:
@@ -746,24 +791,33 @@ def _stitch_screens_2x2_png(screens: list[tuple[str, bytes]]) -> Optional[bytes]
                 pass
 
         out_buf = io.BytesIO()
-        canvas.save(out_buf, format="PNG", optimize=True)
+        canvas.save(out_buf, format="JPEG", quality=88, optimize=True)
         return out_buf.getvalue()
     except Exception as e:
         log_debug(f"[GRID STITCH FALLBACK] {e}")
         return screens[0][1]
 
 
+def _short_clean_url_for_caption(raw_url: str) -> str:
+    u = (raw_url or "").strip()
+    u = re.sub(r"^https?://(?:www\.)?senkuro\.com", "", u)
+    if not u:
+        u = "/"
+    u = u.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return u[:46]
+
+
 async def send_live_screen_snapshot(custom_caption: str = "") -> None:
     """
-    Собирает скриншоты всех открытых вкладок/окон (нативные окна Chrome 26411..26414 + вкладки Playwright),
-    объединяет их в ОДНУ общую плитку 2x2 и отправляет ОДНИМ сообщением в Telegram!
+    Собирает скриншоты всех открытых вкладок/окон (нативные окна Chrome 26411..26422 + вкладки Playwright),
+    объединяет их в ОДНУ общую плитку 3x4 и отправляет ОДНИМ сообщением в Telegram!
     """
     import base64
     collected_screens: list[tuple[str, bytes]] = []
-    caption_lines: list[str] = ["📸 <b>Снимок экранов фермы:</b>"]
+    caption_lines: list[str] = ["📸 <b>Снимок экранов фермы (12 аккаунтов):</b>"]
     seen_labels: set[str] = set()
 
-    # 1. Проверяем открытые нативные окна Chrome (порты 26411..26414)
+    # 1. Проверяем открытые нативные окна Chrome (порты 26411..26422)
     for acc_item in FARM_ACCOUNTS:
         c_port = 26410 + int(acc_item["idx"])
         if is_local_port_open(c_port):
@@ -784,11 +838,12 @@ async def send_live_screen_snapshot(custom_caption: str = "") -> None:
                     aid = acc_item["id"]
                     seen_labels.add(aid)
                     collected_screens.append((aid, nat_png))
-                    caption_lines.append(f"• <b>#{acc_item['idx']} {aid}</b>: <code>{nat_url[:75]}</code>")
+                    caption_lines.append(f"• <b>#{acc_item['idx']} {aid}</b>: <code>{_short_clean_url_for_caption(nat_url)}</code>")
             except Exception as e:
                 log_debug(f"[NAT SNAPSHOT WARN] {acc_item['id']}: {e}")
 
     # 2. Проверяем открытые вкладки Playwright
+    acc_idx_map = {a["id"]: a["idx"] for a in FARM_ACCOUNTS}
     for label, pg in list(ACTIVE_BROWSER_PAGES.items()):
         if label in seen_labels:
             continue
@@ -802,7 +857,8 @@ async def send_live_screen_snapshot(custom_caption: str = "") -> None:
                 continue
             seen_labels.add(label)
             collected_screens.append((label, png_data))
-            caption_lines.append(f"• <b>{label}</b>: <code>{pg.url[:75]}</code>")
+            idx_prefix = f"#{acc_idx_map[label]} " if label in acc_idx_map else ""
+            caption_lines.append(f"• <b>{idx_prefix}{label}</b>: <code>{_short_clean_url_for_caption(pg.url)}</code>")
         except Exception as e:
             log_debug(f"[SCREENSHOT WARNING] {label}: {e}")
 
@@ -2559,7 +2615,7 @@ async def run_promo_code_activation(promo_code: str) -> None:
         return
 
     send_tg_message(
-        f"⏳ Запускаю 8 изолированных IP-туннеля, вхожу на 8 аккаунтов и активирую промокод <code>{code_clean}</code>...",
+        f"⏳ Запускаю 12 изолированных IP-туннелей, вхожу на 12 аккаунтов и активирую промокод <code>{code_clean}</code>...",
         add_keyboard=False,
     )
 
@@ -2866,7 +2922,7 @@ async def run_all_packs_opening() -> None:
     global FARM_STOP_FLAG
     FARM_STOP_FLAG = False
     send_tg_message(
-        "🎰 Открываю 8 изолированных профиля Chrome под своими IP и кручу паки «Хардкор» (480 🪙) с человеческими паузами...",
+        "🎰 Открываю 12 изолированных профилей Chrome под своими IP и кручу паки «Хардкор» (480 🪙) с человеческими паузами...",
         add_keyboard=False,
     )
     proxy_mgr = AccountProxyManager()
@@ -2875,7 +2931,6 @@ async def run_all_packs_opening() -> None:
     try:
         async with async_playwright() as p:
             browser = await launch_senkuro_browser(p)
-            open_contexts: list[tuple[dict, BrowserContext, Page, Optional[dict], str]] = []
             try:
                 for acc in FARM_ACCOUNTS:
                     if FARM_STOP_FLAG:
@@ -2884,27 +2939,24 @@ async def run_all_packs_opening() -> None:
                     ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
                     log_debug(f"[PACKS STEP] #{acc['idx']}/12 {acc['id']} -> IP: {ip_used}")
                     context = await create_account_context(browser, acc, proxy_url)
-                    page, user_obj = await ensure_logged_in(context, acc)
-                    open_contexts.append((acc, context, page, user_obj, ip_used))
-
-                for acc, context, page, user_obj, ip_used in open_contexts:
-                    if FARM_STOP_FLAG:
-                        break
-                    if not user_obj:
-                        report_lines.append(f"❌ <b>{acc['id']}</b> (IP: <code>{ip_used}</code>): ошибка входа\n")
-                        continue
-                    send_tg_message(f"🎴 <b>[{acc['idx']}/12] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): кручу паки «Хардкор»...", add_keyboard=False)
-                    acc_logs = await roll_hardcore_packs_for_account(page, acc, user_obj)
-                    report_lines.append(f"👤 <b>{acc['id']}</b> (IP: <code>{ip_used}</code>): " + "\n".join(acc_logs) + "\n")
-                    await context.storage_state(path=str(get_session_file(acc["id"])))
-                    await asyncio.sleep(random.uniform(3.0, 4.8))
+                    try:
+                        page, user_obj = await ensure_logged_in(context, acc)
+                        if not user_obj:
+                            report_lines.append(f"❌ <b>{acc['id']}</b> (IP: <code>{ip_used}</code>): ошибка входа\n")
+                            continue
+                        send_tg_message(f"🎴 <b>[{acc['idx']}/12] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): кручу паки «Хардкор»...", add_keyboard=False)
+                        acc_logs = await roll_hardcore_packs_for_account(page, acc, user_obj)
+                        report_lines.append(f"👤 <b>{acc['id']}</b> (IP: <code>{ip_used}</code>): " + "\n".join(acc_logs) + "\n")
+                        await context.storage_state(path=str(get_session_file(acc["id"])))
+                    finally:
+                        ACTIVE_BROWSER_PAGES.pop(acc["id"], None)
+                        try:
+                            await context.close()
+                        except Exception:
+                            pass
+                    await asyncio.sleep(random.uniform(2.5, 4.0))
             finally:
                 ACTIVE_BROWSER_PAGES.clear()
-                for _, context, _, _, _ in open_contexts:
-                    try:
-                        await context.close()
-                    except Exception:
-                        pass
             await browser.close()
     finally:
         proxy_mgr.stop_all()
@@ -3182,7 +3234,7 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                     }
 
                 if not state_map:
-                    send_tg_message("❌ Не удалось авторизоваться ни в одном из 4 фарм-аккаунтов.")
+                    send_tg_message("❌ Не удалось авторизоваться ни в одном из 12 фарм-аккаунтов.")
                     return
 
                 await refresh_farm_state(state_map)
@@ -3190,7 +3242,7 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                 # Если на всех 12 аккаунтах слоты кузни = 0/5, сразу сообщаем точное время до сброса!
                 initial_free_slots = sum(st["available_slots"] for st in state_map.values())
                 if initial_free_slots <= 0:
-                    reset_lines = ["⏳ <b>На всех 8 фарм-аккаунтах сейчас 0 из 5 доступных попыток переплавки в Кузне:</b>\n"]
+                    reset_lines = ["⏳ <b>На всех 12 фарм-аккаунтах сейчас 0 из 5 доступных попыток переплавки в Кузне:</b>\n"]
                     for aid, st in state_map.items():
                         rst_str = format_reset_at_human(st.get("reset_at"))
                         inv_str = format_text_only_inventory_summary(st["cards_nodes"], st["shards_nodes"])
@@ -4592,7 +4644,7 @@ async def scrape_account_cards_public(browser, account: dict, proxy_mgr: Optiona
     context = await create_account_context(browser, farm_acc, proxy_url)
     page = await context.new_page()
     ACTIVE_BROWSER_PAGES[f"check_{acc_slug}"] = page
-    log_debug(f"[CHECK 9] Проверка {account['label']} -> {account['url']} (proxy={proxy_url or 'direct'})")
+    log_debug(f"[CHECK 13] Проверка {account['label']} -> {account['url']} (proxy={proxy_url or 'direct'})")
     captured_req: dict[str, Any] = {}
     intercepted_user_id: list[str] = []
 
@@ -4621,14 +4673,14 @@ async def scrape_account_cards_public(browser, account: dict, proxy_mgr: Optiona
             await page.goto(account["url"], wait_until="domcontentloaded", timeout=35000)
             await page.wait_for_timeout(1200)
         except Exception as nav_e:
-            log_debug(f"[CHECK 9 GOTO WARN] {acc_slug}: {nav_e}")
+            log_debug(f"[CHECK 13 GOTO WARN] {acc_slug}: {nav_e}")
 
         # Способ 1 (Гарантированный UID из KNOWN_USER_IDS + прямой GraphQL с 3-уровневой защитой от Failed to fetch)
         uid = KNOWN_USER_IDS.get(acc_slug)
         if not uid:
             u_res = await gql_call(page, GQL_FETCH_USER_BY_SLUG, {"slug": acc_slug}, "fetchUserBySlug")
             uid = ((u_res.get("data") or {}).get("user") or {}).get("id") or (intercepted_user_id[0] if intercepted_user_id else None)
-        log_debug(f"[CHECK 9 UID] {acc_slug}: uid={uid}")
+        log_debug(f"[CHECK 13 UID] {acc_slug}: uid={uid}")
 
         if uid:
             # Проверяем первую страницу карт через gql_call, чтобы убедиться, что GraphQL-ответ реально получен без ошибок
@@ -4639,7 +4691,7 @@ async def scrape_account_cards_public(browser, account: dict, proxy_mgr: Optiona
                 s_nodes = await fetch_all_user_cards_gql(page, uid, modifier_val=1)
                 cards = parse_graphql_edges(c_nodes)
                 shards = parse_graphql_edges(s_nodes)
-                log_debug(f"[CHECK 9 DIRECT GQL] {acc_slug}: карт={len(cards)}, осколков={len(shards)}")
+                log_debug(f"[CHECK 13 DIRECT GQL] {acc_slug}: карт={len(cards)}, осколков={len(shards)}")
                 return {"cards": cards, "shards": shards, "error": None}
 
         # Способ 2: перехваченный запрос fetchUserCards от самой страницы
@@ -4651,7 +4703,7 @@ async def scrape_account_cards_public(browser, account: dict, proxy_mgr: Optiona
         if captured_req:
             cards = await fetch_all_pages_via_graphql(page, captured_req, modifier_val=0, override_user_id=uid)
             shards = await fetch_all_pages_via_graphql(page, captured_req, modifier_val=1, override_user_id=uid)
-            log_debug(f"[CHECK 9 GQL CAPTURED] {acc_slug}: карт={len(cards)}, осколков={len(shards)}")
+            log_debug(f"[CHECK 13 GQL CAPTURED] {acc_slug}: карт={len(cards)}, осколков={len(shards)}")
             if cards or shards:
                 return {"cards": cards, "shards": shards, "error": None}
 
@@ -4664,10 +4716,10 @@ async def scrape_account_cards_public(browser, account: dict, proxy_mgr: Optiona
             await shard_tab.click()
             await page.wait_for_timeout(1800)
             shards = await extract_items_from_dom(page)
-        log_debug(f"[CHECK 9 DOM FALLBACK] {acc_slug}: карт={len(cards)}, осколков={len(shards)}")
+        log_debug(f"[CHECK 13 DOM FALLBACK] {acc_slug}: карт={len(cards)}, осколков={len(shards)}")
         return {"cards": cards, "shards": shards, "error": None}
     except Exception as e:
-        log_debug(f"[CHECK 9 ERROR] {acc_slug}: {e}")
+        log_debug(f"[CHECK 13 ERROR] {acc_slug}: {e}")
         return {"cards": [], "shards": [], "error": str(e)}
     finally:
         ACTIVE_BROWSER_PAGES.pop(f"check_{acc_slug}", None)
@@ -4901,7 +4953,7 @@ async def run_check_all_5_accounts() -> None:
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v35.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v36.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -5192,7 +5244,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     FARM_STOP_FLAG = False
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v35.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v36.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -5232,7 +5284,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     elif action == "check":
         await run_check_all_5_accounts()
     elif action == "log":
-        send_full_debug_log_to_user("Полный лог работы комбайна v35.0")
+        send_full_debug_log_to_user("Полный лог работы комбайна v36.0")
     elif action == "screen":
         await send_live_screen_snapshot()
 
@@ -5321,7 +5373,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             await perform_hard_stop_and_reset(task_queue)
             send_tg_message(
                 "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
-                "🟢 <b>Сервер перезапущен в чистый режим ожидания (v35.0)</b> — можете сразу нажимать любую кнопку ниже:",
+                "🟢 <b>Сервер перезапущен в чистый режим ожидания (v36.0)</b> — можете сразу нажимать любую кнопку ниже:",
                 add_keyboard=True,
             )
             return
@@ -5333,7 +5385,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            send_full_debug_log_to_user("Полный лог работы комбайна v35.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v36.0")
             return
 
         if data == "check_farm_status":
@@ -5382,7 +5434,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if lower in ("/start", "/menu", "/help", "меню"):
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v35.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v36.0</b>\n\n"
                 "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
                 "или просто напишите промокод одним словом в чат:",
                 add_keyboard=True,
@@ -5395,14 +5447,14 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
-            send_full_debug_log_to_user("Полный лог работы комбайна v35.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v36.0")
             return
 
         if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
             await perform_hard_stop_and_reset(task_queue)
             send_tg_message(
                 "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
-                "🟢 <b>Сервер перезапущен в чистый режим ожидания (v35.0)</b> — можете сразу нажимать любую кнопку ниже:",
+                "🟢 <b>Сервер перезапущен в чистый режим ожидания (v36.0)</b> — можете сразу нажимать любую кнопку ниже:",
                 add_keyboard=True,
             )
             return
@@ -5530,7 +5582,7 @@ async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: fl
     )
     if os.environ.get("GH_EVENT_NAME") in ("push", "workflow_dispatch") and os.environ.get("IS_CONTINUATION_JOB") != "true":
         send_tg_message(
-            "🟢 <b>Сервер полностью запущен и готов к работе (v35.0)!</b>\n\n"
+            "🟢 <b>Сервер полностью запущен и готов к работе (v36.0)!</b>\n\n"
             "Браузер Google Chrome и виртуальный экран готовы — теперь любая кнопка сработает сразу 👇:",
             add_keyboard=True,
         )
@@ -5599,7 +5651,7 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v35.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v36.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",
