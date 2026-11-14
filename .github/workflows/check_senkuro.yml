@@ -1,4 +1,4 @@
-name: Senkuro Full Automation Combine v34.0
+name: Senkuro Full Automation Combine v35.0
 
 on:
   push:
@@ -116,7 +116,7 @@ jobs:
           # 3. При сохранении кода (push) честно сообщаем, что сервер перезапускается (~15 сек)
           if EVENT_NAME == "push":
               send_msg(
-                  "⏳ <b>Обновление кода v34.0 получено! Перезапускаю сервер (~15 сек)...</b>\n\n"
+                  "⏳ <b>Обновление кода v35.0 получено! Перезапускаю сервер (~15 сек)...</b>\n\n"
                   "<i>Дождитесь зелёного сообщения <b>«🟢 Сервер полностью запущен!»</b> (или нажмите кнопку сейчас — она встанет в очередь и запустится сразу после старта, только не нажимайте «🛑 СТОП» во время загрузки).</i>"
               )
 
@@ -179,6 +179,8 @@ jobs:
                           "⚒️ переплавка + трейд": ("forge", "⚒️ Переплавка + Трейд на основу приняты!"),
                           "/forge": ("forge", "⚒️ Переплавка + Трейд на основу приняты!"),
                           "🔄 чекать": ("check", "🔄 Проверка карт и осколков (13 аккаунтов) принята!"),
+                          "🔄 чекать 13": ("check", "🔄 Проверка карт и осколков (13 аккаунтов) принята!"),
+                          "🔄 чекать 12": ("check", "🔄 Проверка карт и осколков (13 аккаунтов) принята!"),
                           "🔄 чекать 9": ("check", "🔄 Проверка карт и осколков (13 аккаунтов) принята!"),
                           "🔄 чекать 9 акков": ("check", "🔄 Проверка карт и осколков (13 аккаунтов) принята!"),
                           "🔄 чекать 5": ("check", "🔄 Проверка карт и осколков (13 аккаунтов) принята!"),
@@ -191,7 +193,7 @@ jobs:
                           "🚀 сделать всё (паки+кузня)": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                       }
                       if low in ("/start", "/menu", "/help", "меню"):
-                          send_msg("🤖 <b>Панель управления фермой Senkuro v34.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
+                          send_msg("🤖 <b>Панель управления фермой Senkuro v35.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
                       elif low in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
                           if os.path.exists(QUEUE_FILE):
                               os.remove(QUEUE_FILE)
@@ -273,10 +275,10 @@ jobs:
             chmod +x bin/opera-proxy 2>/dev/null || true
           fi
 
-      - name: Run Senkuro Automation Combine v34.0 (Direct Telegram Engine)
+      - name: Run Senkuro Automation Combine v35.0 (Direct Telegram Engine)
         id: run_bot
         env:
-          WORKFLOW_YML_VERSION: "v34.0"
+          WORKFLOW_YML_VERSION: "v35.0"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
           SENKURO_PASSWORDS: ${{ secrets.SENKURO_PASSWORDS }}
@@ -302,7 +304,7 @@ jobs:
           GH_EVENT_NAME: ${{ github.event_name }}
         run: |
           if [ "${GH_EVENT_NAME}" = "push" ]; then
-            rm -f .sessions/farm_resume.json .sessions/bookmarks_synced_v33.json .sessions/bookmarks_synced_v34.json
+            rm -f .sessions/farm_resume.json
           fi
           touch /tmp/senkuro_main_ready.flag
           if [ -f /tmp/early_poller.pid ]; then
@@ -380,10 +382,10 @@ jobs:
             chmod +x bin/opera-proxy 2>/dev/null || true
           fi
 
-      - name: Run Senkuro Automation Combine v34.0 (Part 2 — Hours 4 to 8)
+      - name: Run Senkuro Automation Combine v35.0 (Part 2 — Hours 4 to 8)
         id: run_bot_p2
         env:
-          WORKFLOW_YML_VERSION: "v34.0"
+          WORKFLOW_YML_VERSION: "v35.0"
           IS_CONTINUATION_JOB: "true"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
@@ -470,9 +472,9 @@ jobs:
             chmod +x bin/opera-proxy 2>/dev/null || true
           fi
 
-      - name: Run Senkuro Automation Combine v34.0 (Part 3 — Finish Remaining 8h Farm)
+      - name: Run Senkuro Automation Combine v35.0 (Part 3 — Finish Remaining 8h Farm)
         env:
-          WORKFLOW_YML_VERSION: "v34.0"
+          WORKFLOW_YML_VERSION: "v35.0"
           IS_CONTINUATION_JOB: "true"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
