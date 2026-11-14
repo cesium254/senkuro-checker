@@ -1,4 +1,4 @@
-name: Senkuro Full Automation Combine v32.0
+name: Senkuro Full Automation Combine v33.0
 
 on:
   push:
@@ -147,8 +147,8 @@ jobs:
                           send_msg("🎟 <b>Просто напишите и отправьте промокод одним словом в этот чат:</b>")
                       else:
                           amap = {
-                              "start_farm_8h": ("farm", "▶️ Запускаю 8-часовой фарм манги на 8 аккаунтах!"),
-                              "check_balance": ("balance", "🪙 Проверка баланса монет (8 акков) принята!"),
+                              "start_farm_8h": ("farm", "▶️ Запускаю 8-часовой фарм манги на 12 аккаунтах!"),
+                              "check_balance": ("balance", "🪙 Проверка баланса монет (12 акков) принята!"),
                               "roll_packs": ("packs", "🎴 Прокрутка паков «Хардкор» (480 🪙) принята!"),
                               "run_forge": ("forge", "⚒️ Переплавка + Трейд на основу приняты!"),
                               "check_senkuro": ("check", "🔄 Проверка карт и осколков (9 аккаунтов) принята!"),
@@ -163,13 +163,13 @@ jobs:
                       txt = str(msg.get("text") or "").strip()
                       low = txt.lower()
                       btn_map = {
-                          "▶️ фарм (8 ч)": ("farm", "▶️ Запускаю 8-часовой фарм манги на 8 аккаунтах!"),
-                          "▶️ запустить фарм (8 ч)": ("farm", "▶️ Запускаю 8-часовой фарм манги на 8 аккаунтах!"),
-                          "/farm": ("farm", "▶️ Запускаю 8-часовой фарм манги на 8 аккаунтах!"),
-                          "🪙 баланс": ("balance", "🪙 Проверка баланса монет (8 акков) принята!"),
-                          "🪙 баланс монет": ("balance", "🪙 Проверка баланса монет (8 акков) принята!"),
-                          "🪙 баланс монет (8 акков)": ("balance", "🪙 Проверка баланса монет (8 акков) принята!"),
-                          "/balance": ("balance", "🪙 Проверка баланса монет (8 акков) принята!"),
+                          "▶️ фарм (8 ч)": ("farm", "▶️ Запускаю 8-часовой фарм манги на 12 аккаунтах!"),
+                          "▶️ запустить фарм (8 ч)": ("farm", "▶️ Запускаю 8-часовой фарм манги на 12 аккаунтах!"),
+                          "/farm": ("farm", "▶️ Запускаю 8-часовой фарм манги на 12 аккаунтах!"),
+                          "🪙 баланс": ("balance", "🪙 Проверка баланса монет (12 акков) принята!"),
+                          "🪙 баланс монет": ("balance", "🪙 Проверка баланса монет (12 акков) принята!"),
+                          "🪙 баланс монет (12 акков)": ("balance", "🪙 Проверка баланса монет (12 акков) принята!"),
+                          "/balance": ("balance", "🪙 Проверка баланса монет (12 акков) принята!"),
                           "🎴 паки": ("packs", "🎴 Прокрутка паков «Хардкор» (480 🪙) принята!"),
                           "🎴 паки хардкор": ("packs", "🎴 Прокрутка паков «Хардкор» (480 🪙) принята!"),
                           "🎴 крутить паки хардкор": ("packs", "🎴 Прокрутка паков «Хардкор» (480 🪙) принята!"),
@@ -190,7 +190,7 @@ jobs:
                           "🚀 сделать всё (паки+кузня)": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                       }
                       if low in ("/start", "/menu", "/help", "меню"):
-                          send_msg("🤖 <b>Панель управления фермой Senkuro v32.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
+                          send_msg("🤖 <b>Панель управления фермой Senkuro v33.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
                       elif low in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
                           if os.path.exists(QUEUE_FILE):
                               os.remove(QUEUE_FILE)
@@ -202,11 +202,11 @@ jobs:
                       elif low in ("🤝 трейд", "трейд", "/trade"):
                           send_msg(
                               "🤝 <b>Отправка нужных карт с фермы на основу (БЕЗ Кузни):</b>\n\n"
-                              "Напишите в чат, с каких аккаунтов (1–8) и какие ранги (F, D, C, B, A, S) отправить на основу:\n"
+                              "Напишите в чат, с каких аккаунтов (1–12) и какие ранги (F, D, C, B, A, S) отправить на основу:\n"
                               "• <code>1 B</code> — отправить ранг B с аккаунта #1\n"
                               "• <code>1 B C</code> — отправить ранги B и C с аккаунта #1\n"
                               "• <code>1B 2C 4D 5C</code> (или <code>1 B, 3 B, 5 C, 6 D</code>) — разные ранги с разных аккаунтов за раз!\n"
-                              "• <code>все B</code> — собрать ранг B со всех 8 аккаунтов"
+                              "• <code>все B</code> — собрать ранг B со всех 12 аккаунтов"
                           )
                       elif low in ("📜 лог", "📜 полный лог", "/log", "лог", "логи"):
                           append_queue("log", "")
@@ -226,7 +226,7 @@ jobs:
                               pcode = txt[7:].strip().upper() if low.startswith("/promo ") else (txt.upper() if not txt.startswith("/") and re.match(r"^[A-Za-z0-9_-]{4,32}$", txt) else "")
                               if pcode:
                                   append_queue("promo", pcode)
-                                  send_msg(f"🎟 Принят промокод <code>{pcode}</code>!\n⏳ Подготавливаю браузер (~20 сек) и проверяю начисление монет на 8 аккаунтах...")
+                                  send_msg(f"🎟 Принят промокод <code>{pcode}</code>!\n⏳ Подготавливаю браузер (~20 сек) и проверяю начисление монет на 12 аккаунтах...")
               time.sleep(0.5)
           EOF
           rm -f /tmp/senkuro_main_ready.flag
@@ -272,10 +272,10 @@ jobs:
             chmod +x bin/opera-proxy 2>/dev/null || true
           fi
 
-      - name: Run Senkuro Automation Combine v32.0 (Direct Telegram Engine)
+      - name: Run Senkuro Automation Combine v33.0 (Direct Telegram Engine)
         id: run_bot
         env:
-          WORKFLOW_YML_VERSION: "v32.0"
+          WORKFLOW_YML_VERSION: "v33.0"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
           SENKURO_PASSWORDS: ${{ secrets.SENKURO_PASSWORDS }}
@@ -292,12 +292,16 @@ jobs:
           SENKURO_PASS_6: ${{ secrets.SENKURO_PASS_6 }}
           SENKURO_PASS_7: ${{ secrets.SENKURO_PASS_7 }}
           SENKURO_PASS_8: ${{ secrets.SENKURO_PASS_8 }}
+          SENKURO_PASS_9: ${{ secrets.SENKURO_PASS_9 }}
+          SENKURO_PASS_10: ${{ secrets.SENKURO_PASS_10 }}
+          SENKURO_PASS_11: ${{ secrets.SENKURO_PASS_11 }}
+          SENKURO_PASS_12: ${{ secrets.SENKURO_PASS_12 }}
           SENKURO_ACTION: ${{ github.event.inputs.action || 'daemon' }}
           SENKURO_PROMO_CODE: ${{ github.event.inputs.promo_code || '' }}
           GH_EVENT_NAME: ${{ github.event_name }}
         run: |
           if [ "${GH_EVENT_NAME}" = "push" ]; then
-            rm -f .sessions/farm_resume.json
+            rm -f .sessions/farm_resume.json .sessions/bookmarks_synced_v33.json
           fi
           touch /tmp/senkuro_main_ready.flag
           if [ -f /tmp/early_poller.pid ]; then
@@ -375,10 +379,10 @@ jobs:
             chmod +x bin/opera-proxy 2>/dev/null || true
           fi
 
-      - name: Run Senkuro Automation Combine v32.0 (Part 2 — Hours 4 to 8)
+      - name: Run Senkuro Automation Combine v33.0 (Part 2 — Hours 4 to 8)
         id: run_bot_p2
         env:
-          WORKFLOW_YML_VERSION: "v32.0"
+          WORKFLOW_YML_VERSION: "v33.0"
           IS_CONTINUATION_JOB: "true"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
@@ -396,6 +400,10 @@ jobs:
           SENKURO_PASS_6: ${{ secrets.SENKURO_PASS_6 }}
           SENKURO_PASS_7: ${{ secrets.SENKURO_PASS_7 }}
           SENKURO_PASS_8: ${{ secrets.SENKURO_PASS_8 }}
+          SENKURO_PASS_9: ${{ secrets.SENKURO_PASS_9 }}
+          SENKURO_PASS_10: ${{ secrets.SENKURO_PASS_10 }}
+          SENKURO_PASS_11: ${{ secrets.SENKURO_PASS_11 }}
+          SENKURO_PASS_12: ${{ secrets.SENKURO_PASS_12 }}
         run: |
           touch /tmp/senkuro_main_ready.flag
           pkill -9 -f early_poller.py 2>/dev/null || true
@@ -461,9 +469,9 @@ jobs:
             chmod +x bin/opera-proxy 2>/dev/null || true
           fi
 
-      - name: Run Senkuro Automation Combine v32.0 (Part 3 — Finish Remaining 8h Farm)
+      - name: Run Senkuro Automation Combine v33.0 (Part 3 — Finish Remaining 8h Farm)
         env:
-          WORKFLOW_YML_VERSION: "v32.0"
+          WORKFLOW_YML_VERSION: "v33.0"
           IS_CONTINUATION_JOB: "true"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
@@ -481,6 +489,10 @@ jobs:
           SENKURO_PASS_6: ${{ secrets.SENKURO_PASS_6 }}
           SENKURO_PASS_7: ${{ secrets.SENKURO_PASS_7 }}
           SENKURO_PASS_8: ${{ secrets.SENKURO_PASS_8 }}
+          SENKURO_PASS_9: ${{ secrets.SENKURO_PASS_9 }}
+          SENKURO_PASS_10: ${{ secrets.SENKURO_PASS_10 }}
+          SENKURO_PASS_11: ${{ secrets.SENKURO_PASS_11 }}
+          SENKURO_PASS_12: ${{ secrets.SENKURO_PASS_12 }}
         run: |
           touch /tmp/senkuro_main_ready.flag
           pkill -9 -f early_poller.py 2>/dev/null || true

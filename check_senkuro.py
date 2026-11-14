@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v32.0 (8 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
+SENKURO FULL AUTOMATION COMBINE v33.0 (8 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -160,32 +160,27 @@ def get_secret_password(idx: int, slug: str, login_email: str) -> str:
                     if k.strip().lower() in valid_keys or k_clean in valid_keys:
                         # Если в одной строке записано несколько пар через пробел ("1:pass1 2:pass2")
                         v_clean = v.strip()
-                        m_next = re.search(r"\s+(?:#|№|acc_?)?[1-8]\s*[:=]", v_clean)
+                        m_next = re.search(r"\s+(?:#|№|acc_?)?(?:1[0-2]|[1-9])\s*[:=]", v_clean)
                         if m_next:
                             v_clean = v_clean[:m_next.start()].strip()
                         if v_clean:
                             return v_clean
         # 2. Если все пары записаны в одну строку через пробел/запятую/точку с запятой
         inline_matches = re.findall(
-            r"(?:^|[\s,;]+)(?:#|№|acc_?)?([1-8]|ber_turtle|ainz|catswat|wolfrice|lanar|canva|raya|tnt)\s*[:=]\s*([^\s,;]+)",
+            r"(?:^|[\s,;]+)(?:#|№|acc_?)?(1[0-2]|[1-9]|ber_turtle|ainz|catswat|wolfrice|lanar|canva|raya|tnt|begbug|irola|darkcore|neragar)\s*[:=]\s*([^\s,;]+)",
             bulk,
             flags=re.IGNORECASE,
         )
         for k_m, v_m in inline_matches:
             if k_m.lower() in valid_keys:
                 return v_m.strip()
-        # 3. Если просто 8 строк с паролями без номеров
+        # 3. Если просто 12 строк с паролями без номеров
         if len(lines) >= idx:
             cand = lines[idx - 1]
-            if not re.match(r"^(?:#|№|acc_?)?[1-8]\s*[:=]", cand):
+            if not re.match(r"^(?:#|№|acc_?)?(?:1[0-2]|[1-9])\s*[:=]", cand):
                 return cand
-        # 4. Если передано ровно 4 строки (только для новых аккаунтов 5..8)
-        if len(lines) == 4 and idx >= 5:
-            cand = lines[idx - 5]
-            if not re.match(r"^(?:#|№|acc_?)?[1-8]\s*[:=]", cand):
-                return cand
-        # 5. Если передана ровно 1 строка (единый общий пароль)
-        if len(lines) == 1 and not re.match(r"^(?:#|№|acc_?)?[1-8]\s*[:=]", lines[0]):
+        # 4. Если передана ровно 1 строка (единый общий пароль)
+        if len(lines) == 1 and not re.match(r"^(?:#|№|acc_?)?(?:1[0-2]|[1-9])\s*[:=]", lines[0]):
             return lines[0]
 
     if idx >= 5:
@@ -293,11 +288,59 @@ FARM_ACCOUNTS = [
         "url": "https://senkuro.com/users/tnt/cards",
         "bookmarks_url": "https://senkuro.com/users/tnt/bookmarks",
     },
+    {
+        "idx": 9,
+        "acc_id": "acc_9",
+        "id": "begbug",
+        "label": "#9 Begbug (begbug)",
+        "login": os.environ.get("SENKURO_LOGIN_9", "").strip() or "Gentuiner@outlook.com",
+        "password": get_secret_password(9, "begbug", "Gentuiner@outlook.com"),
+        "pinned_ip": "77.111.246.17",
+        "proxy_port": 25349,
+        "url": "https://senkuro.com/users/begbug/cards",
+        "bookmarks_url": "https://senkuro.com/users/begbug/bookmarks",
+    },
+    {
+        "idx": 10,
+        "acc_id": "acc_10",
+        "id": "irola",
+        "label": "#10 Irola (irola)",
+        "login": os.environ.get("SENKURO_LOGIN_10", "").strip() or "ironleafsecure15@outlook.com",
+        "password": get_secret_password(10, "irola", "ironleafsecure15@outlook.com"),
+        "pinned_ip": "77.111.246.21",
+        "proxy_port": 25350,
+        "url": "https://senkuro.com/users/irola/cards",
+        "bookmarks_url": "https://senkuro.com/users/irola/bookmarks",
+    },
+    {
+        "idx": 11,
+        "acc_id": "acc_11",
+        "id": "darkcore",
+        "label": "#11 Darkcore (darkcore)",
+        "login": os.environ.get("SENKURO_LOGIN_11", "").strip() or "nightcorehaven9@outlook.com",
+        "password": get_secret_password(11, "darkcore", "nightcorehaven9@outlook.com"),
+        "pinned_ip": "77.111.245.11",
+        "proxy_port": 25351,
+        "url": "https://senkuro.com/users/darkcore/cards",
+        "bookmarks_url": "https://senkuro.com/users/darkcore/bookmarks",
+    },
+    {
+        "idx": 12,
+        "acc_id": "acc_12",
+        "id": "neragar",
+        "label": "#12 Neragar (neragar)",
+        "login": os.environ.get("SENKURO_LOGIN_12", "").strip() or "quantumstride21@outlook.com",
+        "password": get_secret_password(12, "neragar", "quantumstride21@outlook.com"),
+        "pinned_ip": "77.111.245.15",
+        "proxy_port": 25352,
+        "url": "https://senkuro.com/users/neragar/cards",
+        "bookmarks_url": "https://senkuro.com/users/neragar/bookmarks",
+    },
 ]
 
 ALL_CHECK_ACCOUNTS = FARM_ACCOUNTS + [
     {
-        "idx": 9,
+        "idx": 13,
         "acc_id": "acc_main",
         "id": "cesium254",
         "label": "Main (Cesium254)",
@@ -318,6 +361,10 @@ ALLOWED_TRADE_SLUGS = {
     "canva",
     "raya",
     "tnt",
+    "begbug",
+    "irola",
+    "darkcore",
+    "neragar",
     "cesium254",
 }
 
@@ -671,16 +718,16 @@ def _stitch_screens_2x2_png(screens: list[tuple[str, bytes]]) -> Optional[bytes]
         import io
         from PIL import Image, ImageDraw
 
-        count = min(8, len(screens))
-        cols = 2
-        rows = 2 if count <= 4 else ((count + 1) // 2)
-        tile_w = 1280 if rows <= 2 else 960
-        tile_h = 900 if rows <= 2 else 675
+        count = min(12, len(screens))
+        cols = 2 if count <= 4 else 3
+        rows = (count + cols - 1) // cols
+        tile_w = 1280 if rows <= 2 else 854
+        tile_h = 900 if rows <= 2 else 600
 
         canvas = Image.new("RGB", (tile_w * cols, tile_h * rows), (18, 18, 22))
         draw = ImageDraw.Draw(canvas)
 
-        for idx, (label_txt, png_b) in enumerate(screens[:8]):
+        for idx, (label_txt, png_b) in enumerate(screens[:12]):
             col_i = idx % cols
             row_i = idx // cols
             px = col_i * tile_w
@@ -797,7 +844,7 @@ def configure_telegram_bot_profile() -> None:
     commands = [
         {"command": "menu", "description": "📋 Открыть панель управления"},
         {"command": "check", "description": "🔄 Проверить карты и осколки (9 аккаунтов)"},
-        {"command": "balance", "description": "🪙 Баланс монет на 8 аккаунтах"},
+        {"command": "balance", "description": "🪙 Баланс монет на 12 аккаунтах"},
         {"command": "packs", "description": "🎴 Крутить паки Хардкор (480 монет)"},
         {"command": "forge", "description": "⚒️ Переплавка карт до S + трейд на основу"},
         {"command": "trade", "description": "🤝 Трейд выбранных карт на основу / принять трейд"},
@@ -965,7 +1012,7 @@ def verify_proxy_exit_ip(local_port: int, timeout: float = 3.0) -> tuple[bool, s
     opener = urllib.request.build_opener(proxy_handler)
     for url in ("https://checkip.amazonaws.com", "https://icanhazip.com", "https://api.ipify.org"):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "curl/8.5.0"})
+            req = urllib.request.Request(url, headers={"User-Agent": "curl/12.5.0"})
             with opener.open(req, timeout=timeout) as resp:
                 ip = resp.read().decode("utf-8", errors="ignore").strip()
                 if is_ipv4_address(ip):
@@ -1034,7 +1081,7 @@ class AccountProxyManager:
                     "-discover-csv", csv_path,
                     "-proxy-blacklist", b_path,
                     "-server-selection", "first",
-                    "-bootstrap-dns", "https://1.1.1.1/dns-query,https://8.8.8.8/dns-query",
+                    "-bootstrap-dns", "https://1.1.1.1/dns-query,https://12.8.8.8/dns-query",
                 ]
                 proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 self.procs[aid] = proc
@@ -1059,17 +1106,17 @@ class AccountProxyManager:
             regions = ["EU", "AM", "AS"]
 
         for region in regions:
-            for sub_try, sel_mode in enumerate(("first", "random", "random"), start=1):
+            for sub_try, sel_mode in enumerate(("first", "random", "random", "random", "random", "random"), start=1):
                 self._stop_proc(aid)
                 b_path = self._write_blacklist(aid, used_ips)
                 args = [
                     exe_path,
                     "-bind-address", f"127.0.0.1:{port}",
                     "-country", region,
-                    "-discover-repeat", "5",
+                    "-discover-repeat", "8",
                     "-proxy-blacklist", b_path,
                     "-server-selection", sel_mode,
-                    "-bootstrap-dns", "https://1.1.1.1/dns-query,https://8.8.8.8/dns-query",
+                    "-bootstrap-dns", "https://1.1.1.1/dns-query,https://12.8.8.8/dns-query",
                 ]
                 proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 self.procs[aid] = proc
@@ -1471,7 +1518,7 @@ def _direct_python_gql_fallback(payload: dict, token: str = "") -> dict:
     body_bytes = json.dumps(payload).encode("utf-8")
 
     # Сначала пробуем через любой открытый локальный порт Opera VPN (25341..25348), затем напрямую
-    candidate_ports = [25340 + i for i in range(1, 9) if is_local_port_open(25340 + i)]
+    candidate_ports = [25340 + i for i in range(1, 13) if is_local_port_open(25340 + i)]
     openers = []
     for p_num in candidate_ports[:2]:
         ph = urllib.request.ProxyHandler({"http": f"http://127.0.0.1:{p_num}", "https": f"http://127.0.0.1:{p_num}"})
@@ -1953,7 +2000,7 @@ def _run_xdotool(args_list: list[str]) -> None:
 
 def login_via_native_chrome_sync(acc: dict, proxy_url: Optional[str]) -> tuple[Optional[str], list[dict], Optional[bytes], str]:
     """
-    Точная копия рабочего движка входа из Senkuro_Kaggle_Server_v6_5_Ready.ipynb (который успешно входит во все 4/8 аккаунта):
+    Точная копия рабочего движка входа из Senkuro_Kaggle_Server_v6_5_Ready.ipynb (который успешно входит во все 4/12 аккаунта):
     1) Запускает отдельный изолированный процесс /usr/bin/google-chrome-stable (subprocess.Popen) со своей папкой профиля
        (.sessions/chrome_profile_<id>) и своим индивидуальным VPN-прокси (127.0.0.1:2534X).
     2) Поскольку Google Chrome 156 игнорирует флаг --load-extension, скрипт инжектируется напрямую в главную вкладку
@@ -2514,8 +2561,8 @@ async def run_promo_code_activation(promo_code: str) -> None:
             for acc in FARM_ACCOUNTS:
                 proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
                 ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
-                log_debug(f"[BALANCE STEP] #{acc['idx']}/8 {acc['id']} -> IP: {ip_used}")
-                send_tg_message(f"⏳ <b>[{acc['idx']}/8] {acc['id']}</b> (IP: <code>{ip_used}</code>): проверяю вход и баланс...", add_keyboard=False)
+                log_debug(f"[BALANCE STEP] #{acc['idx']}/12 {acc['id']} -> IP: {ip_used}")
+                send_tg_message(f"⏳ <b>[{acc['idx']}/12] {acc['id']}</b> (IP: <code>{ip_used}</code>): проверяю вход и баланс...", add_keyboard=False)
                 context = await create_account_context(browser, acc, proxy_url)
                 try:
                     page, user_obj = await ensure_logged_in(context, acc)
@@ -2593,7 +2640,7 @@ async def run_promo_code_activation(promo_code: str) -> None:
     finally:
         proxy_mgr.stop_all()
 
-    report_lines.insert(1, f"📊 Итог проверки: монеты реально увеличились на <b>{success_count} из 8</b> аккаунтов.\n")
+    report_lines.insert(1, f"📊 Итог проверки: монеты реально увеличились на <b>{success_count} из 12</b> аккаунтов.\n")
     send_tg_message("\n".join(report_lines), add_keyboard=True)
 
 
@@ -2607,7 +2654,7 @@ async def run_check_coins_balance() -> None:
     """Проверяет баланс сенкоинов на всех 8 фарм-аккаунтах и возвращает базовую панель кнопок."""
     send_tg_message("🪙 Вхожу на 8 фарм-аккаунтов под своими IP и проверяю баланс сенкоинов...", add_keyboard=False)
     proxy_mgr = AccountProxyManager()
-    lines = ["🪙 <b>Баланс сенкоинов на 8 фарм-аккаунтах:</b>\n"]
+    lines = ["🪙 <b>Баланс сенкоинов на 12 фарм-аккаунтах:</b>\n"]
     total_coins = 0
     total_packs_possible = 0
 
@@ -2619,8 +2666,8 @@ async def run_check_coins_balance() -> None:
                 ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
                 if FARM_STOP_FLAG:
                     break
-                log_debug(f"[BALANCE STEP] #{acc['idx']}/8 {acc['id']} -> IP: {ip_used}")
-                send_tg_message(f"⏳ <b>[{acc['idx']}/8] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): вхожу в изолированный профиль Chrome и проверяю баланс...", add_keyboard=False)
+                log_debug(f"[BALANCE STEP] #{acc['idx']}/12 {acc['id']} -> IP: {ip_used}")
+                send_tg_message(f"⏳ <b>[{acc['idx']}/12] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): вхожу в изолированный профиль Chrome и проверяю баланс...", add_keyboard=False)
                 context = await create_account_context(browser, acc, proxy_url)
                 try:
                     page, user_obj = await ensure_logged_in(context, acc)
@@ -2641,7 +2688,7 @@ async def run_check_coins_balance() -> None:
     finally:
         proxy_mgr.stop_all()
 
-    lines.append(f"\n💰 <b>Всего монет на 8 аккаунтах:</b> {total_coins} 🪙 (доступно прокруток Хардкор: <b>{total_packs_possible}</b>)")
+    lines.append(f"\n💰 <b>Всего монет на 12 аккаунтах:</b> {total_coins} 🪙 (доступно прокруток Хардкор: <b>{total_packs_possible}</b>)")
     full_msg = "\n".join(lines)
     send_tg_message(full_msg, add_keyboard=True)
     if DEBUG_MODE:
@@ -2823,7 +2870,7 @@ async def run_all_packs_opening() -> None:
                         break
                     proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
                     ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
-                    log_debug(f"[PACKS STEP] #{acc['idx']}/8 {acc['id']} -> IP: {ip_used}")
+                    log_debug(f"[PACKS STEP] #{acc['idx']}/12 {acc['id']} -> IP: {ip_used}")
                     context = await create_account_context(browser, acc, proxy_url)
                     page, user_obj = await ensure_logged_in(context, acc)
                     open_contexts.append((acc, context, page, user_obj, ip_used))
@@ -2834,7 +2881,7 @@ async def run_all_packs_opening() -> None:
                     if not user_obj:
                         report_lines.append(f"❌ <b>{acc['id']}</b> (IP: <code>{ip_used}</code>): ошибка входа\n")
                         continue
-                    send_tg_message(f"🎴 <b>[{acc['idx']}/8] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): кручу паки «Хардкор»...", add_keyboard=False)
+                    send_tg_message(f"🎴 <b>[{acc['idx']}/12] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): кручу паки «Хардкор»...", add_keyboard=False)
                     acc_logs = await roll_hardcore_packs_for_account(page, acc, user_obj)
                     report_lines.append(f"👤 <b>{acc['id']}</b> (IP: <code>{ip_used}</code>): " + "\n".join(acc_logs) + "\n")
                     await context.storage_state(path=str(get_session_file(acc["id"])))
@@ -3076,7 +3123,7 @@ async def run_smart_forge_and_trade_pipeline() -> None:
     global FARM_STOP_FLAG
     FARM_STOP_FLAG = False
     send_tg_message(
-        "⚒️ Запускаю умную Кузницу («Переплавка» 3 в 1) и межаккаунтный обмен на 8 аккаунтах с человеческими задержками...",
+        "⚒️ Запускаю умную Кузницу («Переплавка» 3 в 1) и межаккаунтный обмен на 12 аккаунтах с человеческими задержками...",
         add_keyboard=False,
     )
 
@@ -3094,8 +3141,8 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                         break
                     proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
                     ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
-                    log_debug(f"[FORGE STEP] #{acc['idx']}/8 {acc['id']} -> IP: {ip_used}")
-                    send_tg_message(f"⚒️ <b>[{acc['idx']}/8] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): подключаю кузню и проверяю карты...", add_keyboard=False)
+                    log_debug(f"[FORGE STEP] #{acc['idx']}/12 {acc['id']} -> IP: {ip_used}")
+                    send_tg_message(f"⚒️ <b>[{acc['idx']}/12] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): подключаю кузню и проверяю карты...", add_keyboard=False)
                     ctx = await create_account_context(browser, acc, proxy_url)
                     contexts.append(ctx)
                     page, user_obj = await ensure_logged_in(ctx, acc)
@@ -3128,7 +3175,7 @@ async def run_smart_forge_and_trade_pipeline() -> None:
 
                 await refresh_farm_state(state_map)
 
-                # Если на всех 8 аккаунтах слоты кузни = 0/5, сразу сообщаем точное время до сброса!
+                # Если на всех 12 аккаунтах слоты кузни = 0/5, сразу сообщаем точное время до сброса!
                 initial_free_slots = sum(st["available_slots"] for st in state_map.values())
                 if initial_free_slots <= 0:
                     reset_lines = ["⏳ <b>На всех 8 фарм-аккаунтах сейчас 0 из 5 доступных попыток переплавки в Кузне:</b>\n"]
@@ -3558,7 +3605,7 @@ def parse_custom_trade_spec(raw_spec: str) -> Optional[dict]:
       - '1 B' -> с аккаунта #1 ранг B
       - '1 B C' -> с аккаунта #1 ранги B и C
       - '1 4 B' или '1-4 B' -> с аккаунтов #1 и #4 ранг B
-      - 'все B' (или просто 'B') -> со всех 8 аккаунтов ранг B
+      - 'все B' (или просто 'B') -> со всех 12 аккаунтов ранг B
       - '5 все' -> с аккаунта #5 все незакреплённые карты всех рангов (F, D, C, B, A, S, R)
     """
     s = (raw_spec or "").strip()
@@ -3578,7 +3625,7 @@ def parse_custom_trade_spec(raw_spec: str) -> Optional[dict]:
     # Предварительно разбиваем слитные токены вроде "1b", "6bc", "2вс" на ["1", "b"], ["6", "b", "c"]
     expanded_tokens: list[str] = []
     for w in raw_words:
-        m_combo = re.match(r"^([1-8](?:-[1-8])?)([rрsыaаbвбcсцdдfф]+)$", w)
+        m_combo = re.match(r"^((?:1[0-2]|[1-9])(?:-(?:1[0-2]|[1-9]))?)([rрsыaаbвбcсцdдfф]+)$", w)
         if m_combo:
             expanded_tokens.append(m_combo.group(1))
             for ch in m_combo.group(2):
@@ -3619,18 +3666,16 @@ def parse_custom_trade_spec(raw_spec: str) -> Optional[dict]:
 
     for i_tok, tok in enumerate(expanded_tokens):
         if tok == "с" and i_tok == 0 and len(expanded_tokens) > 1 and (
-            expanded_tokens[1].isdigit() or re.match(r"^[1-8]-[1-8]$", expanded_tokens[1]) or expanded_tokens[1] in ("все", "всё", "all")
+            expanded_tokens[1].isdigit() or re.match(r"^(?:1[0-2]|[1-9])-(?:1[0-2]|[1-9])$", expanded_tokens[1]) or expanded_tokens[1] in ("все", "всё", "all")
         ):
             continue
         if tok in ("карты", "карта", "ранг", "ранга", "рангов", "акк", "аккаунт", "аккаунты", "на", "основу", "трейд", "обмен", "и"):
             continue
 
         if tok in ("все", "всё", "all", "*"):
-            # Если перед "все" ещё не выбраны аккаунты (или предыдущим аккаунтам уже назначены ранги) — значит "все аккаунты"
             if not current_accs or current_accs_have_ranks:
                 _push_account_idxs([int(a["idx"]) for a in FARM_ACCOUNTS])
             else:
-                # Иначе (например "5 все" или "1 3 все") — значит все ранги для выбранных аккаунтов!
                 _add_ranks_to_current_accs(["R", "S", "A", "B", "C", "D", "F"])
             continue
 
@@ -3638,13 +3683,13 @@ def parse_custom_trade_spec(raw_spec: str) -> Optional[dict]:
             _push_account_idxs([slug_to_idx[tok]])
             continue
 
-        m_range = re.match(r"^([1-8])-([1-8])$", tok)
+        m_range = re.match(r"^(1[0-2]|[1-9])-(1[0-2]|[1-9])$", tok)
         if m_range:
             a_i, b_i = int(m_range.group(1)), int(m_range.group(2))
             _push_account_idxs(list(range(min(a_i, b_i), max(a_i, b_i) + 1)))
             continue
 
-        if tok.isdigit() and 1 <= int(tok) <= 8:
+        if tok.isdigit() and 1 <= int(tok) <= 12:
             _push_account_idxs([int(tok)])
             continue
 
@@ -3666,13 +3711,13 @@ def get_trade_prompt_message() -> str:
     acc_hint = ", ".join(f"<b>#{a['idx']}</b> ({a['id']})" for a in FARM_ACCOUNTS)
     return (
         "🤝 <b>Отправка нужных карт с фермы на основу (БЕЗ Кузни):</b>\n\n"
-        "Напишите в чат, <b>с каких аккаунтов (1–8)</b> и <b>какие ранги (F, D, C, B, A, S)</b> отправить вам на основу <b>cesium254</b> "
+        "Напишите в чат, <b>с каких аккаунтов (1–12)</b> и <b>какие ранги (F, D, C, B, A, S)</b> отправить вам на основу <b>cesium254</b> "
         "(можно указывать как один аккаунт, так и сразу несколько разных аккаунтов с разными рангами!):\n\n"
         "• <code>1 B</code> — отправить ранг <b>B</b> с аккаунта <b>#1</b>\n"
         "• <code>1 B C</code> — отправить ранги <b>B и C</b> с аккаунта <b>#1</b>\n"
         "• <code>1B 2C 4D 5C</code> (или <code>1 B, 3 B, 5 C, 6 D</code>) — отправить с <b>#1</b> ранг B, с <b>#2</b> ранг C, с <b>#4</b> ранг D, с <b>#5</b> ранг C\n"
         "• <code>1 4 B</code> (или <code>1-4 B</code>) — отправить ранг <b>B</b> с аккаунтов <b>#1 и #4</b>\n"
-        "• <code>все B</code> (или просто <code>B</code>) — собрать все карты ранга <b>B</b> со всех 8 аккаунтов\n"
+        "• <code>все B</code> (или просто <code>B</code>) — собрать все карты ранга <b>B</b> со всех 12 аккаунтов\n"
         "• <code>5 все</code> — отправить все незакреплённые карты с аккаунта <b>#5</b>\n\n"
         f"📋 <b>Аккаунты:</b> {acc_hint}\n"
         "<i>(Писать можно слитно, через пробел или через запятую, на английской или русской раскладке: F/Ф, D/Д, C/С/Ц, B/В/Б, A/А, S)</i>"
@@ -4140,7 +4185,7 @@ def format_farm_status_message(status_obj: dict) -> str:
     lines = [
         "📊 <b>Статус 8-часового фарма манги:</b>",
         f"⏱ <b>Отработано:</b> {hh} ч {mm} мин из {total_hours:g} ч",
-        f"📖 <b>Читают главы сейчас:</b> <b>{reading_cnt}/8</b> аккаунтов | 🌐 <b>Уникальных IP:</b> <b>{unique_ips}/8</b>\n",
+        f"📖 <b>Читают главы сейчас:</b> <b>{reading_cnt}/12</b> аккаунтов | 🌐 <b>Уникальных IP:</b> <b>{unique_ips}/12</b>\n",
     ]
     for acc_info in status_obj.get("accounts", []):
         is_rd = acc_info.get("is_reading", False)
@@ -4162,7 +4207,7 @@ async def run_check_farm_status() -> None:
     else:
         send_tg_message(
             "⚪ <b>Сейчас 8-часовой фарм манги не активен</b> (или уже завершил 8-часовой таймер).\n\n"
-            "Нажмите кнопку <b>«▶️ Запустить фарм (8 ч)»</b> ниже, чтобы запустить чтение манги на всех 8 аккаунтах!",
+            "Нажмите кнопку <b>«▶️ Запустить фарм (8 ч)»</b> ниже, чтобы запустить чтение манги на всех 12 аккаунтах!",
             add_keyboard=True,
         )
 
@@ -4183,7 +4228,7 @@ async def run_farm_segment(part_mode: str = "farm_part1") -> None:
 
     if is_part1:
         send_tg_message(
-            "🚀 <b>Запускаю 8-часовой фарм манги на всех 8 аккаунтах!</b>\n"
+            "🚀 <b>Запускаю 8-часовой фарм манги на всех 12 аккаунтах!</b>\n"
             "Поднимаю виртуальный экран, 8 уникальных IP, вхожу в аккаунты, выбираю мангу снизу закладок и пришлю сводку через ~45 сек...",
             add_keyboard=False,
         )
@@ -4353,7 +4398,7 @@ async def run_farm_segment(part_mode: str = "farm_part1") -> None:
                 publish_live_farm_status(final_snap)
                 send_tg_message(
                     "🏁 <b>8 часов фарма манги полностью завершены!</b>\n"
-                    "Все 8 аккаунтов остановлены, прогресс чтения и сессии сохранены.\n\n"
+                    "Все 12 аккаунтов остановлены, прогресс чтения и сессии сохранены.\n\n"
                     + format_farm_status_message(final_snap),
                     add_keyboard=True,
                 )
@@ -4842,8 +4887,612 @@ async def run_check_all_5_accounts() -> None:
         upload_debug_log_to_github_noop("check_9_accounts")
 
 
+
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v32.0 — БЕЗ CLOUDFLARE WORKER!)
+# 10.5. СЦЕНАРИЙ v33.0: АВТО-ПРОВЕРКА ВСЕХ 12 АККАУНТОВ И ПЕРЕНОС 235 ЗАКЛАДОК НА #9–#12
+# ==============================================================================
+
+BOOKMARKS_SYNC_DONE_FILE = SESSIONS_DIR / "bookmarks_synced_v33.json"
+SOURCE_BOOKMARKS_URL = "https://senkuro.com/users/ber_turtle/bookmarks/manga"
+
+JS_INSTALL_NO_MANGA_NAV = r"""
+(() => {
+    if (window.__senkuroNoMangaNavInstalled) return;
+    window.__senkuroNoMangaNavInstalled = true;
+    document.addEventListener('click', (e) => {
+        const a = e.target && e.target.closest ? e.target.closest('a[href*="/manga/"]') : null;
+        if (a) {
+            e.preventDefault();
+        }
+    }, true);
+})();
+"""
+
+JS_COUNT_CARD_READ_BUTTONS = r"""
+(() => {
+    const cards = Array.from(document.querySelectorAll('a[href*="/manga/"]')).filter(a => {
+        if (a.closest('footer') || a.closest('header')) return false;
+        const h = a.getAttribute('href') || '';
+        return (h.startsWith('/manga/') || h.includes('senkuro.com/manga/')) && !h.includes('/chapters/');
+    });
+    const slugs = new Set();
+    for (const c of cards) {
+        const m = (c.getAttribute('href') || '').match(/\/manga\/([^/?#]+)/);
+        if (m) slugs.add(m[1]);
+    }
+    return slugs.size;
+})();
+"""
+
+JS_GET_CARD_SLUGS_IN_DOM = r"""
+(() => {
+    const cards = Array.from(document.querySelectorAll('a[href*="/manga/"]')).filter(a => {
+        if (a.closest('footer') || a.closest('header')) return false;
+        const h = a.getAttribute('href') || '';
+        return (h.startsWith('/manga/') || h.includes('senkuro.com/manga/')) && !h.includes('/chapters/');
+    });
+    const out = [];
+    const seen = new Set();
+    for (const a of cards) {
+        const m = (a.getAttribute('href') || '').match(/\/manga\/([^/?#]+)/);
+        if (m && !seen.has(m[1])) {
+            seen.add(m[1]);
+            out.push(m[1]);
+        }
+    }
+    return out;
+})();
+"""
+
+JS_OPEN_CARD_BOOKMARK_MODAL_BY_SLUG = r"""
+(targetSlug) => {
+    function isVis(el) {
+        if (!el || !el.isConnected) return false;
+        const st = window.getComputedStyle(el);
+        if (st.display === 'none' || st.visibility === 'hidden' || parseFloat(st.opacity) === 0) return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 5 && r.height > 5;
+    }
+
+    const links = Array.from(document.querySelectorAll('a[href*="/manga/"]')).filter(a => {
+        if (a.closest('footer') || a.closest('header')) return false;
+        const h = a.getAttribute('href') || '';
+        return h.includes('/manga/' + targetSlug) && !h.includes('/chapters/');
+    });
+    if (links.length === 0) return { ok: false, reason: 'slug_not_in_dom' };
+
+    const linkEl = links[0];
+    let cardRoot = linkEl;
+    for (let d = 0; d < 4; d++) {
+        if (!cardRoot.parentElement || cardRoot.parentElement.tagName === 'BODY') break;
+        const p = cardRoot.parentElement;
+        const pLinks = p.querySelectorAll('a[href*="/manga/"]');
+        const uniqueSlugs = new Set();
+        pLinks.forEach(l => {
+            const m = (l.getAttribute('href') || '').match(/\/manga\/([^/?#]+)/);
+            if (m) uniqueSlugs.add(m[1]);
+        });
+        if (uniqueSlugs.size > 1) break;
+        cardRoot = p;
+    }
+
+    cardRoot.scrollIntoView({ block: 'center', behavior: 'instant' });
+
+    const candidates = Array.from(cardRoot.querySelectorAll('button, [role="button"], div, span')).filter(el => {
+        if (!isVis(el)) return false;
+        const t = (el.innerText || el.textContent || '').trim();
+        return t === 'Читаю' || t.startsWith('Читаю');
+    });
+
+    if (candidates.length === 0) {
+        return { ok: false, reason: 'read_btn_not_found' };
+    }
+
+    let targetBtn = candidates[0].closest('button, [role="button"]') || candidates[0];
+    try { targetBtn.click(); } catch (e) {}
+    try {
+        targetBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    } catch (e) {}
+    return { ok: true, title: (cardRoot.innerText || targetSlug).split('\n').pop() };
+}
+"""
+
+JS_CLICK_ADD_TO_LIST_IN_MODAL = r"""
+(() => {
+    function isVis(el) {
+        if (!el || !el.isConnected) return false;
+        const st = window.getComputedStyle(el);
+        if (st.display === 'none' || st.visibility === 'hidden' || parseFloat(st.opacity) === 0) return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 5 && r.height > 5;
+    }
+
+    const allBtns = Array.from(document.querySelectorAll('button, [role="button"], div, span')).filter(isVis);
+    const addBtn = allBtns.find(el => {
+        const t = (el.innerText || el.textContent || '').trim();
+        return (t === 'Добавить в список' || t.includes('Добавить в список')) && el.children.length <= 3;
+    });
+
+    if (addBtn) {
+        const clickTarget = addBtn.closest('button, [role="button"]') || addBtn;
+        try { clickTarget.click(); } catch (e) {}
+        return { status: 'clicked_add' };
+    }
+
+    const cancelBtn = allBtns.find(el => (el.innerText || el.textContent || '').trim() === 'Отмена');
+    const modalHeader = allBtns.find(el => (el.innerText || el.textContent || '').trim() === 'Управление закладкой');
+    if (cancelBtn && modalHeader) {
+        const cTarget = cancelBtn.closest('button, [role="button"]') || cancelBtn;
+        try { cTarget.click(); } catch (e) {}
+        return { status: 'already_in_list' };
+    }
+
+    return { status: 'modal_not_ready' };
+})();
+"""
+
+JS_CLICK_READ_FOLDER_IN_DROPDOWN = r"""
+(() => {
+    function isVis(el) {
+        if (!el || !el.isConnected) return false;
+        const st = window.getComputedStyle(el);
+        if (st.display === 'none' || st.visibility === 'hidden' || parseFloat(st.opacity) === 0) return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 5 && r.height > 5;
+    }
+
+    const allVis = Array.from(document.querySelectorAll('button, [role="button"], li, div, span')).filter(isVis);
+    const vPlanahCandidates = allVis.filter(el => {
+        const t = (el.innerText || el.textContent || '').trim();
+        return t === 'В планах' && el.children.length <= 3;
+    });
+
+    if (vPlanahCandidates.length === 0) {
+        return { ok: false, reason: 'dropdown_not_open' };
+    }
+
+    const vPlanahEl = vPlanahCandidates[vPlanahCandidates.length - 1];
+    const vpRect = vPlanahEl.getBoundingClientRect();
+
+    const readCandidates = allVis.filter(el => {
+        const t = (el.innerText || el.textContent || '').trim();
+        if (t !== 'Читаю' || el.children.length > 3) return false;
+        const r = el.getBoundingClientRect();
+        const sameColumn = Math.abs(r.left - vpRect.left) < 45;
+        const rightAbove = (vpRect.top - r.top) >= 12 && (vpRect.top - r.top) <= 95;
+        return sameColumn && rightAbove;
+    });
+
+    if (readCandidates.length > 0) {
+        const bestRead = readCandidates[readCandidates.length - 1];
+        const clickTarget = bestRead.closest('button, [role="button"], li') || bestRead;
+        try { clickTarget.click(); } catch (e) {}
+        try {
+            clickTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+        } catch (e) {}
+        return { ok: true, method: 'geometry_above_v_planah' };
+    }
+
+    let menuContainer = vPlanahEl.parentElement;
+    for (let d = 0; d < 4; d++) {
+        if (!menuContainer || menuContainer.tagName === 'BODY') break;
+        const txt = menuContainer.innerText || '';
+        if (txt.includes('В планах') && txt.includes('Прочитано') && txt.includes('Читаю')) {
+            const items = Array.from(menuContainer.querySelectorAll('button, [role="button"], li, div, span')).filter(el => {
+                return isVis(el) && (el.innerText || el.textContent || '').trim() === 'Читаю' && el.children.length <= 2;
+            });
+            if (items.length > 0) {
+                const target = items[0].closest('button, [role="button"], li') || items[0];
+                try { target.click(); } catch (e) {}
+                return { ok: true, method: 'container_lookup' };
+            }
+            break;
+        }
+        menuContainer = menuContainer.parentElement;
+    }
+
+    return { ok: false, reason: 'read_item_not_found' };
+})();
+"""
+
+JS_CLOSE_ANY_BOOKMARK_MODAL = r"""
+(() => {
+    function isVis(el) {
+        if (!el || !el.isConnected) return false;
+        const st = window.getComputedStyle(el);
+        if (st.display === 'none' || st.visibility === 'hidden' || parseFloat(st.opacity) === 0) return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 5 && r.height > 5;
+    }
+    const cancelBtn = Array.from(document.querySelectorAll('button, [role="button"], div, span')).find(
+        el => isVis(el) && (el.innerText || el.textContent || '').trim() === 'Отмена'
+    );
+    if (cancelBtn) {
+        const t = cancelBtn.closest('button, [role="button"]') || cancelBtn;
+        try { t.click(); } catch (e) {}
+    }
+    try {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+    } catch (e) {}
+})();
+"""
+
+JS_READ_OWN_BOOKMARKS_COUNT = r"""
+(() => {
+    const bodyTxt = document.body ? (document.body.innerText || '') : '';
+    const mRead = bodyTxt.match(/Читаю\s+(\d+)/);
+    if (mRead) return parseInt(mRead[1], 10);
+    const mAll = bodyTxt.match(/Все\s+(\d+)/);
+    if (mAll) return parseInt(mAll[1], 10);
+    return -1;
+})();
+"""
+
+
+async def _scroll_to_load_all_235_bookmarks(page: Page, acc_label: str) -> list[str]:
+    """
+    Плавно долистывает страницу https://senkuro.com/users/ber_turtle/bookmarks/manga до самого конца (все 235 карточек),
+    убеждается, что последняя карточка загружена, и возвращает полный список из 235 манхв по порядку!
+    """
+    await page.evaluate(JS_INSTALL_NO_MANGA_NAV)
+    prev_cnt = 0
+    stall_rounds = 0
+
+    for step in range(95):
+        if FARM_STOP_FLAG:
+            break
+        cur_cnt = int(await page.evaluate(JS_COUNT_CARD_READ_BUTTONS) or 0)
+        if cur_cnt >= 235:
+            log_debug(f"[BM SCROLL OK] {acc_label}: загружены все {cur_cnt}/235 карточек на шаге {step + 1}!")
+            break
+        if cur_cnt > prev_cnt:
+            prev_cnt = cur_cnt
+            stall_rounds = 0
+        else:
+            stall_rounds += 1
+
+        if stall_rounds >= 4:
+            await page.evaluate("window.scrollBy({ top: -450, behavior: 'instant' })")
+            await page.wait_for_timeout(600)
+            await page.evaluate("window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' })")
+        else:
+            await page.evaluate("window.scrollBy({ top: 850, behavior: 'smooth' })")
+
+        await page.wait_for_timeout(int(random.uniform(1300, 1900)))
+        if stall_rounds >= 14 and cur_cnt >= 200:
+            break
+
+    slugs = await page.evaluate(JS_GET_CARD_SLUGS_IN_DOM) or []
+    await page.evaluate("window.scrollTo({ top: 0, behavior: 'instant' })")
+    await page.wait_for_timeout(1000)
+    log_debug(f"[BM SCROLL DONE] {acc_label}: итого в DOM найдено {len(slugs)} уникальных тайтлов.")
+    return list(slugs)
+
+
+async def _add_single_bookmark_on_account_page(page: Page, slug: str, acc_id: str) -> bool:
+    """
+    Добавляет 1 тайтл (по его slug) в папку «Читаю» прямо на странице /users/ber_turtle/bookmarks/manga:
+    1) Нажимает кнопку «Читаю» в левом верхнем углу карточки
+    2) В открывшемся окне «Управление закладкой» нажимает «Добавить в список»
+    3) В выпадающем списке выбирает «Читаю» (строго над «В планах»)
+    """
+    await page.evaluate(JS_INSTALL_NO_MANGA_NAV)
+    for attempt in range(2):
+        if FARM_STOP_FLAG:
+            return False
+        if "/users/ber_turtle/bookmarks" not in page.url:
+            try:
+                await page.goto(SOURCE_BOOKMARKS_URL, wait_until="domcontentloaded", timeout=35000)
+                await page.wait_for_timeout(2000)
+                await page.evaluate(JS_INSTALL_NO_MANGA_NAV)
+            except Exception:
+                pass
+
+        open_res = await page.evaluate(JS_OPEN_CARD_BOOKMARK_MODAL_BY_SLUG, slug) or {}
+        if not open_res.get("ok"):
+            for _ in range(15):
+                await page.evaluate("window.scrollBy({ top: 700, behavior: 'instant' })")
+                await page.wait_for_timeout(350)
+                open_res = await page.evaluate(JS_OPEN_CARD_BOOKMARK_MODAL_BY_SLUG, slug) or {}
+                if open_res.get("ok"):
+                    break
+            if not open_res.get("ok"):
+                return False
+
+        modal_status = "modal_not_ready"
+        for _ in range(10):
+            await page.wait_for_timeout(280)
+            m_res = await page.evaluate(JS_CLICK_ADD_TO_LIST_IN_MODAL) or {}
+            modal_status = m_res.get("status", "modal_not_ready")
+            if modal_status in ("clicked_add", "already_in_list"):
+                break
+
+        if modal_status == "already_in_list":
+            await page.wait_for_timeout(300)
+            return True
+
+        if modal_status != "clicked_add":
+            await page.evaluate(JS_CLOSE_ANY_BOOKMARK_MODAL)
+            await page.wait_for_timeout(400)
+            continue
+
+        picked_ok = False
+        for _ in range(10):
+            await page.wait_for_timeout(280)
+            d_res = await page.evaluate(JS_CLICK_READ_FOLDER_IN_DROPDOWN) or {}
+            if d_res.get("ok"):
+                picked_ok = True
+                break
+
+        await page.wait_for_timeout(500)
+        await page.evaluate(JS_CLOSE_ANY_BOOKMARK_MODAL)
+        if picked_ok:
+            return True
+
+    return False
+
+
+async def run_v33_onboarding_and_bookmark_sync(force_run: bool = False) -> None:
+    """
+    Полный автоматический сценарий v33.0:
+    1) Проверяет вход, пароли и уникальные IP на ВСЕХ 12 аккаунтах (#1–#12) и присылает подробный отчёт.
+    2) Открывает 5 нужных аккаунтов (#1 ber_turtle + новые #9 begbug, #10 irola, #11 darkcore, #12 neragar).
+    3) Долистывает закладки #1 (ber_turtle) до самого конца (все 235 шт.) и параллельно на 4 новых аккаунтах
+       добавляет все 235 тайтлов в папку «Читаю» с человеческими задержками.
+    4) Присылает отчёт о прогрессе через 5 минут после начала, затем каждые 20 минут, и финальный отчёт по завершении!
+    """
+    global FARM_STOP_FLAG
+    FARM_STOP_FLAG = False
+
+    if not force_run and BOOKMARKS_SYNC_DONE_FILE.exists():
+        try:
+            done_data = json.loads(BOOKMARKS_SYNC_DONE_FILE.read_text(encoding="utf-8"))
+            if done_data.get("completed"):
+                log_debug("[BM SYNC SKIP] Все 235 закладок для #9–#12 уже были синхронизированы ранее.")
+                return
+        except Exception:
+            pass
+
+    send_tg_message(
+        "🔍 <b>[Шаг 1/2 v33.0] Проверяю вход, пароли и уникальные IP на всех 12 фарм-аккаунтах (#1–#12)...</b>",
+        add_keyboard=True,
+    )
+
+    proxy_mgr = AccountProxyManager()
+    auth_lines = ["✅ <b>Отчёт проверки входа на все 12 аккаунтов (v33.0):</b>\n"]
+    auth_ok_count = 0
+
+    try:
+        async with async_playwright() as p:
+            browser = await launch_senkuro_browser(p)
+
+            # ЭТАП 1: Проверяем вход на все 12 аккаунтов (#1..#12)
+            for acc in FARM_ACCOUNTS:
+                if FARM_STOP_FLAG:
+                    break
+                aid = acc["id"]
+                idx_v = int(acc["idx"])
+                proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
+                ip_used = proxy_mgr.active_ips.get(acc["acc_id"], acc["pinned_ip"])
+                log_debug(f"[ONBOARD AUTH] #{idx_v}/12 {aid} -> IP: {ip_used}")
+                ctx = await create_account_context(browser, acc, proxy_url)
+                try:
+                    page, user_obj = await ensure_logged_in(ctx, acc)
+                    if user_obj and user_obj.get("id"):
+                        auth_ok_count += 1
+                        uid_str = str(user_obj["id"])
+                        save_known_user_id(aid, uid_str)
+                        await ctx.storage_state(path=str(get_session_file(aid)))
+                        auth_lines.append(f"🟢 <b>#{idx_v} {aid}</b> — IP: <code>{ip_used}</code> ✅ (вход выполнен)")
+                    else:
+                        auth_lines.append(f"❌ <b>#{idx_v} {aid}</b> — IP: <code>{ip_used}</code> ⚠️ (не удалось войти, проверьте пароль #{idx_v})")
+                finally:
+                    ACTIVE_BROWSER_PAGES.pop(aid, None)
+                    try:
+                        await ctx.close()
+                    except Exception:
+                        pass
+
+            auth_lines.insert(1, f"📊 <b>Успешно авторизовано: {auth_ok_count} из 12 аккаунтов</b>\n")
+            send_tg_message("\n".join(auth_lines), add_keyboard=True)
+
+            if FARM_STOP_FLAG:
+                await browser.close()
+                return
+
+            target_new_accs = [a for a in FARM_ACCOUNTS if int(a["idx"]) in (9, 10, 11, 12)]
+            source_acc = FARM_ACCOUNTS[0]  # #1 ber_turtle
+
+            send_tg_message(
+                "📚 <b>[Шаг 2/2 v33.0] Запуск синхронизации 235 закладок манги:</b>\n\n"
+                "Открываю 5 нужных аккаунтов: источник <b>#1 (ber_turtle)</b> и 4 новых — "
+                "<b>#9 (begbug), #10 (irola), #11 (darkcore), #12 (neragar)</b>.\n"
+                "⏳ Долистываю список закладок <code>ber_turtle</code> до самого конца (235 тайтлов) и начинаю параллельное добавление в «Читаю» с человеческими задержками.\n\n"
+                "🕒 <b>Первый отчёт о прогрессе придёт через 5 минут, далее — каждые 20 минут!</b>",
+                add_keyboard=True,
+            )
+
+            src_proxy = await asyncio.to_thread(proxy_mgr.start_account_proxy, source_acc)
+            src_ctx = await create_account_context(browser, source_acc, src_proxy)
+            src_page, _ = await ensure_logged_in(src_ctx, source_acc)
+            await src_page.goto(SOURCE_BOOKMARKS_URL, wait_until="domcontentloaded", timeout=40000)
+            await src_page.wait_for_timeout(2000)
+
+            new_sessions = []
+            for n_acc in target_new_accs:
+                if FARM_STOP_FLAG:
+                    break
+                n_proxy = await asyncio.to_thread(proxy_mgr.start_account_proxy, n_acc)
+                n_ip = proxy_mgr.active_ips.get(n_acc["acc_id"], n_acc["pinned_ip"])
+                n_ctx = await create_account_context(browser, n_acc, n_proxy)
+                n_page, n_u = await ensure_logged_in(n_ctx, n_acc)
+                await n_page.goto(SOURCE_BOOKMARKS_URL, wait_until="domcontentloaded", timeout=40000)
+                await n_page.wait_for_timeout(2000)
+                await n_page.evaluate(JS_INSTALL_NO_MANGA_NAV)
+                ACTIVE_BROWSER_PAGES[n_acc["id"]] = n_page
+                new_sessions.append(
+                    {
+                        "acc": n_acc,
+                        "ctx": n_ctx,
+                        "page": n_page,
+                        "ip": n_ip,
+                        "added_count": 0,
+                        "done_slugs": set(),
+                    }
+                )
+
+            log_debug("[BM SYNC] Долистываю закладки ber_turtle до конца (235 шт.) на #1 и #9–#12...")
+            scroll_tasks = [_scroll_to_load_all_235_bookmarks(src_page, "#1 ber_turtle")]
+            for ns in new_sessions:
+                scroll_tasks.append(_scroll_to_load_all_235_bookmarks(ns["page"], f"#{ns['acc']['idx']} {ns['acc']['id']}"))
+            scroll_results = await asyncio.gather(*scroll_tasks, return_exceptions=True)
+
+            master_slugs: list[str] = []
+            for res_list in scroll_results:
+                if isinstance(res_list, list) and len(res_list) > len(master_slugs):
+                    master_slugs = res_list
+
+            total_to_sync = len(master_slugs)
+            log_debug(f"[BM SYNC MASTER LIST] Считано с #1 ber_turtle тайтлов: {total_to_sync} шт.")
+
+            ACTIVE_BROWSER_PAGES.pop(source_acc["id"], None)
+            try:
+                await src_ctx.close()
+            except Exception:
+                pass
+
+            sync_start_ts = time.time()
+            sent_5min_report = False
+            last_periodic_report_ts = sync_start_ts
+
+            for idx_m, m_slug in enumerate(master_slugs, start=1):
+                if FARM_STOP_FLAG:
+                    break
+
+                add_coros = []
+                for ns in new_sessions:
+                    add_coros.append(_add_single_bookmark_on_account_page(ns["page"], m_slug, ns["acc"]["id"]))
+                results_step = await asyncio.gather(*add_coros, return_exceptions=True)
+
+                for ns, r_ok in zip(new_sessions, results_step):
+                    if r_ok is True:
+                        ns["done_slugs"].add(m_slug)
+                        ns["added_count"] = len(ns["done_slugs"])
+
+                await asyncio.sleep(random.uniform(3.8, 5.6))
+
+                if idx_m % 25 == 0:
+                    for ns in new_sessions:
+                        try:
+                            await ns["ctx"].storage_state(path=str(get_session_file(ns["acc"]["id"])))
+                        except Exception:
+                            pass
+
+                now_ts = time.time()
+                elapsed_sec = now_ts - sync_start_ts
+
+                if not sent_5min_report and elapsed_sec >= 300:
+                    sent_5min_report = True
+                    last_periodic_report_ts = now_ts
+                    prog_lines = [
+                        f"⏱ <b>[Отчёт через 5 минут] Синхронизация закладок идёт штатно!</b>",
+                        f"📖 Считано с <b>#1 (ber_turtle)</b>: <b>{total_to_sync}</b> закладок (пройдено по списку: <b>{idx_m}/{total_to_sync}</b>)\n",
+                    ]
+                    for ns in new_sessions:
+                        prog_lines.append(
+                            f"• <b>#{ns['acc']['idx']} {ns['acc']['id']}</b> (IP: <code>{ns['ip']}</code>): добавлено <b>{ns['added_count']} / {total_to_sync}</b> 📁"
+                        )
+                    prog_lines.append("\n🕒 <i>Следующий отчёт о прогрессе придёт через 20 минут!</i>")
+                    send_tg_message("\n".join(prog_lines), add_keyboard=True)
+
+                elif sent_5min_report and (now_ts - last_periodic_report_ts >= 1200):
+                    last_periodic_report_ts = now_ts
+                    el_m = int(elapsed_sec // 60)
+                    prog_lines = [
+                        f"📊 <b>[Прогресс синхронизации — {el_m} мин в работе]</b>",
+                        f"📖 Пройдено по списку <b>#1 (ber_turtle)</b>: <b>{idx_m}/{total_to_sync}</b>\n",
+                    ]
+                    for ns in new_sessions:
+                        prog_lines.append(
+                            f"• <b>#{ns['acc']['idx']} {ns['acc']['id']}</b> (IP: <code>{ns['ip']}</code>): добавлено <b>{ns['added_count']} / {total_to_sync}</b> 📁"
+                        )
+                    send_tg_message("\n".join(prog_lines), add_keyboard=True)
+
+            for ns in new_sessions:
+                if FARM_STOP_FLAG:
+                    break
+                missing_slugs = [s for s in master_slugs if s not in ns["done_slugs"]]
+                if missing_slugs:
+                    log_debug(f"[BM SYNC RETRY] #{ns['acc']['idx']} {ns['acc']['id']}: добираю {len(missing_slugs)} пропущенных тайтлов...")
+                    await ns["page"].goto(SOURCE_BOOKMARKS_URL, wait_until="domcontentloaded", timeout=35000)
+                    await ns["page"].wait_for_timeout(1500)
+                    await _scroll_to_load_all_235_bookmarks(ns["page"], ns["acc"]["id"])
+                    for m_slug in missing_slugs:
+                        if FARM_STOP_FLAG:
+                            break
+                        if await _add_single_bookmark_on_account_page(ns["page"], m_slug, ns["acc"]["id"]):
+                            ns["done_slugs"].add(m_slug)
+                            ns["added_count"] = len(ns["done_slugs"])
+                        await asyncio.sleep(random.uniform(3.2, 4.8))
+
+            final_counts: dict[str, int] = {}
+            for ns in new_sessions:
+                if FARM_STOP_FLAG:
+                    break
+                aid = ns["acc"]["id"]
+                own_bm_url = f"https://senkuro.com/users/{aid}/bookmarks/manga"
+                try:
+                    await ns["page"].goto(own_bm_url, wait_until="domcontentloaded", timeout=35000)
+                    await ns["page"].wait_for_timeout(2500)
+                    cnt_dom = int(await ns["page"].evaluate(JS_READ_OWN_BOOKMARKS_COUNT) or -1)
+                    final_counts[aid] = cnt_dom if cnt_dom >= 0 else ns["added_count"]
+                except Exception:
+                    final_counts[aid] = ns["added_count"]
+                try:
+                    await ns["ctx"].storage_state(path=str(get_session_file(aid)))
+                except Exception:
+                    pass
+
+            for ns in new_sessions:
+                ACTIVE_BROWSER_PAGES.pop(ns["acc"]["id"], None)
+                try:
+                    await ns["ctx"].close()
+                except Exception:
+                    pass
+
+            await browser.close()
+
+            if not FARM_STOP_FLAG:
+                try:
+                    BOOKMARKS_SYNC_DONE_FILE.write_text(
+                        json.dumps({"completed": True, "total": total_to_sync, "counts": final_counts, "ts": time.time()}),
+                        encoding="utf-8",
+                    )
+                except Exception:
+                    pass
+
+                fin_lines = [
+                    "🎉 <b>Добавление всех закладок на 4 новых аккаунта (#9–#12) полностью завершено!</b>\n",
+                    f"📖 Всего считано с <b>#1 (ber_turtle)</b>: <b>{total_to_sync}</b> закладок",
+                    "📊 <b>Итоговое количество закладок «Читаю» на новых аккаунтах:</b>",
+                ]
+                for ns in new_sessions:
+                    aid = ns["acc"]["id"]
+                    f_cnt = final_counts.get(aid, ns["added_count"])
+                    fin_lines.append(
+                        f"• <b>#{ns['acc']['idx']} {aid}</b> (<a href='https://senkuro.com/users/{aid}/bookmarks/manga'>профиль</a>): <b>{f_cnt} / {total_to_sync}</b> ✅"
+                    )
+                fin_lines.append(
+                    "\n👉 <b>Пожалуйста, зайдите и проверьте закладки на всех четырёх аккаунтах!</b>\n"
+                    "Как только убедитесь, что всё на месте — напишите мне в чат, и мы выпустим чистую финальную версию <b>v34.0</b> на 12 аккаунтов без блока синхронизации закладок."
+                )
+                send_tg_message("\n".join(fin_lines), add_keyboard=True)
+    finally:
+        proxy_mgr.stop_all()
+
+
+# ==============================================================================
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v33.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -4906,7 +5555,7 @@ async def run_background_8h_farm(base_elapsed_minutes: int = 0, segment_hours: f
 
     if base_elapsed_minutes == 0:
         send_tg_message(
-            "🚀 <b>Запускаю 8-часовой фарм манги на всех 8 аккаунтах!</b>\n"
+            "🚀 <b>Запускаю 8-часовой фарм манги на всех 12 аккаунтах!</b>\n"
             "Поднимаю виртуальный экран, 8 уникальных IP, вхожу в аккаунты, выбираю мангу снизу закладок и пришлю сводку через ~40 сек...",
             add_keyboard=True,
         )
@@ -4930,9 +5579,9 @@ async def run_background_8h_farm(base_elapsed_minutes: int = 0, segment_hours: f
                     break
                 proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
                 ip_used = proxy_mgr.active_ips.get(acc["acc_id"], acc["pinned_ip"])
-                log_debug(f"[FARM STEP] #{acc['idx']}/8 {acc['id']} -> IP: {ip_used}")
+                log_debug(f"[FARM STEP] #{acc['idx']}/12 {acc['id']} -> IP: {ip_used}")
                 send_tg_message(
-                    f"⏳ <b>[Фарм {acc['idx']}/8] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): вхожу в профиль, открываю закладки и листаю в самый низ...",
+                    f"⏳ <b>[Фарм {acc['idx']}/12] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): вхожу в профиль, открываю закладки и листаю в самый низ...",
                     add_keyboard=False,
                 )
                 ctx = await create_account_context(browser, acc, proxy_url)
@@ -5087,7 +5736,7 @@ async def run_background_8h_farm(base_elapsed_minutes: int = 0, segment_hours: f
                 log_debug(f"[FARM COMPLETE] 8 часов фарма ({final_elapsed} мин) полностью отработаны!")
                 send_tg_message(
                     "🏁 <b>8 часов фарма манги полностью завершены!</b>\n"
-                    "Все 8 аккаунтов остановлены, прогресс чтения и сессии сохранены.\n\n"
+                    "Все 12 аккаунтов остановлены, прогресс чтения и сессии сохранены.\n\n"
                     + format_farm_status_message(final_snap),
                     add_keyboard=True,
                 )
@@ -5134,7 +5783,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     FARM_STOP_FLAG = False
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v32.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v33.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -5173,8 +5822,12 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
         await run_smart_forge_and_trade_pipeline()
     elif action == "check":
         await run_check_all_5_accounts()
+    elif action == "sync_bookmarks":
+        await run_v33_onboarding_and_bookmark_sync(force_run=True)
+    elif action == "sync_bookmarks_auto":
+        await run_v33_onboarding_and_bookmark_sync(force_run=False)
     elif action == "log":
-        send_full_debug_log_to_user("Полный лог работы комбайна v32.0")
+        send_full_debug_log_to_user("Полный лог работы комбайна v33.0")
     elif action == "screen":
         await send_live_screen_snapshot()
 
@@ -5263,7 +5916,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             await perform_hard_stop_and_reset(task_queue)
             send_tg_message(
                 "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
-                "🟢 <b>Сервер перезапущен в чистый режим ожидания (v32.0)</b> — можете сразу нажимать любую кнопку ниже:",
+                "🟢 <b>Сервер перезапущен в чистый режим ожидания (v33.0)</b> — можете сразу нажимать любую кнопку ниже:",
                 add_keyboard=True,
             )
             return
@@ -5275,7 +5928,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            send_full_debug_log_to_user("Полный лог работы комбайна v32.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v33.0")
             return
 
         if data == "check_farm_status":
@@ -5297,8 +5950,8 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         action_map = {
-            "start_farm_8h": ("farm", "▶️ Запускаю 8-часовой фарм манги на 8 аккаунтах!"),
-            "check_balance": ("balance", "🪙 Проверяю баланс сенкоинов на 8 фарм-аккаунтах..."),
+            "start_farm_8h": ("farm", "▶️ Запускаю 8-часовой фарм манги на 12 аккаунтах!"),
+            "check_balance": ("balance", "🪙 Проверяю баланс сенкоинов на 12 фарм-аккаунтах..."),
             "roll_packs": ("packs", "🎴 Запускаю прокрутку паков «Хардкор» (480 🪙)..."),
             "run_forge": ("forge", "⚒️ Запускаю Переплавку (Кузня) + Трейд на основу..."),
             "check_senkuro": ("check", "🔄 Проверяю карты и осколки всех 9 аккаунтов..."),
@@ -5324,7 +5977,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if lower in ("/start", "/menu", "/help", "меню"):
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v32.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v33.0</b>\n\n"
                 "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
                 "или просто напишите промокод одним словом в чат:",
                 add_keyboard=True,
@@ -5337,14 +5990,14 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
-            send_full_debug_log_to_user("Полный лог работы комбайна v32.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v33.0")
             return
 
         if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
             await perform_hard_stop_and_reset(task_queue)
             send_tg_message(
                 "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
-                "🟢 <b>Сервер перезапущен в чистый режим ожидания (v32.0)</b> — можете сразу нажимать любую кнопку ниже:",
+                "🟢 <b>Сервер перезапущен в чистый режим ожидания (v33.0)</b> — можете сразу нажимать любую кнопку ниже:",
                 add_keyboard=True,
             )
             return
@@ -5389,7 +6042,10 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             "⚒️ кузня+трейд": "forge",
             "⚒️ кузня + трейд": "forge",
             "⚒️ переплавка + трейд": "forge",
+            "/sync": "sync_bookmarks",
             "/check": "check",
+            "🔄 чекать 13": "check",
+            "🔄 чекать 12": "check",
             "🔄 чекать 9": "check",
             "🔄 чекать 9 акков": "check",
             "🔄 чекать 5": "check",
@@ -5414,7 +6070,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             or (" " in raw_text)
             or ("," in raw_text)
             or len(raw_text) <= 3
-            or bool(re.match(r"^[1-8][rрsыaаbвбcсцdдfф]+$", lower))
+            or bool(re.match(r"^(?:1[0-2]|[1-9])[rрsыaаbвбcсцdдfф]+$", lower))
         )
         if is_explicit_trade_cmd:
             parsed_tr = parse_custom_trade_spec(raw_text)
@@ -5464,11 +6120,11 @@ async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: fl
     loaded_idxs = [str(a["idx"]) for a in FARM_ACCOUNTS if a.get("password")]
     log_debug(
         f"[DAEMON READY] Прямой Telegram Long Polling запущен (offset={offset}, workflow={yml_ver}, "
-        f"пароли загружены для {len(loaded_idxs)}/8 акков: {loaded_idxs or 'НЕТ (обновите .github/workflows/check_senkuro.yml!)'}) — сервер 100% готов!"
+        f"пароли загружены для {len(loaded_idxs)}/12 акков: {loaded_idxs or 'НЕТ (обновите .github/workflows/check_senkuro.yml!)'}) — сервер 100% готов!"
     )
     if os.environ.get("GH_EVENT_NAME") in ("push", "workflow_dispatch") and os.environ.get("IS_CONTINUATION_JOB") != "true":
         send_tg_message(
-            "🟢 <b>Сервер полностью запущен и готов к работе (v32.0)!</b>\n\n"
+            "🟢 <b>Сервер полностью запущен и готов к работе (v33.0)!</b>\n\n"
             "Браузер Google Chrome и виртуальный экран готовы — теперь любая кнопка сработает сразу 👇:",
             add_keyboard=True,
         )
@@ -5537,11 +6193,11 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v32.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v33.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",
-        choices=["check", "menu", "daemon", "promo", "balance", "packs", "forge", "trade", "farm", "farm_part1", "farm_part2", "farm_status", "all"],
+        choices=["check", "menu", "daemon", "promo", "balance", "packs", "forge", "trade", "sync_bookmarks", "farm", "farm_part1", "farm_part2", "farm_status", "all"],
     )
     parser.add_argument(
         "--promo-code",
@@ -5628,6 +6284,9 @@ async def async_main() -> None:
             await execute_single_action("farm", "")
         else:
             await PENDING_TASKS.put((args.action, args.promo_code))
+    elif not BOOKMARKS_SYNC_DONE_FILE.exists() and os.environ.get("IS_CONTINUATION_JOB") != "true":
+        # В версии v33.0 при первом запуске автоматически проверяем вход на все 12 аккаунтов и переносим 235 закладок на #9–#12!
+        await PENDING_TASKS.put(("sync_bookmarks_auto", ""))
 
     if os.environ.get("GITHUB_ACTIONS") != "true":
         # Локальный однократный запуск вне GitHub Actions
