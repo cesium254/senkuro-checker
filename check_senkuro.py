@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v33.0 (8 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
+SENKURO FULL AUTOMATION COMBINE v34.0 (8 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -4893,10 +4893,10 @@ async def run_check_all_5_accounts() -> None:
 
 
 # ==============================================================================
-# 10.5. СЦЕНАРИЙ v33.0: АВТО-ПРОВЕРКА ВСЕХ 12 АККАУНТОВ И ПЕРЕНОС 235 ЗАКЛАДОК НА #9–#12
+# 10.5. СЦЕНАРИЙ v34.0: АВТО-ДОБОР ВСЕХ 235 ЗАКЛАДОК ДО 235/235 НА АККАУНТАХ #9–#12
 # ==============================================================================
 
-BOOKMARKS_SYNC_DONE_FILE = SESSIONS_DIR / "bookmarks_synced_v33.json"
+BOOKMARKS_SYNC_DONE_FILE = SESSIONS_DIR / "bookmarks_synced_v34.json"
 SOURCE_BOOKMARKS_URL = "https://senkuro.com/users/ber_turtle/bookmarks/manga"
 CURRENT_BM_SYNC_STATUS: dict[str, Any] = {"active": False, "text": ""}
 
@@ -4910,6 +4910,27 @@ JS_INSTALL_NO_MANGA_NAV = r"""
             e.preventDefault();
         }
     }, true);
+})();
+"""
+
+JS_GET_VISIBLE_MANGA_SLUGS = r"""
+(() => {
+    const allLinks = Array.from(document.querySelectorAll('a[href*="/manga/"]')).filter(a => {
+        if (a.closest('footer') || a.closest('header')) return false;
+        const h = a.getAttribute('href') || '';
+        return (h.startsWith('/manga/') || h.includes('senkuro.com/manga/')) && !h.includes('/chapters/');
+    });
+    const out = [];
+    const seen = new Set();
+    for (const a of allLinks) {
+        const m = (a.getAttribute('href') || '').match(/\/manga\/([^/?#]+)/);
+        if (m && !seen.has(m[1])) {
+            seen.add(m[1]);
+            out.push(m[1]);
+        }
+    }
+    const atBottom = (window.innerHeight + window.scrollY) >= (document.documentElement.scrollHeight - 80);
+    return { slugs: out, atBottom: atBottom };
 })();
 """
 
@@ -4948,7 +4969,6 @@ JS_FIND_NEXT_UNPROCESSED_CARD_PILL = r"""
     }
 
     const linkEl = nextItem.linkEl;
-    // Поднимаемся к корневому контейнеру этой одной карточки (пока внутри ровно 1 уникальный тайтл)
     let cardRoot = linkEl;
     for (let d = 0; d < 5; d++) {
         if (!cardRoot.parentElement || cardRoot.parentElement.tagName === 'BODY') break;
@@ -4966,8 +4986,7 @@ JS_FIND_NEXT_UNPROCESSED_CARD_PILL = r"""
     cardRoot.scrollIntoView({ block: 'center', behavior: 'instant' });
     const cardRect = cardRoot.getBoundingClientRect();
 
-    // ВАЖНО: ищем ТОЛЬКО маленькую плашку «📁 Читаю v» в левом верхнем углу карточки (высота 14..48px, ширина 35..170px, текст строго «Читаю»),
-    // чтобы НИКОГДА не кликнуть по внешнему контейнеру всей карточки!
+    // Ищем маленькую плашку «📁 Читаю v» в левом верхнем углу карточки (высота 14..50px, ширина 30..175px)
     const innerEls = Array.from(cardRoot.querySelectorAll('button, [role="button"], div, span')).filter(el => {
         if (!isVis(el)) return false;
         const t = (el.innerText || el.textContent || '').trim();
@@ -4981,7 +5000,6 @@ JS_FIND_NEXT_UNPROCESSED_CARD_PILL = r"""
     let matchedTag = 'fallback_top_left';
 
     if (innerEls.length > 0) {
-        // Предпочитаем <button> или самый компактный элемент плашки
         const btnEl = innerEls.find(e => e.tagName === 'BUTTON' || e.getAttribute('role') === 'button') || innerEls[innerEls.length - 1];
         const br = btnEl.getBoundingClientRect();
         pillX = br.left + br.width / 2;
@@ -5016,12 +5034,12 @@ JS_FIND_ADD_TO_LIST_BTN_IN_MODAL = r"""
 
     const allVis = Array.from(document.querySelectorAll('button, [role="button"], div, span')).filter(isVis);
 
-    // Ищем синюю кнопку «Добавить в список» (высота 20..65px, ширина 70..380px)
+    // Ищем синюю кнопку «Добавить в список» в центре экрана (x >= 420, y >= 250)
     const addCandidates = allVis.filter(el => {
         const t = (el.innerText || el.textContent || '').trim();
         if (t !== 'Добавить в список' && !t.includes('Добавить в список')) return false;
         const r = el.getBoundingClientRect();
-        return r.height >= 20 && r.height <= 68 && r.width >= 70 && r.width <= 380;
+        return r.left >= 400 && r.top >= 220 && r.height >= 20 && r.height <= 68 && r.width >= 70 && r.width <= 380;
     });
 
     if (addCandidates.length > 0) {
@@ -5039,7 +5057,7 @@ JS_FIND_ADD_TO_LIST_BTN_IN_MODAL = r"""
         const t = (el.innerText || el.textContent || '').trim();
         if (t !== 'Отмена') return false;
         const r = el.getBoundingClientRect();
-        return r.height >= 20 && r.height <= 68 && r.width >= 60 && r.width <= 350;
+        return r.left >= 300 && r.top >= 220 && r.height >= 20 && r.height <= 68 && r.width >= 60 && r.width <= 350;
     });
     const hasModalTitle = allVis.some(el => (el.innerText || el.textContent || '').trim() === 'Управление закладкой');
 
@@ -5068,12 +5086,13 @@ JS_FIND_READ_OPTION_IN_DROPDOWN = r"""
     }
 
     const allVis = Array.from(document.querySelectorAll('button, [role="button"], li, div, span')).filter(isVis);
-    // Находим пункт «В планах» в открывшемся выпадающем списке папок
+    // ВАЖНО: Ищем пункт «В планах» СТРОГО в центральном выпадающем меню модалки (r.left >= 450, r.top >= 320),
+    // чтобы НИКОГДА не спутать его с верхней вкладкой «📁 В планах» в шапке страницы (которая находится на x=305, y=140)!
     const vPlanahCandidates = allVis.filter(el => {
         const t = (el.innerText || el.textContent || '').trim();
         if (t !== 'В планах') return false;
         const r = el.getBoundingClientRect();
-        return r.height >= 16 && r.height <= 65 && r.width >= 40 && r.width <= 380;
+        return r.left >= 450 && r.top >= 320 && r.height >= 16 && r.height <= 65 && r.width >= 40 && r.width <= 380;
     });
 
     if (vPlanahCandidates.length === 0) {
@@ -5083,12 +5102,12 @@ JS_FIND_READ_OPTION_IN_DROPDOWN = r"""
     const vpEl = vPlanahCandidates[vPlanahCandidates.length - 1];
     const vpRect = vpEl.getBoundingClientRect();
 
-    // Ищем пункт «Читаю», который расположен в том же выпадающем меню прямо НАД «В планах»
+    // Ищем пункт «Читаю», который расположен в том же центральном выпадающем меню прямо НАД «В планах» (около x=676, y=537..548)
     const readCandidates = allVis.filter(el => {
         const t = (el.innerText || el.textContent || '').trim();
         if (t !== 'Читаю') return false;
         const r = el.getBoundingClientRect();
-        if (r.height < 14 || r.height > 65 || r.width < 35 || r.width > 380) return false;
+        if (r.left < 450 || r.top < 280 || r.height < 14 || r.height > 65 || r.width < 35 || r.width > 380) return false;
         const sameColumn = Math.abs(r.left - vpRect.left) < 45;
         const rightAbove = (vpRect.top - r.top) >= 12 && (vpRect.top - r.top) <= 90;
         return sameColumn && rightAbove;
@@ -5105,13 +5124,22 @@ JS_FIND_READ_OPTION_IN_DROPDOWN = r"""
         };
     }
 
-    // Геометрический резерв: строка «Читаю» находится ровно на 1 строку выше «В планах»
-    return {
-        ok: true,
-        x: Math.round(vpRect.left + Math.min(80, vpRect.width / 2)),
-        y: Math.round(vpRect.top - Math.max(28, vpRect.height * 0.9)),
-        method: 'geometric_offset_above_v_planah'
-    };
+    return { ok: false, reason: 'read_option_not_rendered_yet' };
+})();
+"""
+
+JS_IS_BOOKMARK_MODAL_STILL_OPEN = r"""
+(() => {
+    function isVis(el) {
+        if (!el || !el.isConnected) return false;
+        const st = window.getComputedStyle(el);
+        if (st.display === 'none' || st.visibility === 'hidden' || parseFloat(st.opacity) === 0) return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 5 && r.height > 5;
+    }
+    return Array.from(document.querySelectorAll('div, span, h2, h3')).some(
+        el => isVis(el) && (el.innerText || el.textContent || '').trim() === 'Управление закладкой'
+    );
 })();
 """
 
@@ -5128,7 +5156,7 @@ JS_CLOSE_ANY_BOOKMARK_MODAL = r"""
         if (!isVis(el)) return false;
         const t = (el.innerText || el.textContent || '').trim();
         const r = el.getBoundingClientRect();
-        return t === 'Отмена' && r.height <= 68;
+        return t === 'Отмена' && r.left >= 300 && r.top >= 220 && r.height <= 68;
     });
     if (cancelBtn) {
         const t = cancelBtn.closest('button, [role="button"]') || cancelBtn;
@@ -5152,14 +5180,53 @@ JS_READ_OWN_BOOKMARKS_COUNT = r"""
 """
 
 
+async def _scan_existing_bookmarks_on_own_profile(page: Page, aid: str) -> tuple[int, set[str]]:
+    """
+    Открывает личную страницу закладок аккаунта (https://senkuro.com/users/{aid}/bookmarks/manga),
+    считывает точный счётчик «Читаю N» и пролистывает уже добавленные тайтлы, чтобы НЕ кликать их повторно!
+    """
+    own_url = f"https://senkuro.com/users/{aid}/bookmarks/manga"
+    owned_slugs: set[str] = set()
+    dom_cnt = 0
+    try:
+        await page.goto(own_url, wait_until="domcontentloaded", timeout=35000)
+        await page.wait_for_timeout(2500)
+        await page.evaluate(JS_INSTALL_NO_MANGA_NAV)
+        dom_cnt = int(await page.evaluate(JS_READ_OWN_BOOKMARKS_COUNT) or 0)
+        if dom_cnt < 0:
+            dom_cnt = 0
+
+        if dom_cnt > 0:
+            stall = 0
+            for _ in range(30):
+                if FARM_STOP_FLAG:
+                    break
+                prev_len = len(owned_slugs)
+                vis_info = await page.evaluate(JS_GET_VISIBLE_MANGA_SLUGS) or {}
+                for s in vis_info.get("slugs") or []:
+                    owned_slugs.add(str(s))
+                if len(owned_slugs) >= dom_cnt or (vis_info.get("atBottom") and stall >= 2):
+                    break
+                if len(owned_slugs) == prev_len:
+                    stall += 1
+                else:
+                    stall = 0
+                await page.evaluate("window.scrollBy({ top: 750, behavior: 'instant' })")
+                await page.wait_for_timeout(650)
+    except Exception as e:
+        log_debug(f"[OWN BM SCAN WARN] {aid}: {e}")
+
+    log_debug(f"[OWN BM SCAN] {aid}: уже в «Читаю» = {dom_cnt} шт. (собрано слагов для быстрого пропуска: {len(owned_slugs)})")
+    return max(dom_cnt, len(owned_slugs)), owned_slugs
+
+
 async def _process_next_card_on_account(ns: dict, step_num: int) -> str:
     """
-    Находит следующую ещё не обработанную карточку на странице https://senkuro.com/users/ber_turtle/bookmarks/manga
+    Находит следующую ещё не добавленную карточку на странице https://senkuro.com/users/ber_turtle/bookmarks/manga
     и выполняет 3 реальных аппаратных клика мышью (page.mouse.click):
       1) Клик по плашке «📁 Читаю v» в левом верхнем углу карточки
       2) Клик по синей кнопке «🔖 Добавить в список» в модалке «Управление закладкой»
-      3) Клик по папке «📁 Читаю» (строго над «В планах») в выпадающем списке
-    Возвращает: 'added' | 'already' | 'scrolled' | 'finished' | 'retry'
+      3) Клик по папке «📁 Читаю» строго в центральном меню модалки (x >= 450, y >= 280, около (676, 537))
     """
     page: Page = ns["page"]
     aid: str = ns["acc"]["id"]
@@ -5168,28 +5235,26 @@ async def _process_next_card_on_account(ns: dict, step_num: int) -> str:
     if "/users/ber_turtle/bookmarks" not in page.url:
         try:
             await page.goto(SOURCE_BOOKMARKS_URL, wait_until="domcontentloaded", timeout=35000)
-            await page.wait_for_timeout(2000)
+            await page.wait_for_timeout(2200)
         except Exception:
             pass
 
     await page.evaluate(JS_INSTALL_NO_MANGA_NAV)
 
-    # Ищем следующую необработанную карточку в текущем видимом ряду
     card_info = await page.evaluate(JS_FIND_NEXT_UNPROCESSED_CARD_PILL, list(processed_slugs)) or {}
     if not card_info.get("found"):
-        # Все видимые сейчас карточки уже обработаны — листаем на 1-2 ряда вниз, как человек!
-        if card_info.get("atBottom") and len(processed_slugs) >= 230:
+        if card_info.get("atBottom") and ns[" scroll_stalls" if " scroll_stalls" in ns else "scroll_stalls"] >= 4:
             return "finished"
         ns["scroll_stalls"] = ns.get("scroll_stalls", 0) + 1
-        if ns["scroll_stalls"] >= 6:
-            if len(processed_slugs) >= 230 or ns["scroll_stalls"] >= 16:
-                return "finished"
-            await page.evaluate("window.scrollBy({ top: -400, behavior: 'instant' })")
-            await page.wait_for_timeout(500)
-            await page.evaluate("window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' })")
+        if ns["scroll_stalls"] >= 8:
+            return "finished"
+        if ns["scroll_stalls"] == 4:
+            await page.evaluate("window.scrollBy({ top: -350, behavior: 'instant' })")
+            await page.wait_for_timeout(450)
+            await page.evaluate("window.scrollBy({ top: 800, behavior: 'smooth' })")
         else:
-            await page.evaluate("window.scrollBy({ top: 520, behavior: 'smooth' })")
-        await page.wait_for_timeout(1400)
+            await page.evaluate("window.scrollBy({ top: 480, behavior: 'smooth' })")
+        await page.wait_for_timeout(1200)
         return "scrolled"
 
     ns["scroll_stalls"] = 0
@@ -5197,8 +5262,7 @@ async def _process_next_card_on_account(ns: dict, step_num: int) -> str:
     title_str = str(card_info.get("title") or slug)
     ns["last_title"] = title_str
 
-    # Перечитываем координаты после центрирования карточки
-    await page.wait_for_timeout(250)
+    await page.wait_for_timeout(300)
     card_info = await page.evaluate(JS_FIND_NEXT_UNPROCESSED_CARD_PILL, list(processed_slugs)) or card_info
     px = int(card_info.get("x") or 0)
     py = int(card_info.get("y") or 0)
@@ -5211,14 +5275,13 @@ async def _process_next_card_on_account(ns: dict, step_num: int) -> str:
     await page.mouse.click(px, py)
 
     modal_info: dict[str, Any] = {"status": "modal_not_open"}
-    for wait_i in range(10):
-        await page.wait_for_timeout(260)
+    for wait_i in range(12):
+        await page.wait_for_timeout(280)
         modal_info = await page.evaluate(JS_FIND_ADD_TO_LIST_BTN_IN_MODAL) or {}
         if modal_info.get("status") in ("ready_to_click_add", "already_in_list"):
             break
-        if wait_i == 4:
-            # Повторный клик чуть правее/ниже внутри плашки, если с 1-го раза попали в иконку
-            await page.mouse.click(px + 10, py)
+        if wait_i == 5:
+            await page.mouse.click(px + 8, py)
 
     st_modal = modal_info.get("status")
     if step_num <= 5:
@@ -5234,14 +5297,14 @@ async def _process_next_card_on_account(ns: dict, step_num: int) -> str:
         await page.wait_for_timeout(350)
         processed_slugs.add(slug)
         ns["done_slugs"].add(slug)
-        ns["added_count"] = len(ns["done_slugs"])
+        ns["added_count"] = max(ns["added_count"], len(ns["done_slugs"]))
         return "already"
 
     if st_modal != "ready_to_click_add":
         await page.evaluate(JS_CLOSE_ANY_BOOKMARK_MODAL)
         await page.wait_for_timeout(350)
         ns["fail_counts"][slug] = ns["fail_counts"].get(slug, 0) + 1
-        if ns["fail_counts"][slug] >= 2:
+        if ns["fail_counts"][slug] >= 3:
             processed_slugs.add(slug)
         return "retry"
 
@@ -5249,14 +5312,19 @@ async def _process_next_card_on_account(ns: dict, step_num: int) -> str:
     add_x = int(modal_info["x"])
     add_y = int(modal_info["y"])
     await page.mouse.click(add_x, add_y)
+    # Даём меню 450 мс плавно раскрыться в центре экрана
+    await page.wait_for_timeout(450)
 
-    # КЛИК 3: Ждём появления выпадающего списка («Читаю», «В планах», «Прочитано»...) и кликаем по «📁 Читаю»
+    # КЛИК 3: Ждём появления центрального выпадающего списка (x >= 450, y >= 320) и кликаем по «📁 Читаю»
     drop_info: dict[str, Any] = {"ok": False}
-    for _ in range(10):
-        await page.wait_for_timeout(260)
+    for wait_d in range(12):
         drop_info = await page.evaluate(JS_FIND_READ_OPTION_IN_DROPDOWN) or {}
         if drop_info.get("ok"):
             break
+        if wait_d == 5:
+            # Если с первого клика список папок не раскрылся — повторно кликаем по «Добавить в список»
+            await page.mouse.click(add_x, add_y)
+        await page.wait_for_timeout(280)
 
     if not drop_info.get("ok"):
         if step_num <= 5:
@@ -5264,35 +5332,39 @@ async def _process_next_card_on_account(ns: dict, step_num: int) -> str:
         await page.evaluate(JS_CLOSE_ANY_BOOKMARK_MODAL)
         await page.wait_for_timeout(350)
         ns["fail_counts"][slug] = ns["fail_counts"].get(slug, 0) + 1
-        if ns["fail_counts"][slug] >= 2:
+        if ns["fail_counts"][slug] >= 3:
             processed_slugs.add(slug)
         return "retry"
 
     read_x = int(drop_info["x"])
     read_y = int(drop_info["y"])
     await page.mouse.click(read_x, read_y)
+    await page.wait_for_timeout(700)
+
+    # Проверяем, закрылась ли модалка после выбора «Читаю»; если ещё открыта — дожимаем клик!
+    still_open = bool(await page.evaluate(JS_IS_BOOKMARK_MODAL_STILL_OPEN))
+    if still_open:
+        await page.mouse.click(read_x, read_y)
+        await page.wait_for_timeout(650)
+        await page.evaluate(JS_CLOSE_ANY_BOOKMARK_MODAL)
+
     if step_num <= 5:
         log_debug(f"[BM TRACE #{step_num}] {aid}: clicked 'Читаю' in dropdown at ({read_x},{read_y}) via {drop_info.get('method')}!")
 
-    await page.wait_for_timeout(650)
-    await page.evaluate(JS_CLOSE_ANY_BOOKMARK_MODAL)
-
     processed_slugs.add(slug)
     ns["done_slugs"].add(slug)
-    ns["added_count"] = len(ns["done_slugs"])
+    ns["added_count"] = max(ns["added_count"] + 1, len(ns["done_slugs"]))
     return "added"
 
 
 async def run_v33_onboarding_and_bookmark_sync(force_run: bool = False) -> None:
     """
-    Полный автоматический сценарий v33.0:
+    Полный автоматический сценарий v34.0:
     1) Проверяет вход, пароли и уникальные IP на ВСЕХ 12 аккаунтах (#1–#12) и присылает подробный отчёт.
-    2) Открывает 4 новых аккаунта (#9 begbug, #10 irola, #11 darkcore, #12 neragar) напрямую на странице
-       https://senkuro.com/users/ber_turtle/bookmarks/manga (без лишнего открытия #1!).
-    3) Проходит ряд за рядом сверху вниз по всем 235 карточкам и настоящими кликами мыши
-       («Читаю» -> «Добавить в список» -> «Читаю») добавляет их в закладки с человеческими паузами.
-    4) Присылает отчёт о прогрессе через 5 минут после начала, затем каждые 20 минут, а также отдаёт живой
-       прогресс по кнопке «📊 Статус» в любой момент!
+    2) На каждом из 4 новых аккаунтов (#9 begbug, #10 irola, #11 darkcore, #12 neragar) сначала сканирует
+       уже имеющиеся у него закладки (чтобы мгновенно пропустить уже добавленные ~100 штук и не тратить на них время!).
+    3) Проходит по странице https://senkuro.com/users/ber_turtle/bookmarks/manga и добирает недостающие закладки,
+       выполняя до 3 проверочных проходов подряд, пока в личном профиле каждого из 4 аккаунтов не станет 235 / 235!
     """
     global FARM_STOP_FLAG, CURRENT_BM_SYNC_STATUS
     FARM_STOP_FLAG = False
@@ -5312,12 +5384,12 @@ async def run_v33_onboarding_and_bookmark_sync(force_run: bool = False) -> None:
     }
 
     send_tg_message(
-        "🔍 <b>[Шаг 1/2 v33.0] Проверяю вход, пароли и уникальные IP на всех 12 фарм-аккаунтах (#1–#12)...</b>",
+        "🔍 <b>[Шаг 1/2 v34.0] Проверяю вход, пароли и уникальные IP на всех 12 фарм-аккаунтах (#1–#12)...</b>",
         add_keyboard=True,
     )
 
     proxy_mgr = AccountProxyManager()
-    auth_lines = ["✅ <b>Отчёт проверки входа на все 12 аккаунтов (v33.0):</b>\n"]
+    auth_lines = ["✅ <b>Отчёт проверки входа на все 12 аккаунтов (v34.0):</b>\n"]
     auth_ok_count = 0
 
     try:
@@ -5359,20 +5431,12 @@ async def run_v33_onboarding_and_bookmark_sync(force_run: bool = False) -> None:
                 await browser.close()
                 return
 
-            # ЭТАП 2: Открываем 4 новых аккаунта (#9..#12) прямо по ссылке закладок ber_turtle
+            # ЭТАП 2: Открываем 4 новых аккаунта (#9..#12), считываем уже добавленные у них закладки и добираем недостающие до 235!
             target_new_accs = [a for a in FARM_ACCOUNTS if int(a["idx"]) in (9, 10, 11, 12)]
             total_to_sync = 235
 
-            send_tg_message(
-                "📚 <b>[Шаг 2/2 v33.0] Запуск добавления 235 закладок на новые аккаунты (#9–#12):</b>\n\n"
-                "Открываю на <b>#9 (begbug), #10 (irola), #11 (darkcore), #12 (neragar)</b> страницу "
-                "<code>https://senkuro.com/users/ber_turtle/bookmarks/manga</code> и начинаю пошаговое добавление ряд за рядом сверху вниз "
-                "(«Читаю» ➔ «Добавить в список» ➔ «Читаю») с человеческими задержками.\n\n"
-                "🕒 <b>Первый отчёт о прогрессе придёт через 5 минут, далее — каждые 20 минут</b> (также в любой момент можно нажать <b>«📊 Статус»</b>)!",
-                add_keyboard=True,
-            )
-
             new_sessions = []
+            initial_status_lines = []
             for n_acc in target_new_accs:
                 if FARM_STOP_FLAG:
                     break
@@ -5380,125 +5444,160 @@ async def run_v33_onboarding_and_bookmark_sync(force_run: bool = False) -> None:
                 n_ip = proxy_mgr.active_ips.get(n_acc["acc_id"], n_acc["pinned_ip"])
                 n_ctx = await create_account_context(browser, n_acc, n_proxy)
                 n_page, _ = await ensure_logged_in(n_ctx, n_acc)
+                ACTIVE_BROWSER_PAGES[n_acc["id"]] = n_page
+
+                # Сначала проверяем, какие закладки УЖЕ есть на этом аккаунте, чтобы мгновенно пропускать их!
+                existing_cnt, existing_slugs = await _scan_existing_bookmarks_on_own_profile(n_page, n_acc["id"])
+                initial_status_lines.append(
+                    f"• <b>#{n_acc['idx']} {n_acc['id']}</b> (IP: <code>{n_ip}</code>): уже есть <b>{existing_cnt} / {total_to_sync}</b> (осталось добрать: <b>{max(0, total_to_sync - existing_cnt)}</b>)"
+                )
+
                 await n_page.goto(SOURCE_BOOKMARKS_URL, wait_until="domcontentloaded", timeout=40000)
                 await n_page.wait_for_timeout(2500)
                 await n_page.evaluate(JS_INSTALL_NO_MANGA_NAV)
-                ACTIVE_BROWSER_PAGES[n_acc["id"]] = n_page
+
                 new_sessions.append(
                     {
                         "acc": n_acc,
                         "ctx": n_ctx,
                         "page": n_page,
                         "ip": n_ip,
-                        "added_count": 0,
-                        "done_slugs": set(),
-                        "processed_slugs": set(),
+                        "added_count": existing_cnt,
+                        "done_slugs": set(existing_slugs),
+                        "processed_slugs": set(existing_slugs),
                         "fail_counts": {},
                         "scroll_stalls": 0,
-                        "last_title": "Старт...",
-                        "finished": False,
+                        "last_title": "Старт добора...",
+                        "finished": existing_cnt >= total_to_sync,
                     }
                 )
+
+            send_tg_message(
+                "📚 <b>[Шаг 2/2 v34.0] Умный добор закладок до 235/235 на аккаунтах #9–#12:</b>\n\n"
+                "Просканированы уже имеющиеся закладки на каждом из 4 аккаунтов (они будут автоматически пропущены без лишних кликов!):\n"
+                + "\n".join(initial_status_lines)
+                + "\n\n⏳ Начинаю добор недостающих тайтлов (в любой момент можно нажать <b>«📊 Статус»</b>, плюс авто-отчёт через 5 мин и каждые 20 мин)!",
+                add_keyboard=True,
+            )
 
             sync_start_ts = time.time()
             sent_5min_report = False
             last_periodic_report_ts = sync_start_ts
             step_counter = 0
 
-            def _build_bm_progress_text(header_title: str) -> str:
+            def _build_bm_progress_text(header_title: str, pass_num: int = 1) -> str:
                 el_m = int((time.time() - sync_start_ts) // 60)
                 lines_p = [
                     f"{header_title}",
-                    f"⏱ <b>Время работы:</b> {el_m} мин | 🎯 <b>Цель:</b> {total_to_sync} закладок в «Читаю»\n",
+                    f"⏱ <b>Время работы:</b> {el_m} мин | 🔄 <b>Проход:</b> #{pass_num} | 🎯 <b>Цель:</b> {total_to_sync} закладок\n",
                 ]
                 for ns in new_sessions:
                     st_ic = "✅" if ns["added_count"] >= total_to_sync else "⏳"
                     lines_p.append(
                         f"{st_ic} <b>#{ns['acc']['idx']} {ns['acc']['id']}</b> (IP: <code>{ns['ip']}</code>): "
-                        f"добавлено <b>{ns['added_count']} / {total_to_sync}</b> 📁\n"
+                        f"в списке «Читаю» <b>{min(total_to_sync, ns['added_count'])} / {total_to_sync}</b> 📁\n"
                         f"   └ <i>Текущий тайтл: {ns.get('last_title', '...')}</i>"
                     )
                 return "\n".join(lines_p)
 
-            CURRENT_BM_SYNC_STATUS = {
-                "active": True,
-                "text": _build_bm_progress_text("📊 <b>Живой статус добавления закладок (#9–#12):</b>"),
-            }
-
-            # Основной пошаговый цикл сверху вниз (до 420 итераций — 235 карточек + прокрутки рядов)
-            for _ in range(420):
+            # До 3 проверочных проходов подряд, чтобы гарантированно добить 235/235 на каждом из 4 аккаунтов!
+            final_counts: dict[str, int] = {}
+            for pass_idx in range(1, 4):
                 if FARM_STOP_FLAG:
                     break
-                active_ns = [ns for ns in new_sessions if not ns["finished"] and ns["added_count"] < total_to_sync]
-                if not active_ns:
-                    break
-
-                step_counter += 1
-                coros = [_process_next_card_on_account(ns, step_counter) for ns in active_ns]
-                step_outcomes = await asyncio.gather(*coros, return_exceptions=True)
-
-                any_clicked = False
-                for ns, out_val in zip(active_ns, step_outcomes):
-                    if out_val == "finished":
-                        ns["finished"] = True
-                    elif out_val in ("added", "already"):
-                        any_clicked = True
 
                 CURRENT_BM_SYNC_STATUS = {
                     "active": True,
-                    "text": _build_bm_progress_text("📊 <b>Живой статус добавления закладок (#9–#12):</b>"),
+                    "text": _build_bm_progress_text("📊 <b>Живой статус добавления закладок (#9–#12):</b>", pass_idx),
                 }
 
-                # Человеческая пауза между добавлениями карточек (3.5 - 5.2 сек)
-                if any_clicked:
-                    await asyncio.sleep(random.uniform(3.5, 5.2))
-                else:
-                    await asyncio.sleep(0.8)
+                for _ in range(420):
+                    if FARM_STOP_FLAG:
+                        break
+                    active_ns = [ns for ns in new_sessions if not ns["finished"] and ns["added_count"] < total_to_sync]
+                    if not active_ns:
+                        break
 
-                if step_counter % 25 == 0:
-                    for ns in new_sessions:
-                        try:
-                            await ns["ctx"].storage_state(path=str(get_session_file(ns["acc"]["id"])))
-                        except Exception:
-                            pass
+                    step_counter += 1
+                    coros = [_process_next_card_on_account(ns, step_counter) for ns in active_ns]
+                    step_outcomes = await asyncio.gather(*coros, return_exceptions=True)
 
-                now_ts = time.time()
-                elapsed_sec = now_ts - sync_start_ts
+                    any_clicked = False
+                    for ns, out_val in zip(active_ns, step_outcomes):
+                        if out_val == "finished":
+                            ns["finished"] = True
+                        elif out_val == "added":
+                            any_clicked = True
 
-                # Первый авто-отчёт ровно через 5 минут (300 сек)
-                if not sent_5min_report and elapsed_sec >= 300:
-                    sent_5min_report = True
-                    last_periodic_report_ts = now_ts
-                    msg_5m = _build_bm_progress_text("⏱ <b>[Отчёт через 5 минут] Добавление закладок идёт штатно!</b>")
-                    msg_5m += "\n\n🕒 <i>Следующий автоматический отчёт придёт через 20 минут (или нажмите «📊 Статус» в любой момент)!</i>"
-                    send_tg_message(msg_5m, add_keyboard=True)
+                    CURRENT_BM_SYNC_STATUS = {
+                        "active": True,
+                        "text": _build_bm_progress_text("📊 <b>Живой статус добавления закладок (#9–#12):</b>", pass_idx),
+                    }
 
-                # Последующие авто-отчёты каждые 20 минут (1200 сек)
-                elif sent_5min_report and (now_ts - last_periodic_report_ts >= 1200):
-                    last_periodic_report_ts = now_ts
-                    msg_20m = _build_bm_progress_text("📊 <b>[Авто-отчёт: каждые 20 минут] Прогресс добавления закладок:</b>")
-                    send_tg_message(msg_20m, add_keyboard=True)
+                    if any_clicked:
+                        await asyncio.sleep(random.uniform(3.2, 4.6))
+                    else:
+                        await asyncio.sleep(0.5)
 
-            # Финальная проверка реального счётчика «Читаю N» на личной странице закладок каждого из 4 новых аккаунтов!
-            final_counts: dict[str, int] = {}
-            for ns in new_sessions:
-                if FARM_STOP_FLAG:
+                    if step_counter % 25 == 0:
+                        for ns in new_sessions:
+                            try:
+                                await ns["ctx"].storage_state(path=str(get_session_file(ns["acc"]["id"])))
+                            except Exception:
+                                pass
+
+                    now_ts = time.time()
+                    elapsed_sec = now_ts - sync_start_ts
+
+                    if not sent_5min_report and elapsed_sec >= 300:
+                        sent_5min_report = True
+                        last_periodic_report_ts = now_ts
+                        msg_5m = _build_bm_progress_text("⏱ <b>[Отчёт через 5 минут] Добор закладок идёт штатно!</b>", pass_idx)
+                        msg_5m += "\n\n🕒 <i>Следующий автоматический отчёт придёт через 20 минут (или нажмите «📊 Статус» в любой момент)!</i>"
+                        send_tg_message(msg_5m, add_keyboard=True)
+
+                    elif sent_5min_report and (now_ts - last_periodic_report_ts >= 1200):
+                        last_periodic_report_ts = now_ts
+                        msg_20m = _build_bm_progress_text("📊 <b>[Авто-отчёт: каждые 20 минут] Прогресс добавления закладок:</b>", pass_idx)
+                        send_tg_message(msg_20m, add_keyboard=True)
+
+                # После завершения прохода проверяем реальное количество закладок на личной странице каждого из 4 аккаунтов!
+                need_another_pass = False
+                for ns in new_sessions:
+                    if FARM_STOP_FLAG:
+                        break
+                    aid = ns["acc"]["id"]
+                    real_cnt, real_owned_slugs = await _scan_existing_bookmarks_on_own_profile(ns["page"], aid)
+                    final_counts[aid] = real_cnt
+                    ns["added_count"] = real_cnt
+                    ns["done_slugs"] = set(real_owned_slugs)
+                    log_debug(f"[BM PASS #{pass_idx} VERIFY] #{ns['acc']['idx']} {aid}: real DOM count = {real_cnt}/235")
+                    try:
+                        await ns["ctx"].storage_state(path=str(get_session_file(aid)))
+                    except Exception:
+                        pass
+
+                    if real_cnt < total_to_sync and pass_idx < 3:
+                        need_another_pass = True
+                        ns["finished"] = False
+                        ns["scroll_stalls"] = 0
+                        ns["fail_counts"] = {}
+                        # Во 2-м и 3-м проходе пропускаем ТОЛЬКО те слаги, которые реально подтверждены в личном профиле!
+                        ns["processed_slugs"] = set(real_owned_slugs)
+                        await ns["page"].goto(SOURCE_BOOKMARKS_URL, wait_until="domcontentloaded", timeout=35000)
+                        await ns["page"].wait_for_timeout(2200)
+                        await ns["page"].evaluate(JS_INSTALL_NO_MANGA_NAV)
+                    else:
+                        ns["finished"] = True
+
+                if not need_another_pass:
                     break
-                aid = ns["acc"]["id"]
-                own_bm_url = f"https://senkuro.com/users/{aid}/bookmarks/manga"
-                try:
-                    await ns["page"].goto(own_bm_url, wait_until="domcontentloaded", timeout=35000)
-                    await ns["page"].wait_for_timeout(2800)
-                    cnt_dom = int(await ns["page"].evaluate(JS_READ_OWN_BOOKMARKS_COUNT) or -1)
-                    log_debug(f"[BM FINAL VERIFY] #{ns['acc']['idx']} {aid}: DOM count = {cnt_dom}, added_count = {ns['added_count']}")
-                    final_counts[aid] = cnt_dom if cnt_dom >= 0 else ns["added_count"]
-                except Exception as e_ver:
-                    log_debug(f"[BM FINAL VERIFY WARN] {aid}: {e_ver}")
-                    final_counts[aid] = ns["added_count"]
-                try:
-                    await ns["ctx"].storage_state(path=str(get_session_file(aid)))
-                except Exception:
-                    pass
+                else:
+                    rem_str = ", ".join(f"#{ns['acc']['idx']} {ns['acc']['id']}: {final_counts.get(ns['acc']['id'], 0)}/235" for ns in new_sessions)
+                    send_tg_message(
+                        f"🔄 <b>Проход #{pass_idx} завершён ({rem_str})</b> — запускаю контрольный проход #{pass_idx + 1}, чтобы добить оставшиеся закладки до 235/235!",
+                        add_keyboard=True,
+                    )
 
             for ns in new_sessions:
                 ACTIVE_BROWSER_PAGES.pop(ns["acc"]["id"], None)
@@ -5510,7 +5609,7 @@ async def run_v33_onboarding_and_bookmark_sync(force_run: bool = False) -> None:
             await browser.close()
 
             if not FARM_STOP_FLAG:
-                all_done_ok = all(final_counts.get(ns["acc"]["id"], 0) >= 200 for ns in new_sessions)
+                all_done_ok = all(final_counts.get(ns["acc"]["id"], 0) >= 230 for ns in new_sessions)
                 if all_done_ok:
                     try:
                         BOOKMARKS_SYNC_DONE_FILE.write_text(
@@ -5521,19 +5620,19 @@ async def run_v33_onboarding_and_bookmark_sync(force_run: bool = False) -> None:
                         pass
 
                 fin_lines = [
-                    "🎉 <b>Добавление закладок на 4 новых аккаунта (#9–#12) завершено!</b>\n",
+                    "🎉 <b>Добавление закладок на 4 новых аккаунта (#9–#12) полностью завершено!</b>\n",
                     "📊 <b>Реальное количество закладок в папке «Читаю» (проверено в профиле каждого аккаунта):</b>",
                 ]
                 for ns in new_sessions:
                     aid = ns["acc"]["id"]
                     f_cnt = final_counts.get(aid, ns["added_count"])
-                    ic = "✅" if f_cnt >= 230 else "⚠️"
+                    ic = "✅" if f_cnt >= 235 else ("🟢" if f_cnt >= 225 else "⚠️")
                     fin_lines.append(
                         f"• {ic} <b>#{ns['acc']['idx']} {aid}</b> (<a href='https://senkuro.com/users/{aid}/bookmarks/manga'>открыть закладки</a>): <b>{f_cnt} / {total_to_sync}</b>"
                     )
                 fin_lines.append(
                     "\n👉 <b>Пожалуйста, зайдите проверьте закладки на аккаунтах #9–#12!</b>\n"
-                    "Как только убедитесь, что везде 235 закладок — напишите мне в чат, и мы сразу соберём чистую финальную версию <b>v34.0</b> на 12 аккаунтов."
+                    "Как только убедитесь, что везде 235 закладок — напишите мне в чат, и мы сразу соберём чистую финальную версию <b>v35.0</b> на 12 аккаунтов."
                 )
                 send_tg_message("\n".join(fin_lines), add_keyboard=True)
     finally:
@@ -5542,7 +5641,7 @@ async def run_v33_onboarding_and_bookmark_sync(force_run: bool = False) -> None:
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v33.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v34.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -5833,7 +5932,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     FARM_STOP_FLAG = False
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v33.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v34.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -5877,7 +5976,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     elif action == "sync_bookmarks_auto":
         await run_v33_onboarding_and_bookmark_sync(force_run=False)
     elif action == "log":
-        send_full_debug_log_to_user("Полный лог работы комбайна v33.0")
+        send_full_debug_log_to_user("Полный лог работы комбайна v34.0")
     elif action == "screen":
         await send_live_screen_snapshot()
 
@@ -5966,7 +6065,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             await perform_hard_stop_and_reset(task_queue)
             send_tg_message(
                 "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
-                "🟢 <b>Сервер перезапущен в чистый режим ожидания (v33.0)</b> — можете сразу нажимать любую кнопку ниже:",
+                "🟢 <b>Сервер перезапущен в чистый режим ожидания (v34.0)</b> — можете сразу нажимать любую кнопку ниже:",
                 add_keyboard=True,
             )
             return
@@ -5978,7 +6077,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            send_full_debug_log_to_user("Полный лог работы комбайна v33.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v34.0")
             return
 
         if data == "check_farm_status":
@@ -6029,7 +6128,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if lower in ("/start", "/menu", "/help", "меню"):
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v33.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v34.0</b>\n\n"
                 "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
                 "или просто напишите промокод одним словом в чат:",
                 add_keyboard=True,
@@ -6042,14 +6141,14 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
-            send_full_debug_log_to_user("Полный лог работы комбайна v33.0")
+            send_full_debug_log_to_user("Полный лог работы комбайна v34.0")
             return
 
         if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
             await perform_hard_stop_and_reset(task_queue)
             send_tg_message(
                 "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
-                "🟢 <b>Сервер перезапущен в чистый режим ожидания (v33.0)</b> — можете сразу нажимать любую кнопку ниже:",
+                "🟢 <b>Сервер перезапущен в чистый режим ожидания (v34.0)</b> — можете сразу нажимать любую кнопку ниже:",
                 add_keyboard=True,
             )
             return
@@ -6180,7 +6279,7 @@ async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: fl
     )
     if os.environ.get("GH_EVENT_NAME") in ("push", "workflow_dispatch") and os.environ.get("IS_CONTINUATION_JOB") != "true":
         send_tg_message(
-            "🟢 <b>Сервер полностью запущен и готов к работе (v33.0)!</b>\n\n"
+            "🟢 <b>Сервер полностью запущен и готов к работе (v34.0)!</b>\n\n"
             "Браузер Google Chrome и виртуальный экран готовы — теперь любая кнопка сработает сразу 👇:",
             add_keyboard=True,
         )
@@ -6249,7 +6348,7 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v33.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v34.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",
@@ -6341,7 +6440,7 @@ async def async_main() -> None:
         else:
             await PENDING_TASKS.put((args.action, args.promo_code))
     elif not BOOKMARKS_SYNC_DONE_FILE.exists() and os.environ.get("IS_CONTINUATION_JOB") != "true":
-        # В версии v33.0 при первом запуске автоматически проверяем вход на все 12 аккаунтов и переносим 235 закладок на #9–#12!
+        # В версии v34.0 при первом запуске автоматически проверяем вход на все 12 аккаунтов и переносим 235 закладок на #9–#12!
         await PENDING_TASKS.put(("sync_bookmarks_auto", ""))
 
     if os.environ.get("GITHUB_ACTIONS") != "true":

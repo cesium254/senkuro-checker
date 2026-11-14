@@ -1,4 +1,4 @@
-name: Senkuro Full Automation Combine v33.0
+name: Senkuro Full Automation Combine v34.0
 
 on:
   push:
@@ -95,7 +95,7 @@ jobs:
 
           # 1. Мгновенно отключаем старый вебхук Cloudflare и стираем чужую спам-рекламу из описания бота!
           tg_call("deleteWebhook", {"drop_pending_updates": False})
-          clean_desc = "Личный бот автоматизации Senkuro (проверка 9 аккаунтов, паки Хардкор, Переплавка, промокоды и фарм)."
+          clean_desc = "Личный бот автоматизации Senkuro (проверка 13 аккаунтов, паки Хардкор, Переплавка, промокоды и фарм)."
           for lang in ("", "ru", "uk", "en", "be", "kk"):
               dp = {"description": clean_desc}
               sp = {"short_description": "Автоматизация Senkuro"}
@@ -116,7 +116,7 @@ jobs:
           # 3. При сохранении кода (push) честно сообщаем, что сервер перезапускается (~15 сек)
           if EVENT_NAME == "push":
               send_msg(
-                  "⏳ <b>Обновление кода получено! Перезапускаю сервер (~15 сек)...</b>\n\n"
+                  "⏳ <b>Обновление кода v34.0 получено! Перезапускаю сервер (~15 сек)...</b>\n\n"
                   "<i>Дождитесь зелёного сообщения <b>«🟢 Сервер полностью запущен!»</b> (или нажмите кнопку сейчас — она встанет в очередь и запустится сразу после старта, только не нажимайте «🛑 СТОП» во время загрузки).</i>"
               )
 
@@ -151,10 +151,10 @@ jobs:
                               "check_balance": ("balance", "🪙 Проверка баланса монет (12 акков) принята!"),
                               "roll_packs": ("packs", "🎴 Прокрутка паков «Хардкор» (480 🪙) принята!"),
                               "run_forge": ("forge", "⚒️ Переплавка + Трейд на основу приняты!"),
-                              "check_senkuro": ("check", "🔄 Проверка карт и осколков (9 аккаунтов) принята!"),
+                              "check_senkuro": ("check", "🔄 Проверка карт и осколков (13 аккаунтов) принята!"),
                               "run_all": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                           }
-                          act_c, lbl = amap.get(data, ("check", "🔄 Проверка 9 аккаунтов принята!"))
+                          act_c, lbl = amap.get(data, ("check", "🔄 Проверка 13 аккаунтов принята!"))
                           tg_call("answerCallbackQuery", {"callback_query_id": cb_id, "text": lbl})
                           append_queue(act_c, "")
                           send_msg(f"⏳ <b>{lbl}</b>\nПодготавливаю браузер (~20 сек) и сразу пришлю отчёт!")
@@ -180,18 +180,18 @@ jobs:
                           "/forge": ("forge", "⚒️ Переплавка + Трейд на основу приняты!"),
                           "🔄 чекать": ("check", "🔄 Проверка карт и осколков (13 аккаунтов) принята!"),
                           "🔄 чекать 9": ("check", "🔄 Проверка карт и осколков (13 аккаунтов) принята!"),
-                          "🔄 чекать 9 акков": ("check", "🔄 Проверка карт и осколков (9 аккаунтов) принята!"),
-                          "🔄 чекать 5": ("check", "🔄 Проверка карт и осколков (9 аккаунтов) принята!"),
-                          "🔄 чекать 5 акков": ("check", "🔄 Проверка карт и осколков (9 аккаунтов) принята!"),
-                          "🔄 проверить 9 аккаунтов": ("check", "🔄 Проверка карт и осколков (9 аккаунтов) принята!"),
-                          "🔄 проверить 5 аккаунтов": ("check", "🔄 Проверка карт и осколков (9 аккаунтов) принята!"),
-                          "/check": ("check", "🔄 Проверка карт и осколков (9 аккаунтов) принята!"),
+                          "🔄 чекать 9 акков": ("check", "🔄 Проверка карт и осколков (13 аккаунтов) принята!"),
+                          "🔄 чекать 5": ("check", "🔄 Проверка карт и осколков (13 аккаунтов) принята!"),
+                          "🔄 чекать 5 акков": ("check", "🔄 Проверка карт и осколков (13 аккаунтов) принята!"),
+                          "🔄 проверить 9 аккаунтов": ("check", "🔄 Проверка карт и осколков (13 аккаунтов) принята!"),
+                          "🔄 проверить 5 аккаунтов": ("check", "🔄 Проверка карт и осколков (13 аккаунтов) принята!"),
+                          "/check": ("check", "🔄 Проверка карт и осколков (13 аккаунтов) принята!"),
                           "🚀 всё": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                           "🚀 сделать всё": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                           "🚀 сделать всё (паки+кузня)": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                       }
                       if low in ("/start", "/menu", "/help", "меню"):
-                          send_msg("🤖 <b>Панель управления фермой Senkuro v33.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
+                          send_msg("🤖 <b>Панель управления фермой Senkuro v34.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
                       elif low in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
                           if os.path.exists(QUEUE_FILE):
                               os.remove(QUEUE_FILE)
@@ -265,7 +265,7 @@ jobs:
             playwright install chromium
           fi
 
-      - name: Download Opera VPN Proxy (for 8 unique IPs)
+      - name: Download Opera VPN Proxy (for 12 unique IPs)
         run: |
           mkdir -p bin .sessions
           if [ ! -f bin/opera-proxy ]; then
@@ -273,10 +273,10 @@ jobs:
             chmod +x bin/opera-proxy 2>/dev/null || true
           fi
 
-      - name: Run Senkuro Automation Combine v33.0 (Direct Telegram Engine)
+      - name: Run Senkuro Automation Combine v34.0 (Direct Telegram Engine)
         id: run_bot
         env:
-          WORKFLOW_YML_VERSION: "v33.0"
+          WORKFLOW_YML_VERSION: "v34.0"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
           SENKURO_PASSWORDS: ${{ secrets.SENKURO_PASSWORDS }}
@@ -302,7 +302,7 @@ jobs:
           GH_EVENT_NAME: ${{ github.event_name }}
         run: |
           if [ "${GH_EVENT_NAME}" = "push" ]; then
-            rm -f .sessions/farm_resume.json .sessions/bookmarks_synced_v33.json
+            rm -f .sessions/farm_resume.json .sessions/bookmarks_synced_v33.json .sessions/bookmarks_synced_v34.json
           fi
           touch /tmp/senkuro_main_ready.flag
           if [ -f /tmp/early_poller.pid ]; then
@@ -372,7 +372,7 @@ jobs:
             playwright install chromium
           fi
 
-      - name: Download Opera VPN Proxy (for 8 unique IPs)
+      - name: Download Opera VPN Proxy (for 12 unique IPs)
         run: |
           mkdir -p bin .sessions
           if [ ! -f bin/opera-proxy ]; then
@@ -380,10 +380,10 @@ jobs:
             chmod +x bin/opera-proxy 2>/dev/null || true
           fi
 
-      - name: Run Senkuro Automation Combine v33.0 (Part 2 — Hours 4 to 8)
+      - name: Run Senkuro Automation Combine v34.0 (Part 2 — Hours 4 to 8)
         id: run_bot_p2
         env:
-          WORKFLOW_YML_VERSION: "v33.0"
+          WORKFLOW_YML_VERSION: "v34.0"
           IS_CONTINUATION_JOB: "true"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
@@ -462,7 +462,7 @@ jobs:
             playwright install chromium
           fi
 
-      - name: Download Opera VPN Proxy (for 8 unique IPs)
+      - name: Download Opera VPN Proxy (for 12 unique IPs)
         run: |
           mkdir -p bin .sessions
           if [ ! -f bin/opera-proxy ]; then
@@ -470,9 +470,9 @@ jobs:
             chmod +x bin/opera-proxy 2>/dev/null || true
           fi
 
-      - name: Run Senkuro Automation Combine v33.0 (Part 3 — Finish Remaining 8h Farm)
+      - name: Run Senkuro Automation Combine v34.0 (Part 3 — Finish Remaining 8h Farm)
         env:
-          WORKFLOW_YML_VERSION: "v33.0"
+          WORKFLOW_YML_VERSION: "v34.0"
           IS_CONTINUATION_JOB: "true"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
@@ -498,4 +498,3 @@ jobs:
           touch /tmp/senkuro_main_ready.flag
           pkill -9 -f early_poller.py 2>/dev/null || true
           xvfb-run -a --server-args="-screen 0 1280x900x24" bash -c "(command -v openbox >/dev/null 2>&1 && openbox >/dev/null 2>&1 &) || true; sleep 1 && python check_senkuro.py --action 'daemon'"
-
