@@ -1,4 +1,4 @@
-name: Senkuro Full Automation Combine v36.0
+name: Senkuro Full Automation Combine v37.0
 
 on:
   push:
@@ -116,7 +116,7 @@ jobs:
           # 3. При сохранении кода (push) честно сообщаем, что сервер перезапускается (~15 сек)
           if EVENT_NAME == "push":
               send_msg(
-                  "⏳ <b>Обновление кода v36.0 получено! Перезапускаю сервер (~15 сек)...</b>\n\n"
+                  "⏳ <b>Обновление кода v37.0 получено! Перезапускаю сервер (~15 сек)...</b>\n\n"
                   "<i>Дождитесь зелёного сообщения <b>«🟢 Сервер полностью запущен!»</b> (или нажмите кнопку сейчас — она встанет в очередь и запустится сразу после старта, только не нажимайте «🛑 СТОП» во время загрузки).</i>"
               )
 
@@ -193,7 +193,7 @@ jobs:
                           "🚀 сделать всё (паки+кузня)": ("all", "🚀 Полный цикл (Паки + Переплавка + Трейд) принят!"),
                       }
                       if low in ("/start", "/menu", "/help", "меню"):
-                          send_msg("🤖 <b>Панель управления фермой Senkuro v36.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
+                          send_msg("🤖 <b>Панель управления фермой Senkuro v37.0</b>\n\nВыберите задачу кнопкой в нижнем меню 🎛:")
                       elif low in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
                           if os.path.exists(QUEUE_FILE):
                               os.remove(QUEUE_FILE)
@@ -275,10 +275,10 @@ jobs:
             chmod +x bin/opera-proxy 2>/dev/null || true
           fi
 
-      - name: Run Senkuro Automation Combine v36.0 (Direct Telegram Engine)
+      - name: Run Senkuro Automation Combine v37.0 (Direct Telegram Engine)
         id: run_bot
         env:
-          WORKFLOW_YML_VERSION: "v36.0"
+          WORKFLOW_YML_VERSION: "v37.0"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
           SENKURO_PASSWORDS: ${{ secrets.SENKURO_PASSWORDS }}
@@ -382,10 +382,10 @@ jobs:
             chmod +x bin/opera-proxy 2>/dev/null || true
           fi
 
-      - name: Run Senkuro Automation Combine v36.0 (Part 2 — Hours 4 to 8)
+      - name: Run Senkuro Automation Combine v37.0 (Part 2 — Hours 4 to 8)
         id: run_bot_p2
         env:
-          WORKFLOW_YML_VERSION: "v36.0"
+          WORKFLOW_YML_VERSION: "v37.0"
           IS_CONTINUATION_JOB: "true"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
@@ -472,9 +472,9 @@ jobs:
             chmod +x bin/opera-proxy 2>/dev/null || true
           fi
 
-      - name: Run Senkuro Automation Combine v36.0 (Part 3 — Finish Remaining 8h Farm)
+      - name: Run Senkuro Automation Combine v37.0 (Part 3 — Finish Remaining 8h Farm)
         env:
-          WORKFLOW_YML_VERSION: "v36.0"
+          WORKFLOW_YML_VERSION: "v37.0"
           IS_CONTINUATION_JOB: "true"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}

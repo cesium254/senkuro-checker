@@ -4892,11 +4892,6 @@ def _send_media_chunk_binary_fallback(chunk_urls: list[str], caption: str = "") 
 
 
 def _send_single_photo_chunk(chunk: list[str], caption: str = "") -> bool:
-    # Картинки с CDN Senkuro (.webp на mirai/shiro.senkuro.org) Telegram часто отклоняет по URL через 20 сек (400 wrong type of web page content),
-    # поэтому сразу качаем и конвертируем их в JPEG за 0.3 сек без 20-секундных зависаний!
-    if any(".webp" in u or "senkuro.org" in u for u in chunk):
-        if _send_media_chunk_binary_fallback(chunk, caption=caption):
-            return True
     if len(chunk) == 1:
         payload: dict[str, Any] = {"chat_id": TELEGRAM_CHAT_ID, "photo": chunk[0]}
         if caption:
