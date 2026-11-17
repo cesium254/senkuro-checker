@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v36.0 (12 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
+SENKURO FULL AUTOMATION COMBINE v37.0 (12 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -707,6 +707,8 @@ def send_full_debug_log_to_user(reason_title: str = "Полный лог раб�
         send_tg_message("ℹ️ Файл лога пока пуст.", add_keyboard=True)
         return
     raw_bytes = DEBUG_LOG_FILE.read_bytes()
+    if len(raw_bytes) > 180_000:
+        raw_bytes = raw_bytes[-180_000:]
     caption = (
         f"📜 <b>{reason_title}</b> (размер: {max(1, len(raw_bytes) // 1024)} КБ)\n\n"
         "Откройте этот файл и скопируйте текст (или перешлите его в чат с ИИ) для мгновенной проверки!"
@@ -717,7 +719,14 @@ def send_full_debug_log_to_user(reason_title: str = "Полный лог раб�
         "parse_mode": "HTML",
         "reply_markup": json.dumps(get_collapsible_reply_keyboard(), ensure_ascii=False),
     }
-    send_tg_multipart("sendDocument", "document", "senkuro_debug_log.txt", raw_bytes, "text/plain", fields)
+    for _ in range(2):
+        res = send_tg_multipart("sendDocument", "document", "senkuro_debug_log.txt", raw_bytes, "text/plain", fields)
+        if res.get("ok"):
+            return
+        time.sleep(1.0)
+    # Если файл не прошёл из-за сетевого таймаута — отправляем последние строки лога обычным текстом!
+    tail_txt = raw_bytes[-3200:].decode("utf-8", errors="ignore")
+    send_tg_message(f"📜 <b>Последние строки лога ({reason_title}):</b>\n<pre>{tail_txt[-3000:].replace('<', '&lt;').replace('>', '&gt;')}</pre>", add_keyboard=True)
 
 
 async def capture_page_png_fast(pg: Page) -> Optional[bytes]:
@@ -1600,9 +1609,14 @@ def _direct_python_gql_fallback(payload: dict, token: str = "") -> dict:
     return {"errors": [{"message": f"PythonFallbackError: {last_err}"}]}
 
 
+NON_IDEMPOTENT_OPS = {"suggestCardTrade", "openCardPack", "forgeCards", "redeemRedemption"}
+
+
 async def gql_call(page: Page, query: str, variables: Optional[dict] = None, operation_name: Optional[str] = None) -> dict:
     cur_query = query
-    for attempt in range(6):
+    is_mutation_once = str(operation_name or "") in NON_IDEMPOTENT_OPS
+    max_attempts = 1 if is_mutation_once else 4
+    for attempt in range(max_attempts):
         payload: dict[str, Any] = {"query": cur_query, "variables": variables or {}}
         if operation_name:
             payload["operationName"] = operation_name
@@ -1663,7 +1677,7 @@ async def gql_call(page: Page, query: str, variables: Optional[dict] = None, ope
 
         # Уровень 2: Если браузерный fetch выдал Failed to fetch / NetworkError (например из-за CORS или редиректа),
         # мгновенно отправляем запрос через нативный сетевой стек Playwright (page.context.request.post), который НЕ подвержен CORS!
-        if errs and any(w in err_msgs for w in ("Failed to fetch", "NetworkError", "Load failed", "Target closed", "Execution context")):
+        if errs and (not is_mutation_once or any(w in err_msgs for w in ("Target closed", "Execution context"))) and any(w in err_msgs for w in ("Failed to fetch", "NetworkError", "Load failed", "Target closed", "Execution context")):
             try:
                 pw_headers = {
                     "Content-Type": "application/json",
@@ -4878,6 +4892,11 @@ def _send_media_chunk_binary_fallback(chunk_urls: list[str], caption: str = "") 
 
 
 def _send_single_photo_chunk(chunk: list[str], caption: str = "") -> bool:
+    # Картинки с CDN Senkuro (.webp на mirai/shiro.senkuro.org) Telegram часто отклоняет по URL через 20 сек (400 wrong type of web page content),
+    # поэтому сразу качаем и конвертируем их в JPEG за 0.3 сек без 20-секундных зависаний!
+    if any(".webp" in u or "senkuro.org" in u for u in chunk):
+        if _send_media_chunk_binary_fallback(chunk, caption=caption):
+            return True
     if len(chunk) == 1:
         payload: dict[str, Any] = {"chat_id": TELEGRAM_CHAT_ID, "photo": chunk[0]}
         if caption:
@@ -4953,7 +4972,7 @@ async def run_check_all_5_accounts() -> None:
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v36.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v37.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -4961,7 +4980,30 @@ FARM_STOP_FLAG: bool = False
 GLOBAL_DEADLINE_TS: float = 0.0
 ACTIVE_FARM_TASK: Optional[asyncio.Task] = None
 ACTIVE_JOB_TASK: Optional[asyncio.Task] = None
+ACTIVE_JOB_NAME: str = ""
+QUEUED_TASK_KEYS: set[str] = set()
 PENDING_TASKS: Optional[asyncio.Queue] = None
+
+
+async def enqueue_task_safely(task_queue: asyncio.Queue, act_code: str, param_str: str = "") -> bool:
+    """Добавляет задачу в очередь БЕЗ дубликатов и сразу сообщает, если сервер сейчас занят другой задачей."""
+    global ACTIVE_JOB_NAME, QUEUED_TASK_KEYS
+    key = f"{act_code}:{param_str.strip().lower()}"
+    if key in QUEUED_TASK_KEYS or (ACTIVE_JOB_NAME == key and ACTIVE_JOB_TASK and not ACTIVE_JOB_TASK.done()):
+        send_tg_message(
+            f"ℹ️ Задача <code>{act_code} {param_str}</code> <b>уже выполняется или стоит в очереди</b> — повторный дубликат пропущен!",
+            add_keyboard=True,
+        )
+        return False
+    if ACTIVE_JOB_TASK and not ACTIVE_JOB_TASK.done():
+        send_tg_message(
+            f"⏳ Сейчас ещё завершается предыдущая задача (<code>{ACTIVE_JOB_NAME or 'работа с аккаунтами'}</code>).\n"
+            f"Ваша новая команда <code>{act_code} {param_str}</code> поставлена следующей в очередь (или нажмите <b>«🛑 СТОП»</b>, чтобы отменить текущую задачу мгновенно)!",
+            add_keyboard=True,
+        )
+    QUEUED_TASK_KEYS.add(key)
+    await task_queue.put((act_code, param_str))
+    return True
 
 TG_OFFSET_FILE = Path("/tmp/tg_offset.txt")
 EARLY_QUEUE_FILE = Path("/tmp/senkuro_early_queue.jsonl")
@@ -5244,7 +5286,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     FARM_STOP_FLAG = False
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v36.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v37.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -5284,18 +5326,26 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     elif action == "check":
         await run_check_all_5_accounts()
     elif action == "log":
-        send_full_debug_log_to_user("Полный лог работы комбайна v36.0")
+        await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v37.0")
     elif action == "screen":
         await send_live_screen_snapshot()
 
 
 
-async def perform_hard_stop_and_reset(task_queue: asyncio.Queue) -> None:
+LAST_HARD_STOP_TS: float = 0.0
+
+
+async def perform_hard_stop_and_reset(task_queue: asyncio.Queue) -> bool:
     """
     Экстренная полная остановка всех текущих процессов (фарм, кузня, трейд, паки, браузеры Chrome и прокси)
     с мгновенным перезапуском внутреннего состояния сервера в режим чистого ожидания новых команд!
     """
-    global FARM_STOP_FLAG, ACTIVE_JOB_TASK, ACTIVE_FARM_TASK, CURRENT_FARM_STATUS, WAITING_FOR_TRADE_INPUT
+    global FARM_STOP_FLAG, ACTIVE_JOB_TASK, ACTIVE_FARM_TASK, CURRENT_FARM_STATUS, WAITING_FOR_TRADE_INPUT, LAST_HARD_STOP_TS
+    now_s = time.time()
+    if now_s - LAST_HARD_STOP_TS < 3.5:
+        log_debug("[HARD STOP SKIP] Повторное нажатие СТОП за последние 3.5 сек — дубликат пропущен.")
+        return False
+    LAST_HARD_STOP_TS = now_s
     log_debug("[HARD STOP & RESET] Получена команда 🛑 СТОП — принудительно останавливаю все задачи, браузеры и прокси...")
     FARM_STOP_FLAG = True
     WAITING_FOR_TRADE_INPUT = False
@@ -5335,6 +5385,8 @@ async def perform_hard_stop_and_reset(task_queue: asyncio.Queue) -> None:
             pass
 
     ACTIVE_JOB_TASK = None
+    ACTIVE_JOB_NAME = ""
+    QUEUED_TASK_KEYS.clear()
     ACTIVE_FARM_TASK = None
     ACTIVE_BROWSER_PAGES.clear()
     CURRENT_FARM_STATUS = {"active": False, "accounts": []}
@@ -5352,6 +5404,7 @@ async def perform_hard_stop_and_reset(task_queue: asyncio.Queue) -> None:
     await asyncio.sleep(0.5)
     FARM_STOP_FLAG = False
     log_debug("[HARD STOP & RESET OK] Все процессы очищены, сервер перезапущен и ждёт новых команд!")
+    return True
 
 
 async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
@@ -5370,12 +5423,12 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "stop_all_farm":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "🛑 Сбрасываю все процессы и перезапускаю готовность..."})
-            await perform_hard_stop_and_reset(task_queue)
-            send_tg_message(
-                "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
-                "🟢 <b>Сервер перезапущен в чистый режим ожидания (v36.0)</b> — можете сразу нажимать любую кнопку ниже:",
-                add_keyboard=True,
-            )
+            if await perform_hard_stop_and_reset(task_queue):
+                send_tg_message(
+                    "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
+                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v37.0)</b> — можете сразу нажимать любую кнопку ниже:",
+                    add_keyboard=True,
+                )
             return
 
         if data == "view_screen":
@@ -5385,7 +5438,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            send_full_debug_log_to_user("Полный лог работы комбайна v36.0")
+            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v37.0")
             return
 
         if data == "check_farm_status":
@@ -5421,7 +5474,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             await execute_single_action("farm", "")
         else:
             send_tg_message(f"⏳ <b>{act_label}</b>\nВыполняю задачу — отчёт придёт через несколько секунд!", add_keyboard=True)
-            await task_queue.put((act_code, ""))
+            await enqueue_task_safely(task_queue, act_code, "")
         return
 
     msg = upd.get("message")
@@ -5434,7 +5487,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if lower in ("/start", "/menu", "/help", "меню"):
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v36.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v37.0</b>\n\n"
                 "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
                 "или просто напишите промокод одним словом в чат:",
                 add_keyboard=True,
@@ -5447,16 +5500,16 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
-            send_full_debug_log_to_user("Полный лог работы комбайна v36.0")
+            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v37.0")
             return
 
         if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
-            await perform_hard_stop_and_reset(task_queue)
-            send_tg_message(
-                "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
-                "🟢 <b>Сервер перезапущен в чистый режим ожидания (v36.0)</b> — можете сразу нажимать любую кнопку ниже:",
-                add_keyboard=True,
-            )
+            if await perform_hard_stop_and_reset(task_queue):
+                send_tg_message(
+                    "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
+                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v37.0)</b> — можете сразу нажимать любую кнопку ниже:",
+                    add_keyboard=True,
+                )
             return
 
         if lower in ("/status", "📊 статус", "📊 статус фарма", "📊 проверить статус фарма"):
@@ -5534,7 +5587,8 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             parsed_tr = parse_custom_trade_spec(raw_text)
             if parsed_tr:
                 WAITING_FOR_TRADE_INPUT = False
-                await task_queue.put(("trade", raw_text))
+                send_tg_message(f"🤝 Команда трейда <code>{raw_text}</code> принята в обработку!", add_keyboard=True)
+                await enqueue_task_safely(task_queue, "trade", raw_text)
                 return
             elif WAITING_FOR_TRADE_INPUT and not re.match(r"^[A-Za-z0-9_-]{5,32}$", raw_text):
                 send_tg_message(
@@ -5557,7 +5611,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
                 "⏳ Открываю 12 уникальных IP, захожу на 12 аккаунтов, ввожу промокод и проверяю реальное увеличение баланса монет (~40 сек)...",
                 add_keyboard=True,
             )
-            await task_queue.put(("promo", promo_code))
+            await enqueue_task_safely(task_queue, "promo", promo_code)
             return
 
         send_tg_message(
@@ -5582,7 +5636,7 @@ async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: fl
     )
     if os.environ.get("GH_EVENT_NAME") in ("push", "workflow_dispatch") and os.environ.get("IS_CONTINUATION_JOB") != "true":
         send_tg_message(
-            "🟢 <b>Сервер полностью запущен и готов к работе (v36.0)!</b>\n\n"
+            "🟢 <b>Сервер полностью запущен и готов к работе (v37.0)!</b>\n\n"
             "Браузер Google Chrome и виртуальный экран готовы — теперь любая кнопка сработает сразу 👇:",
             add_keyboard=True,
         )
@@ -5628,6 +5682,9 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
         except asyncio.TimeoutError:
             continue
         act_code, p_code = item
+        key_done = f"{act_code}:{p_code.strip().lower()}"
+        QUEUED_TASK_KEYS.discard(key_done)
+        ACTIVE_JOB_NAME = key_done
         FARM_STOP_FLAG = False
         log_debug(f"[EXECUTOR] Запуск задачи: action={act_code}, promo={p_code or '-'}")
         try:
@@ -5646,12 +5703,13 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
                 except Exception:
                     ACTIVE_BROWSER_PAGES.pop(_k, None)
             ACTIVE_JOB_TASK = None
+            ACTIVE_JOB_NAME = ""
             task_queue.task_done()
 
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v36.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v37.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",
@@ -5765,12 +5823,21 @@ async def async_main() -> None:
         except Exception:
             pass
 
-    # Передаём эстафету во 2-й джоб воркфлоу, чтобы сервер работал непрерывно 8+ часов
+    # Передаём эстафету во 2-й/3-й джоб воркфлоу ТОЛЬКО если реально активен 8-часовой фарм манги,
+    # чтобы в обычном режиме ожидания не жечь вхолостую лимиты минут и не триггерить антифрод GitHub!
+    need_continue_job = False
+    if FARM_RESUME_FILE.exists():
+        try:
+            resume_st = json.loads(FARM_RESUME_FILE.read_text(encoding="utf-8"))
+            if resume_st.get("active") and not resume_st.get("stopped") and int(resume_st.get("elapsed_minutes") or 0) < 475:
+                need_continue_job = True
+        except Exception:
+            pass
     gh_out = os.environ.get("GITHUB_OUTPUT", "")
     if gh_out:
         try:
             with open(gh_out, "a", encoding="utf-8") as f_out:
-                f_out.write("continue_bot=true\n")
+                f_out.write(f"continue_bot={'true' if need_continue_job else 'false'}\n")
         except Exception:
             pass
 
