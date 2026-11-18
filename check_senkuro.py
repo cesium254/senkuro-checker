@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v38.0 (12 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
+SENKURO FULL AUTOMATION COMBINE v39.0 (12 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -1454,9 +1454,6 @@ query fetchUserCards($userId: ID!, $after: String, $modifier: UserCardModifierFi
             content
           }
           image {
-            preview {
-              url
-            }
             original {
               url
             }
@@ -4794,10 +4791,10 @@ def _convert_raw_image_to_jpeg(raw_bytes: bytes) -> Optional[bytes]:
             if getattr(im, "is_animated", False):
                 im.seek(0)
             rgb = im.convert("RGB")
-            if rgb.width > 1200 or rgb.height > 1200:
-                rgb.thumbnail((1200, 1200))
+            if rgb.width > 2000 or rgb.height > 2000:
+                rgb.thumbnail((2000, 2000), Image.Resampling.LANCZOS)
             out = io.BytesIO()
-            rgb.save(out, format="JPEG", quality=88)
+            rgb.save(out, format="JPEG", quality=96, subsampling=0)
             return out.getvalue()
     except Exception:
         return None
@@ -4880,7 +4877,7 @@ async def _enrich_and_prefetch_card_images_in_browser(page: Page, cards: list[di
         if not target_key or target_key in PREFETCHED_CARD_IMAGES:
             continue
 
-        for cand_url in ([u_shiro, u_orig] if u_shiro else [u_orig]):
+        for cand_url in ([u_orig, u_shiro] if (u_orig and u_shiro) else ([u_orig] if u_orig else [u_shiro])):
             if not cand_url:
                 continue
             # Способ А: Через сетевой стек Chrome контекста (идёт через Opera VPN прокси этого аккаунта!)
@@ -4955,7 +4952,7 @@ def _download_and_normalize_card_photo(url: str) -> Optional[bytes]:
     candidate_urls = [url]
     if "mirai.senkuro.org" in url:
         b64_u = base64.urlsafe_b64encode(url.encode("utf-8")).decode("ascii").rstrip("=")
-        candidate_urls.append(f"https://shiro.senkuro.org/insecure/rs:fit:500:750/{b64_u}.webp")
+        candidate_urls.append(f"https://shiro.senkuro.org/insecure/rs:fit:1000:1500/{b64_u}.webp")
 
     # Собираем все активные туннели Opera VPN (25341..25352), чтобы качать с европейских/американских IP, а не с IP датацентра GitHub!
     open_ports = [25340 + i for i in range(1, 13) if is_local_port_open(25340 + i)]
@@ -5151,7 +5148,7 @@ async def run_check_all_5_accounts() -> None:
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v38.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v39.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -5465,7 +5462,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     FARM_STOP_FLAG = False
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v38.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v39.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -5505,7 +5502,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     elif action == "check":
         await run_check_all_5_accounts()
     elif action == "log":
-        await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v38.0")
+        await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v39.0")
     elif action == "screen":
         await send_live_screen_snapshot()
 
@@ -5605,7 +5602,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             if await perform_hard_stop_and_reset(task_queue):
                 send_tg_message(
                     "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
-                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v38.0)</b> — можете сразу нажимать любую кнопку ниже:",
+                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v39.0)</b> — можете сразу нажимать любую кнопку ниже:",
                     add_keyboard=True,
                 )
             return
@@ -5617,7 +5614,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v38.0")
+            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v39.0")
             return
 
         if data == "check_farm_status":
@@ -5666,7 +5663,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if lower in ("/start", "/menu", "/help", "меню"):
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v38.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v39.0</b>\n\n"
                 "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
                 "или просто напишите промокод одним словом в чат:",
                 add_keyboard=True,
@@ -5679,14 +5676,14 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
-            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v38.0")
+            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v39.0")
             return
 
         if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
             if await perform_hard_stop_and_reset(task_queue):
                 send_tg_message(
                     "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
-                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v38.0)</b> — можете сразу нажимать любую кнопку ниже:",
+                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v39.0)</b> — можете сразу нажимать любую кнопку ниже:",
                     add_keyboard=True,
                 )
             return
@@ -5815,7 +5812,7 @@ async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: fl
     )
     if os.environ.get("GH_EVENT_NAME") in ("push", "workflow_dispatch") and os.environ.get("IS_CONTINUATION_JOB") != "true":
         send_tg_message(
-            "🟢 <b>Сервер полностью запущен и готов к работе (v38.0)!</b>\n\n"
+            "🟢 <b>Сервер полностью запущен и готов к работе (v39.0)!</b>\n\n"
             "Браузер Google Chrome и виртуальный экран готовы — теперь любая кнопка сработает сразу 👇:",
             add_keyboard=True,
         )
@@ -5888,7 +5885,7 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v38.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v39.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",
