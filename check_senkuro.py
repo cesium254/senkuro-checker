@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v37.0 (12 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
+SENKURO FULL AUTOMATION COMBINE v38.0 (12 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -1454,6 +1454,9 @@ query fetchUserCards($userId: ID!, $after: String, $modifier: UserCardModifierFi
             content
           }
           image {
+            preview {
+              url
+            }
             original {
               url
             }
@@ -4705,6 +4708,7 @@ async def scrape_account_cards_public(browser, account: dict, proxy_mgr: Optiona
                 s_nodes = await fetch_all_user_cards_gql(page, uid, modifier_val=1)
                 cards = parse_graphql_edges(c_nodes)
                 shards = parse_graphql_edges(s_nodes)
+                await _enrich_and_prefetch_card_images_in_browser(page, cards)
                 log_debug(f"[CHECK 13 DIRECT GQL] {acc_slug}: карт={len(cards)}, осколков={len(shards)}")
                 return {"cards": cards, "shards": shards, "error": None}
 
@@ -4719,6 +4723,7 @@ async def scrape_account_cards_public(browser, account: dict, proxy_mgr: Optiona
             shards = await fetch_all_pages_via_graphql(page, captured_req, modifier_val=1, override_user_id=uid)
             log_debug(f"[CHECK 13 GQL CAPTURED] {acc_slug}: карт={len(cards)}, осколков={len(shards)}")
             if cards or shards:
+                await _enrich_and_prefetch_card_images_in_browser(page, cards)
                 return {"cards": cards, "shards": shards, "error": None}
 
         # Способ 3: считывание из DOM
@@ -4775,31 +4780,14 @@ def build_account_message(account: dict, current: dict) -> tuple[str, list[str]]
     return "\n".join(lines), card_photos
 
 
-def _download_and_normalize_card_photo(url: str) -> Optional[bytes]:
-    """Скачивает картинку карты с CDN Senkuro (с 3 попытками) и конвертирует в чистый JPEG для 100% приёма Telegram."""
-    import io
-    raw_bytes = None
-    for attempt in range(1, 4):
-        try:
-            req = urllib.request.Request(
-                url,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-                    "Referer": "https://senkuro.com/",
-                    "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-                },
-            )
-            with urllib.request.urlopen(req, timeout=12) as resp:
-                raw_bytes = resp.read()
-            if raw_bytes:
-                break
-        except Exception as e:
-            if attempt == 3:
-                log_debug(f"[CARD IMG DL WARN] Не удалось скачать {url} (попытка {attempt}/3): {e}")
-            else:
-                time.sleep(1.0)
-    if not raw_bytes:
+PREFETCHED_CARD_IMAGES: dict[str, bytes] = {}
+CARD_META_BY_URL: dict[str, dict[str, str]] = {}
+
+
+def _convert_raw_image_to_jpeg(raw_bytes: bytes) -> Optional[bytes]:
+    if not raw_bytes or len(raw_bytes) < 64:
         return None
+    import io
     try:
         from PIL import Image
         with Image.open(io.BytesIO(raw_bytes)) as im:
@@ -4812,7 +4800,197 @@ def _download_and_normalize_card_photo(url: str) -> Optional[bytes]:
             rgb.save(out, format="JPEG", quality=88)
             return out.getvalue()
     except Exception:
-        return raw_bytes
+        return None
+
+
+def _render_fallback_card_tile_jpeg(url: str) -> Optional[bytes]:
+    """Если CDN Senkuro заблокировал конкретный файл карты (403/404), рисует аккуратную карточку с рангом и названием."""
+    import io
+    try:
+        from PIL import Image, ImageDraw
+        meta = CARD_META_BY_URL.get(url) or {}
+        rank_s = meta.get("rank") or "?"
+        name_s = meta.get("name") or "Карта Senkuro"
+        border_colors = {
+            "R": (120, 220, 255),
+            "S": (240, 70, 85),
+            "A": (245, 195, 55),
+            "B": (175, 95, 245),
+            "C": (75, 155, 250),
+            "D": (75, 210, 120),
+            "F": (180, 185, 195),
+        }
+        b_col = border_colors.get(rank_s, (140, 145, 160))
+        im = Image.new("RGB", (420, 600), (24, 25, 32))
+        dr = ImageDraw.Draw(im)
+        dr.rectangle([6, 6, 413, 593], outline=b_col, width=6)
+        dr.rectangle([22, 22, 110, 68], fill=b_col)
+        dr.text((40, 38), f"RANK {rank_s}", fill=(15, 15, 20))
+        dr.text((36, 260), name_s[:32], fill=(240, 240, 245))
+        if len(name_s) > 32:
+            dr.text((36, 290), name_s[32:64], fill=(200, 200, 210))
+        out = io.BytesIO()
+        im.save(out, format="JPEG", quality=88)
+        return out.getvalue()
+    except Exception:
+        return None
+
+
+async def _enrich_and_prefetch_card_images_in_browser(page: Page, cards: list[dict]) -> None:
+    """
+    Пока открыт реальный Google Chrome под уникальным IP Opera VPN на странице /users/{slug}/cards:
+    1) Подтягивает публичные shiro.senkuro.org ссылки из DOM страницы (если они отрендерены).
+    2) Скачивает картинки карт прямо через браузерный контекст Chrome + Opera VPN (обходя 403 Forbidden от Cloudflare на mirai.senkuro.org!).
+    """
+    if not cards:
+        return
+    import base64
+    try:
+        dom_map = await page.evaluate(
+            """() => {
+                const map = {};
+                document.querySelectorAll('a[href*="/cards/"]').forEach(a => {
+                    const href = a.getAttribute('href') || '';
+                    const m = href.match(/\/cards\/([^/?#]+)/);
+                    const img = a.querySelector('img') || (a.parentElement ? a.parentElement.querySelector('img') : null);
+                    if (m && img && img.src && img.src.startsWith('http')) {
+                        map[m[1]] = img.src;
+                    }
+                });
+                return map;
+            }"""
+        )
+        if isinstance(dom_map, dict):
+            for c in cards:
+                c_slug = str(c.get("slug") or "").strip("/").split("/")[-1]
+                if c_slug and dom_map.get(c_slug):
+                    c["shiro_img"] = str(dom_map[c_slug])
+    except Exception:
+        pass
+
+    for c in cards:
+        u_orig = str(c.get("img") or "")
+        u_shiro = str(c.get("shiro_img") or "")
+        if u_orig:
+            CARD_META_BY_URL[u_orig] = {"rank": str(c.get("rank") or "?"), "name": str(c.get("name") or "Карта")}
+        if u_shiro:
+            CARD_META_BY_URL[u_shiro] = {"rank": str(c.get("rank") or "?"), "name": str(c.get("name") or "Карта")}
+
+        target_key = u_orig or u_shiro
+        if not target_key or target_key in PREFETCHED_CARD_IMAGES:
+            continue
+
+        for cand_url in ([u_shiro, u_orig] if u_shiro else [u_orig]):
+            if not cand_url:
+                continue
+            # Способ А: Через сетевой стек Chrome контекста (идёт через Opera VPN прокси этого аккаунта!)
+            try:
+                resp = await page.context.request.get(
+                    cand_url,
+                    headers={
+                        "Referer": "https://senkuro.com/",
+                        "Origin": "https://senkuro.com",
+                        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+                    },
+                    timeout=10000,
+                )
+                if resp.ok:
+                    body_b = await resp.body()
+                    jpg_b = _convert_raw_image_to_jpeg(body_b)
+                    if jpg_b:
+                        PREFETCHED_CARD_IMAGES[target_key] = jpg_b
+                        if u_shiro:
+                            PREFETCHED_CARD_IMAGES[u_shiro] = jpg_b
+                        break
+            except Exception:
+                pass
+
+            # Способ Б: Внутри страницы Chrome через fetch() -> base64
+            try:
+                b64_str = await page.evaluate(
+                    """async (imgUrl) => {
+                        try {
+                            const r = await fetch(imgUrl, { credentials: 'omit' });
+                            if (!r.ok) return '';
+                            const blob = await r.blob();
+                            return await new Promise((resolve) => {
+                                const reader = new FileReader();
+                                reader.onloadend = () => {
+                                    const res = String(reader.result || '');
+                                    const idx = res.indexOf(',');
+                                    resolve(idx >= 0 ? res.slice(idx + 1) : '');
+                                };
+                                reader.onerror = () => resolve('');
+                                reader.readAsDataURL(blob);
+                            });
+                        } catch (e) {
+                            return '';
+                        }
+                    }""",
+                    cand_url,
+                )
+                if b64_str:
+                    jpg_b = _convert_raw_image_to_jpeg(base64.b64decode(b64_str))
+                    if jpg_b:
+                        PREFETCHED_CARD_IMAGES[target_key] = jpg_b
+                        if u_shiro:
+                            PREFETCHED_CARD_IMAGES[u_shiro] = jpg_b
+                        break
+            except Exception:
+                pass
+
+
+def _download_and_normalize_card_photo(url: str) -> Optional[bytes]:
+    """
+    Многоуровневое получение картинки карты (100% защита от HTTP 403 Forbidden на mirai.senkuro.org):
+    1) Из предзагруженного кэша реального браузера Chrome под Opera VPN (PREFETCHED_CARD_IMAGES).
+    2) Через открытые локальные туннели Opera VPN (порты 25341..25352), а не с заблокированного IP GitHub Actions!
+    3) Через публичный прокси картинок shiro.senkuro.org (base64 URL).
+    4) Если файл на самом сервере Senkuro битый — генерирует аккуратную карточку с рангом и названием.
+    """
+    if url in PREFETCHED_CARD_IMAGES:
+        return PREFETCHED_CARD_IMAGES[url]
+
+    import base64
+    candidate_urls = [url]
+    if "mirai.senkuro.org" in url:
+        b64_u = base64.urlsafe_b64encode(url.encode("utf-8")).decode("ascii").rstrip("=")
+        candidate_urls.append(f"https://shiro.senkuro.org/insecure/rs:fit:500:750/{b64_u}.webp")
+
+    # Собираем все активные туннели Opera VPN (25341..25352), чтобы качать с европейских/американских IP, а не с IP датацентра GitHub!
+    open_ports = [25340 + i for i in range(1, 13) if is_local_port_open(25340 + i)]
+    openers = []
+    for p_num in open_ports[:4]:
+        ph = urllib.request.ProxyHandler({"http": f"http://127.0.0.1:{p_num}", "https": f"http://127.0.0.1:{p_num}"})
+        openers.append((f"vpn:{p_num}", urllib.request.build_opener(ph)))
+    openers.append(("direct", urllib.request.build_opener()))
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "Referer": "https://senkuro.com/",
+        "Origin": "https://senkuro.com",
+        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        "Sec-Fetch-Dest": "image",
+        "Sec-Fetch-Mode": "no-cors",
+        "Sec-Fetch-Site": "cross-site",
+    }
+
+    for cand_u in candidate_urls:
+        for op_label, opener in openers:
+            try:
+                req = urllib.request.Request(cand_u, headers=headers)
+                with opener.open(req, timeout=10) as resp:
+                    raw_bytes = resp.read()
+                jpg_b = _convert_raw_image_to_jpeg(raw_bytes)
+                if jpg_b:
+                    PREFETCHED_CARD_IMAGES[url] = jpg_b
+                    return jpg_b
+            except Exception as e:
+                if op_label == "direct":
+                    log_debug(f"[CARD IMG DL WARN] Не удалось скачать {cand_u} ({op_label}): {e}")
+                continue
+
+    return _render_fallback_card_tile_jpeg(url)
 
 
 def _send_media_chunk_binary_fallback(chunk_urls: list[str], caption: str = "") -> bool:
@@ -4892,6 +5070,12 @@ def _send_media_chunk_binary_fallback(chunk_urls: list[str], caption: str = "") 
 
 
 def _send_single_photo_chunk(chunk: list[str], caption: str = "") -> bool:
+    # Если картинки уже предзагружены реальным Chrome через Opera VPN в кэш PREFETCHED_CARD_IMAGES —
+    # сразу отправляем готовый JPEG за 0.3 сек (без ошибок 400 WEBPAGE_CURL_FAILED и 403 Forbidden)!
+    if all(u in PREFETCHED_CARD_IMAGES for u in chunk):
+        if _send_media_chunk_binary_fallback(chunk, caption=caption):
+            return True
+
     if len(chunk) == 1:
         payload: dict[str, Any] = {"chat_id": TELEGRAM_CHAT_ID, "photo": chunk[0]}
         if caption:
@@ -4900,7 +5084,7 @@ def _send_single_photo_chunk(chunk: list[str], caption: str = "") -> bool:
         res = tg_request("sendPhoto", payload)
         if res.get("ok"):
             return True
-        log_debug(f"[CHECK 5 PHOTO FALLBACK] Прямой URL не прошёл, качаю фото напрямую...")
+        log_debug(f"[CHECK 5 PHOTO FALLBACK] Прямой URL не прошёл, отправляю фото через VPN-загрузчик...")
         return _send_media_chunk_binary_fallback(chunk, caption=caption)
     else:
         media = []
@@ -4913,7 +5097,7 @@ def _send_single_photo_chunk(chunk: list[str], caption: str = "") -> bool:
         res = tg_request("sendMediaGroup", {"chat_id": TELEGRAM_CHAT_ID, "media": media})
         if res.get("ok"):
             return True
-        log_debug(f"[CHECK 5 ALBUM FALLBACK] sendMediaGroup по URL не прошёл ({res.get('error', '')[:120]}), загружаю {len(chunk)} фото напрямую...")
+        log_debug(f"[CHECK 5 ALBUM FALLBACK] sendMediaGroup по URL не прошёл ({res.get('error', '')[:120]}), отправляю {len(chunk)} фото через VPN-загрузчик...")
         return _send_media_chunk_binary_fallback(chunk, caption=caption)
 
 
@@ -4923,11 +5107,11 @@ def send_account_report(text: str, photo_urls: list[str], add_reply_button: bool
     if chunks and not add_reply_button and len(chunks) == 1:
         if _send_single_photo_chunk(chunks[0], caption=text):
             return
-
-    for c_idx, chunk in enumerate(chunks):
-        _send_single_photo_chunk(chunk, caption="")
-        if c_idx < len(chunks) - 1:
-            time.sleep(1.5)
+    elif chunks:
+        for c_idx, chunk in enumerate(chunks):
+            _send_single_photo_chunk(chunk, caption="")
+            if c_idx < len(chunks) - 1:
+                time.sleep(1.5)
 
     msg_payload: dict[str, Any] = {
         "chat_id": TELEGRAM_CHAT_ID,
@@ -4967,7 +5151,7 @@ async def run_check_all_5_accounts() -> None:
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v37.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v38.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -5281,7 +5465,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     FARM_STOP_FLAG = False
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v37.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v38.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -5321,7 +5505,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     elif action == "check":
         await run_check_all_5_accounts()
     elif action == "log":
-        await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v37.0")
+        await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v38.0")
     elif action == "screen":
         await send_live_screen_snapshot()
 
@@ -5421,7 +5605,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             if await perform_hard_stop_and_reset(task_queue):
                 send_tg_message(
                     "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
-                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v37.0)</b> — можете сразу нажимать любую кнопку ниже:",
+                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v38.0)</b> — можете сразу нажимать любую кнопку ниже:",
                     add_keyboard=True,
                 )
             return
@@ -5433,7 +5617,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v37.0")
+            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v38.0")
             return
 
         if data == "check_farm_status":
@@ -5482,7 +5666,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if lower in ("/start", "/menu", "/help", "меню"):
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v37.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v38.0</b>\n\n"
                 "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
                 "или просто напишите промокод одним словом в чат:",
                 add_keyboard=True,
@@ -5495,14 +5679,14 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
-            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v37.0")
+            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v38.0")
             return
 
         if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
             if await perform_hard_stop_and_reset(task_queue):
                 send_tg_message(
                     "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
-                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v37.0)</b> — можете сразу нажимать любую кнопку ниже:",
+                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v38.0)</b> — можете сразу нажимать любую кнопку ниже:",
                     add_keyboard=True,
                 )
             return
@@ -5631,7 +5815,7 @@ async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: fl
     )
     if os.environ.get("GH_EVENT_NAME") in ("push", "workflow_dispatch") and os.environ.get("IS_CONTINUATION_JOB") != "true":
         send_tg_message(
-            "🟢 <b>Сервер полностью запущен и готов к работе (v37.0)!</b>\n\n"
+            "🟢 <b>Сервер полностью запущен и готов к работе (v38.0)!</b>\n\n"
             "Браузер Google Chrome и виртуальный экран готовы — теперь любая кнопка сработает сразу 👇:",
             add_keyboard=True,
         )
@@ -5704,7 +5888,7 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v37.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v38.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",
