@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v39.0 (12 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
+SENKURO FULL AUTOMATION COMBINE v40.0 (12 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -3048,7 +3048,7 @@ async def accept_whitelisted_incoming_trades(page: Page, acc_slug: str, user_id:
             continue
 
         # Человеческая пауза перед принятием трейда
-        await asyncio.sleep(random.uniform(3.2, 5.2))
+        await asyncio.sleep(random.uniform(2.2, 3.6))
         acc_res = await gql_call(
             page,
             GQL_ACCEPT_CARD_TRADE,
@@ -3058,7 +3058,12 @@ async def accept_whitelisted_incoming_trades(page: Page, acc_slug: str, user_id:
         ok = ((acc_res.get("data") or {}).get("acceptCardTrade") or {}).get("success")
         if ok:
             total_qty = sum(int(x.get("quantity") or 1) for x in offer_items)
+            log_debug(f"[FORGE TRADE ACCEPT OK] {acc_slug}: принят входящий трейд {trade_id} от {source_slug} ({total_qty} шт.)")
             accepted_logs.append(f"принят трейд от <b>{source_slug}</b> ({total_qty} шт.)")
+        else:
+            errs = acc_res.get("errors") or []
+            err_msg = errs[0].get("message", "неизвестная ошибка") if errs else "success=False"
+            log_debug(f"[FORGE TRADE ACCEPT WARN] {acc_slug}: не удалось принять трейд {trade_id} от {source_slug}: {err_msg}")
     return accepted_logs
 
 
@@ -3122,41 +3127,56 @@ def format_text_only_inventory_summary(cards_nodes: list[dict], shards_nodes: li
     return f"Карты: {c_str} | Осколки: {s_str}"
 
 
-async def refresh_farm_state(state_map: dict[str, dict]) -> None:
-    for aid, st in state_map.items():
-        if FARM_STOP_FLAG:
-            break
-        page: Page = st["page"]
-        uid: str = st["user_id"]
+async def refresh_single_account_state(aid: str, st: dict, accept_trades: bool = True) -> None:
+    if FARM_STOP_FLAG:
+        return
+    page: Page = st["page"]
+    uid: str = st["user_id"]
 
+    if accept_trades:
         acc_trades = await accept_whitelisted_incoming_trades(page, aid, uid)
         if acc_trades:
             st["logs"].extend(acc_trades)
 
-        slots_res = await gql_call(page, GQL_FETCH_FORGE_SLOTS, {"mode": "UPGRADE"}, "fetchForgeCardsSlots")
-        slots_obj = (slots_res.get("data") or {}).get("forgeCardsSlots") or {}
+    slots_res = await gql_call(page, GQL_FETCH_FORGE_SLOTS, {"mode": "UPGRADE"}, "fetchForgeCardsSlots")
+    slots_obj = (slots_res.get("data") or {}).get("forgeCardsSlots") or {}
+    if st.get("forge_blocked"):
+        st["available_slots"] = 0
+    else:
         st["available_slots"] = int(slots_obj.get("available") or 0)
-        st["used_slots"] = int(slots_obj.get("used") or 0)
-        st["reset_at"] = slots_obj.get("resetAt")
+    st["used_slots"] = int(slots_obj.get("used") or 0)
+    st["reset_at"] = slots_obj.get("resetAt")
 
-        st["cards_nodes"] = await fetch_all_user_cards_gql(page, uid, modifier_val=0)
-        st["shards_nodes"] = await fetch_all_user_cards_gql(page, uid, modifier_val=1)
-        st["craftable_by_rank"] = expand_craftable_cards_by_rank(st["cards_nodes"])
+    st["cards_nodes"] = await fetch_all_user_cards_gql(page, uid, modifier_val=0)
+    st["shards_nodes"] = await fetch_all_user_cards_gql(page, uid, modifier_val=1)
+    st["craftable_by_rank"] = expand_craftable_cards_by_rank(st["cards_nodes"])
+    c_total = sum(int(n.get("quantity") or 1) for n in st["cards_nodes"] if not n.get("locked"))
+    s_total = sum(int(n.get("quantity") or 1) for n in st["shards_nodes"] if not n.get("locked"))
+    ranks_debug = {r: len(v) for r, v in st["craftable_by_rank"].items() if v}
+    log_debug(f"[FORGE STATE] {aid}: слоты={st['available_slots']}/5, карт={c_total} (для крафта: {ranks_debug}), осколков={s_total}")
+
+
+async def refresh_farm_state(state_map: dict[str, dict], accept_trades: bool = True) -> None:
+    for aid, st in state_map.items():
+        if FARM_STOP_FLAG:
+            break
+        await refresh_single_account_state(aid, st, accept_trades=accept_trades)
 
 
 async def forge_local_triples_on_account(st: dict) -> int:
     page: Page = st["page"]
+    aid: str = st["acc"]["id"]
     forged_count = 0
 
-    while st["available_slots"] > 0 and not FARM_STOP_FLAG:
+    while st["available_slots"] > 0 and not st.get("forge_blocked") and not FARM_STOP_FLAG:
         did_forge_in_pass = False
         for r in FORGE_UPGRADE_CHAIN:
             pool = st["craftable_by_rank"].get(r, [])
             if len(pool) >= 3 and st["available_slots"] > 0:
                 triple = pool[:3]
                 gql_cards = compress_card_units_for_gql(triple)
-                # Человеческая задержка (3.5–5.5 сек) на выбор 3 карт и переплавку в Кузне!
-                await asyncio.sleep(random.uniform(3.5, 5.5))
+                # Человеческая задержка (2.5–4.0 сек) на выбор 3 карт и переплавку в Кузне!
+                await asyncio.sleep(random.uniform(2.5, 4.0))
                 res = await gql_call(
                     page,
                     GQL_FORGE_CARDS,
@@ -3167,8 +3187,10 @@ async def forge_local_triples_on_account(st: dict) -> int:
                 if not forge_data:
                     errs = res.get("errors") or []
                     err_txt = errs[0].get("message", "ошибка кузни") if errs else "ошибка кузни"
+                    log_debug(f"[FORGE ERROR] {aid}: ошибка переплавки 3×{r} -> {err_txt} (блокирую слоты аккаунта на этот цикл)")
                     st["logs"].append(f"⚠️ Ошибка переплавки 3×{r}: {err_txt}")
                     st["available_slots"] = 0
+                    st["forge_blocked"] = True
                     break
 
                 st["available_slots"] -= 1
@@ -3181,12 +3203,14 @@ async def forge_local_triples_on_account(st: dict) -> int:
                     nc = (new_cards[0].get("card") or {})
                     new_rank = str(nc.get("rank") or NEXT_FORGE_RANK[r]).upper()
                     new_title = extract_card_title(nc)
+                    log_debug(f"[FORGE CRAFT OK] {aid}: 3×{r} -> {new_rank} «{new_title}» (осталось слотов: {st['available_slots']}/5)")
                     st["logs"].append(f"⚒️ Переплавлено 3×{r} ➡️ <b>{RANK_BADGE.get(new_rank, new_rank)} «{new_title}»</b>")
                 else:
                     nxt = NEXT_FORGE_RANK[r]
+                    log_debug(f"[FORGE CRAFT OK] {aid}: 3×{r} -> 1×{nxt} (осталось слотов: {st['available_slots']}/5)")
                     st["logs"].append(f"⚒️ Переплавлено 3×{r} ➡️ <b>1×{nxt}</b>")
 
-                await asyncio.sleep(random.uniform(2.0, 3.2))
+                await asyncio.sleep(random.uniform(1.5, 2.5))
                 st["cards_nodes"] = await fetch_all_user_cards_gql(page, st["user_id"], modifier_val=0)
                 st["craftable_by_rank"] = expand_craftable_cards_by_rank(st["cards_nodes"])
                 break
@@ -3200,6 +3224,7 @@ async def forge_local_triples_on_account(st: dict) -> int:
 async def run_smart_forge_and_trade_pipeline() -> None:
     global FARM_STOP_FLAG
     FARM_STOP_FLAG = False
+    log_debug("[FORGE PIPELINE START] Запуск умной Кузницы (Переплавка 3 в 1) и межаккаунтного обмена на 12 аккаунтах...")
     send_tg_message(
         "⚒️ Запускаю умную Кузницу («Переплавка» 3 в 1) и межаккаунтный обмен на 12 аккаунтах с человеческими задержками...",
         add_keyboard=False,
@@ -3207,6 +3232,8 @@ async def run_smart_forge_and_trade_pipeline() -> None:
 
     proxy_mgr = AccountProxyManager()
     state_map: dict[str, dict] = {}
+    report_lines: list[str] = []
+    report_sent: bool = False
 
     try:
         async with async_playwright() as p:
@@ -3225,12 +3252,8 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                     contexts.append(ctx)
                     page, user_obj = await ensure_logged_in(ctx, acc)
                     if not user_obj:
+                        log_debug(f"[FORGE AUTH WARN] Не удалось авторизоваться в {acc['id']}")
                         continue
-                    try:
-                        await page.goto("https://senkuro.com/forge", wait_until="domcontentloaded", timeout=35000)
-                        await asyncio.sleep(random.uniform(1.8, 3.0))
-                    except Exception:
-                        pass
                     real_acc_uid = await ensure_real_user_id(page, acc["id"], str(user_obj.get("id") or ""))
                     state_map[acc["id"]] = {
                         "acc": acc,
@@ -3240,6 +3263,7 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                         "ip": ip_used,
                         "available_slots": 0,
                         "used_slots": 0,
+                        "forge_blocked": False,
                         "reset_at": None,
                         "cards_nodes": [],
                         "shards_nodes": [],
@@ -3249,12 +3273,14 @@ async def run_smart_forge_and_trade_pipeline() -> None:
 
                 if not state_map:
                     send_tg_message("❌ Не удалось авторизоваться ни в одном из 12 фарм-аккаунтов.")
+                    report_sent = True
                     return
 
-                await refresh_farm_state(state_map)
+                await refresh_farm_state(state_map, accept_trades=True)
 
                 # Если на всех 12 аккаунтах слоты кузни = 0/5, сразу сообщаем точное время до сброса!
                 initial_free_slots = sum(st["available_slots"] for st in state_map.values())
+                log_debug(f"[FORGE SLOTS TOTAL] Суммарно свободных слотов кузни на 12 аккаунтах: {initial_free_slots}/60")
                 if initial_free_slots <= 0:
                     reset_lines = ["⏳ <b>На всех 12 фарм-аккаунтах сейчас 0 из 5 доступных попыток переплавки в Кузне:</b>\n"]
                     for aid, st in state_map.items():
@@ -3266,6 +3292,7 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                         )
                     reset_lines.append("💡 <i>Карты оставлены на аккаунтах до сброса попыток Кузни.</i>")
                     send_tg_message("\n".join(reset_lines), add_keyboard=True)
+                    report_sent = True
                     return
 
                 # 1. ПЕРВЫМ ДЕЛОМ проверяем основной аккаунт cesium254 и забираем оттуда ВСЮ мелочь младше A-ранга (F, D, C, B),
@@ -3301,7 +3328,6 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                         def _count_unlocked_any_cards(st_obj: dict) -> int:
                             return sum(int(n.get("quantity") or 1) for n in st_obj["cards_nodes"] if not n.get("locked") and int(n.get("quantity") or 0) > 0)
 
-                        # Выбираем аккаунт со свободными слотами Кузни, на котором ЕСТЬ осколки (в приоритете аккаунты с наибольшим числом осколков) или F-карта для обмена!
                         eligible_borrowers = [
                             s for s in state_map.values()
                             if s["available_slots"] > 0 and (_count_unlocked_shards(s) > 0 or _count_unlocked_any_cards(s) > 0)
@@ -3321,10 +3347,6 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                         )
                         req_payload = compress_card_units_for_gql(borrow_units)
 
-                        # ВАЖНО (правило нового UI Senkuro): при запросе карт с основы поле offer НЕ может быть пустым ([]),
-                        # иначе на основе серая неактивная кнопка «Принять обмен»!
-                        # Приоритет 1: даём взамен 1 осколок (самого младшего ранга).
-                        # Приоритет 2 (если осколков 0): даём взамен 1 карту F-ранга (или самую младшую).
                         rank_prio = {"F": 0, "D": 1, "C": 2, "B": 3, "A": 4, "S": 5, "R": 6}
                         borrow_offer_payload = []
                         borrow_offer_desc = ""
@@ -3362,8 +3384,9 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                                 borrow_offer_desc = f"1 карту [{b_rnk}]"
 
                         trade_created_obj = {}
+                        b_res = {}
                         if best_rec and borrow_offer_payload:
-                            await asyncio.sleep(random.uniform(3.0, 5.0))
+                            await asyncio.sleep(random.uniform(2.5, 4.0))
                             b_res = await gql_call(
                                 best_rec["page"],
                                 GQL_SUGGEST_CARD_TRADE,
@@ -3380,6 +3403,7 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                             trade_created_obj = (b_res.get("data") or {}).get("suggestCardTrade") or {}
                         if trade_created_obj.get("success"):
                             b_summary = ", ".join(borrow_desc_parts)
+                            log_debug(f"[FORGE BORROW SENT] {best_rec['acc']['id']} запросил с основы {MAIN_ACCOUNT_SLUG}: {b_summary} (взамен: {borrow_offer_desc})")
                             offer_note = f" (взамен предложен <b>{borrow_offer_desc}</b>, чтобы кнопка «Принять обмен» была активна)" if borrow_offer_desc else ""
                             send_tg_message(
                                 f"🤝 <b>Запрос карт B-ранга и ниже с основы <a href='{MAIN_ACCOUNT_URL}'>{MAIN_ACCOUNT_SLUG}</a>!</b>\n\n"
@@ -3389,13 +3413,21 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                                 add_keyboard=False,
                             )
                             prev_total_cards = sum(int(n.get("quantity") or 1) for n in best_rec["cards_nodes"])
-                            for _ in range(15):
+                            prev_card_ids = Counter(
+                                str((n.get("card") or {}).get("id") or n.get("cardId") or "")
+                                for n in best_rec["cards_nodes"]
+                            )
+                            borrow_confirmed = False
+                            for poll_idx in range(15):
                                 if FARM_STOP_FLAG:
                                     break
                                 await asyncio.sleep(10.0)
                                 cur_nodes = await fetch_all_user_cards_gql(best_rec["page"], best_rec["user_id"], modifier_val=0)
                                 cur_total = sum(int(n.get("quantity") or 1) for n in cur_nodes)
-                                # Также проверяем, исчез ли PENDING трейд к основе (если обмен уже принят)
+                                cur_card_ids = Counter(
+                                    str((n.get("card") or {}).get("id") or n.get("cardId") or "")
+                                    for n in cur_nodes
+                                )
                                 tr_chk = await gql_call(
                                     best_rec["page"],
                                     GQL_FETCH_CARD_TRADES,
@@ -3404,36 +3436,55 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                                 )
                                 pend_edges = ((tr_chk.get("data") or {}).get("cardTrades") or {}).get("edges") or []
                                 still_pending_to_main = any(
-                                    str(((e.get("node") or {}).get("target") or {}).get("slug") or "").lower() == MAIN_ACCOUNT_SLUG.lower()
+                                    str(((e.get("node") or {}).get("destination") or {}).get("slug") or "").lower() == MAIN_ACCOUNT_SLUG.lower()
+                                    or str(((e.get("node") or {}).get("target") or {}).get("slug") or "").lower() == MAIN_ACCOUNT_SLUG.lower()
                                     or str(((e.get("node") or {}).get("recipient") or {}).get("slug") or "").lower() == MAIN_ACCOUNT_SLUG.lower()
                                     for e in pend_edges
                                 )
-                                if cur_total > prev_total_cards or (not still_pending_to_main and len(cur_nodes) > 0 and cur_total != prev_total_cards):
-                                    best_rec["logs"].append(f"📥 Получены карты с основы {MAIN_ACCOUNT_SLUG} ({b_summary})")
-                                    send_tg_message(
-                                        f"✅ <b>Обмен с основы подтверждён!</b> Карты ({b_summary}) получены на <b>{best_rec['acc']['id']}</b> — начинаю распределение и переплавку...",
-                                        add_keyboard=False,
-                                    )
-                                    break
+                                if cur_total > prev_total_cards or cur_card_ids != prev_card_ids or not still_pending_to_main:
+                                    if cur_total > prev_total_cards or cur_card_ids != prev_card_ids:
+                                        borrow_confirmed = True
+                                        log_debug(f"[FORGE BORROW CONFIRMED] {best_rec['acc']['id']}: получены карты с основы ({b_summary}) на проверке #{poll_idx+1}")
+                                        best_rec["logs"].append(f"📥 Получены карты с основы {MAIN_ACCOUNT_SLUG} ({b_summary})")
+                                        send_tg_message(
+                                            f"✅ <b>Обмен с основы подтверждён!</b> Карты ({b_summary}) получены на <b>{best_rec['acc']['id']}</b> — начинаю распределение и переплавку...",
+                                            add_keyboard=False,
+                                        )
+                                        break
+                                    elif not still_pending_to_main and poll_idx >= 1:
+                                        log_debug(f"[FORGE BORROW CLOSED] Трейд с основой больше не в статусе PENDING (проверка #{poll_idx+1}), продолжаю кузню.")
+                                        break
+                            if not borrow_confirmed and not FARM_STOP_FLAG:
+                                log_debug("[FORGE BORROW TIMEOUT/SKIP] Обмен с основы не подтверждён или отклонён — продолжаю переплавку текущих карт фермы.")
+                                send_tg_message(
+                                    "ℹ️ Перехожу к переплавке и распределению карт между 12 фарм-аккаунтами...",
+                                    add_keyboard=False,
+                                )
+                            await refresh_single_account_state(best_rec["acc"]["id"], best_rec, accept_trades=True)
                         else:
                             b_errs = b_res.get("errors") or []
-                            if b_errs:
+                            if b_errs and best_rec:
+                                log_debug(f"[FORGE BORROW ERROR] {b_errs[0].get('message')}")
                                 best_rec["logs"].append(f"⚠️ Не удалось запросить карты с основы: {b_errs[0].get('message')}")
 
-                # 2. Обновляем состояние всех 4 аккаунтов (уже вместе с полученными картами с основы!) и варим локальные тройки
-                await refresh_farm_state(state_map)
+                # 2. Варим все локальные тройки, которые уже есть на каждом из 12 аккаунтов
                 for aid, st in state_map.items():
                     if FARM_STOP_FLAG:
                         break
-                    await forge_local_triples_on_account(st)
+                    if any(len(pool) >= 3 for pool in st["craftable_by_rank"].values()) and st["available_slots"] > 0:
+                        forged_n = await forge_local_triples_on_account(st)
+                        if forged_n > 0:
+                            await refresh_single_account_state(aid, st, accept_trades=False)
 
-                # 3. Межаккаунтный обмен и переплавка между 8 фарм-аккаунтами (с человеческими паузами!)
-                for _ in range(30):
+                # 3. Быстрый точечный межаккаунтный обмен и переплавка между 12 фарм-аккаунтами
+                #    (обновляем состояние ТОЛЬКО донора и получателя, а не все 12 аккаунтов на каждом шаге!)
+                failed_trade_pairs: set[tuple[str, str, str]] = set()
+                for step_num in range(1, 25):
                     if FARM_STOP_FLAG:
                         break
-                    await refresh_farm_state(state_map)
-                    total_free_slots = sum(st["available_slots"] for st in state_map.values())
+                    total_free_slots = sum(st["available_slots"] for st in state_map.values() if not st.get("forge_blocked"))
                     if total_free_slots <= 0:
+                        log_debug("[FORGE LOOP END] Свободных слотов кузни больше нет.")
                         break
 
                     target_rank = None
@@ -3444,9 +3495,13 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                             break
 
                     if not target_rank:
+                        log_debug("[FORGE LOOP END] На всех 12 аккаунтах больше нет 3 одноранговых карт (F/D/C/B) для объединения.")
                         break
 
-                    receiver_candidates = [st for st in state_map.values() if st["available_slots"] > 0]
+                    receiver_candidates = [
+                        st for st in state_map.values()
+                        if st["available_slots"] > 0 and not st.get("forge_blocked")
+                    ]
                     if not receiver_candidates:
                         break
                     receiver_candidates.sort(
@@ -3461,12 +3516,21 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                     need_count = max(0, 3 - have_on_receiver)
 
                     if need_count == 0:
-                        await forge_local_triples_on_account(receiver)
+                        forged_n = await forge_local_triples_on_account(receiver)
+                        if forged_n > 0:
+                            await refresh_single_account_state(rec_id, receiver, accept_trades=False)
+                        else:
+                            receiver["forge_blocked"] = True
+                            receiver["available_slots"] = 0
                         continue
 
+                    log_debug(f"[FORGE STEP #{step_num}] Собираю тройку ранга {target_rank} на {rec_id} (уже есть {have_on_receiver}/3, нужно ещё {need_count})")
                     transferred_any = False
+                    touched_donors: list[str] = []
                     for donor_id, donor in state_map.items():
                         if donor_id == rec_id or need_count <= 0 or FARM_STOP_FLAG:
+                            continue
+                        if (donor_id, rec_id, target_rank) in failed_trade_pairs:
                             continue
                         donor_pool = donor["craftable_by_rank"].get(target_rank, [])
                         if not donor_pool:
@@ -3474,8 +3538,7 @@ async def run_smart_forge_and_trade_pipeline() -> None:
 
                         take_units = donor_pool[:need_count]
                         offer_payload = compress_card_units_for_gql(take_units)
-                        # Человеческая пауза перед отправкой межаккаунтного трейда
-                        await asyncio.sleep(random.uniform(4.0, 6.2))
+                        await asyncio.sleep(random.uniform(2.5, 4.0))
                         tr_res = await gql_call(
                             donor["page"],
                             GQL_SUGGEST_CARD_TRADE,
@@ -3490,26 +3553,49 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                             "suggestCardTrade",
                         )
                         if ((tr_res.get("data") or {}).get("suggestCardTrade") or {}).get("success"):
-                            need_count -= len(take_units)
-                            transferred_any = True
+                            log_debug(f"[FORGE TRADE SENT] {donor_id} -> {rec_id}: отправлено {len(take_units)}×{target_rank}")
                             donor["logs"].append(
                                 f"📤 Отправлен трейд ({len(take_units)}×{target_rank}) ➡️ <b>{rec_id}</b> для переплавки"
                             )
-                            await asyncio.sleep(random.uniform(2.5, 4.0))
+                            touched_donors.append(donor_id)
+                            await asyncio.sleep(random.uniform(2.0, 3.2))
                             acc_logs = await accept_whitelisted_incoming_trades(receiver["page"], rec_id, rec_uid)
-                            receiver["logs"].extend(acc_logs)
+                            if acc_logs:
+                                receiver["logs"].extend(acc_logs)
+                                need_count -= len(take_units)
+                                transferred_any = True
+                            else:
+                                log_debug(f"[FORGE TRADE ACCEPT RETRY] Повторная проверка входящего трейда на {rec_id} через 2.5 сек...")
+                                await asyncio.sleep(2.5)
+                                acc_logs2 = await accept_whitelisted_incoming_trades(receiver["page"], rec_id, rec_uid)
+                                if acc_logs2:
+                                    receiver["logs"].extend(acc_logs2)
+                                    need_count -= len(take_units)
+                                    transferred_any = True
+                                else:
+                                    failed_trade_pairs.add((donor_id, rec_id, target_rank))
                         else:
                             t_errs = tr_res.get("errors") or []
+                            err_m = t_errs[0].get("message", "ошибка") if t_errs else "success=False"
+                            log_debug(f"[FORGE TRADE ERROR] {donor_id} -> {rec_id}: {err_m}")
+                            failed_trade_pairs.add((donor_id, rec_id, target_rank))
                             if t_errs:
-                                donor["logs"].append(f"⚠️ Ошибка отправки трейда на {rec_id}: {t_errs[0].get('message')}")
+                                donor["logs"].append(f"⚠️ Ошибка отправки трейда на {rec_id}: {err_m}")
+
+                    # Точечно обновляем только доноров и получателя!
+                    for d_id in touched_donors:
+                        await refresh_single_account_state(d_id, state_map[d_id], accept_trades=False)
+                    await refresh_single_account_state(rec_id, receiver, accept_trades=True)
 
                     if not transferred_any:
-                        break
+                        log_debug(f"[FORGE STEP #{step_num} SKIP] Не удалось перекинуть карты ранга {target_rank} на {rec_id}, помечаю получателя недоступным.")
+                        receiver["forge_blocked"] = True
+                        receiver["available_slots"] = 0
+                        continue
 
-                    await refresh_farm_state(state_map)
-                    await forge_local_triples_on_account(receiver)
-
-                await refresh_farm_state(state_map)
+                    forged_after = await forge_local_triples_on_account(receiver)
+                    if forged_after > 0:
+                        await refresh_single_account_state(rec_id, receiver, accept_trades=False)
 
                 report_lines = ["⚒️ <b>Отчёт работы Кузницы (Переплавка):</b>\n"]
                 for aid, st in state_map.items():
@@ -3651,10 +3737,19 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                     except Exception:
                         pass
             await browser.close()
+    except Exception as e_forge:
+        log_debug(f"[FORGE FATAL ERROR] {e_forge}")
+        report_lines.append(f"\n⚠️ <b>Кузня прервана из-за ошибки:</b> <code>{str(e_forge)[:300]}</code>")
     finally:
         proxy_mgr.stop_all()
-
-    send_tg_message("\n".join(report_lines), add_keyboard=True)
+        if not report_sent:
+            if not report_lines:
+                report_lines = ["⚒️ <b>Отчёт работы Кузницы (Переплавка):</b>\n"]
+                for aid, st in state_map.items():
+                    inv_str = format_text_only_inventory_summary(st["cards_nodes"], st["shards_nodes"])
+                    report_lines.append(f"👤 <b>{aid}</b> (Слоты: <b>{st['available_slots']}/5</b>): {inv_str}")
+            log_debug("[FORGE PIPELINE DONE] Отправляю итоговый отчёт Кузницы в Telegram.")
+            send_tg_message("\n".join(report_lines), add_keyboard=True)
 
 
 # ==============================================================================
@@ -5148,7 +5243,7 @@ async def run_check_all_5_accounts() -> None:
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v39.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v40.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -5462,7 +5557,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     FARM_STOP_FLAG = False
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v39.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v40.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -5502,7 +5597,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     elif action == "check":
         await run_check_all_5_accounts()
     elif action == "log":
-        await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v39.0")
+        await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v40.0")
     elif action == "screen":
         await send_live_screen_snapshot()
 
@@ -5602,7 +5697,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             if await perform_hard_stop_and_reset(task_queue):
                 send_tg_message(
                     "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
-                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v39.0)</b> — можете сразу нажимать любую кнопку ниже:",
+                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v40.0)</b> — можете сразу нажимать любую кнопку ниже:",
                     add_keyboard=True,
                 )
             return
@@ -5614,7 +5709,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v39.0")
+            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v40.0")
             return
 
         if data == "check_farm_status":
@@ -5663,7 +5758,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if lower in ("/start", "/menu", "/help", "меню"):
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v39.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v40.0</b>\n\n"
                 "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
                 "или просто напишите промокод одним словом в чат:",
                 add_keyboard=True,
@@ -5676,14 +5771,14 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
-            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v39.0")
+            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v40.0")
             return
 
         if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
             if await perform_hard_stop_and_reset(task_queue):
                 send_tg_message(
                     "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
-                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v39.0)</b> — можете сразу нажимать любую кнопку ниже:",
+                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v40.0)</b> — можете сразу нажимать любую кнопку ниже:",
                     add_keyboard=True,
                 )
             return
@@ -5812,11 +5907,11 @@ async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: fl
     )
     if os.environ.get("GH_EVENT_NAME") in ("push", "workflow_dispatch") and os.environ.get("IS_CONTINUATION_JOB") != "true":
         send_tg_message(
-            "🟢 <b>Сервер полностью запущен и готов к работе (v39.0)!</b>\n\n"
+            "🟢 <b>Сервер полностью запущен и готов к работе (v40.0)!</b>\n\n"
             "Браузер Google Chrome и виртуальный экран готовы — теперь любая кнопка сработает сразу 👇:",
             add_keyboard=True,
         )
-    while time.time() < deadline_ts:
+    while time.time() < deadline_ts or (ACTIVE_JOB_TASK is not None and not ACTIVE_JOB_TASK.done()):
         updates = await asyncio.to_thread(fetch_tg_updates_sync, offset, 4)
         for upd in updates:
             uid = int(upd.get("update_id") or 0)
@@ -5885,7 +5980,7 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v39.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v40.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",
