@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v40.0 (12 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
+SENKURO FULL AUTOMATION COMBINE v42.0 (12 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -84,6 +84,8 @@ GITHUB_PAT_TOKEN = (
 )
 
 DEBUG_LOG_FILE = Path("/tmp/senkuro_full_debug.log")
+ACTIVE_TASK_LOG_FILE = Path(".sessions/active_task_log.txt")
+TASK_CHECKPOINT_FILE = Path(".sessions/task_checkpoint.json")
 ACTIVE_BROWSER_PAGES: dict[str, Page] = {}
 
 
@@ -97,6 +99,37 @@ def log_debug(msg: str) -> None:
             DEBUG_LOG_FILE.write_bytes(tail_bytes)
         with open(DEBUG_LOG_FILE, "a", encoding="utf-8") as f:
             f.write(line + "\n")
+    except Exception:
+        pass
+    # Во время работы активной задачи также сохраняем её текущий лог во временный файл чекпоинта
+    try:
+        if TASK_CHECKPOINT_FILE.exists():
+            ACTIVE_TASK_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            if ACTIVE_TASK_LOG_FILE.exists() and ACTIVE_TASK_LOG_FILE.stat().st_size > 150_000:
+                ACTIVE_TASK_LOG_FILE.write_bytes(ACTIVE_TASK_LOG_FILE.read_bytes()[-90_000:])
+            with open(ACTIVE_TASK_LOG_FILE, "a", encoding="utf-8") as f_act:
+                f_act.write(line + "\n")
+    except Exception:
+        pass
+
+
+def save_task_checkpoint(action: str, promo_code: str = "", stage: str = "running", active: bool = True) -> None:
+    try:
+        if not active:
+            # Когда задача завершилась — полностью удаляем временный чекпоинт и временный лог незавершённой задачи!
+            TASK_CHECKPOINT_FILE.unlink(missing_ok=True)
+            ACTIVE_TASK_LOG_FILE.unlink(missing_ok=True)
+            return
+        TASK_CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "active": True,
+            "action": action,
+            "promo_code": promo_code,
+            "stage": stage,
+            "saved_at": time.time(),
+            "saved_human": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        TASK_CHECKPOINT_FILE.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
 
@@ -3209,6 +3242,7 @@ async def forge_local_triples_on_account(st: dict) -> int:
                     nxt = NEXT_FORGE_RANK[r]
                     log_debug(f"[FORGE CRAFT OK] {aid}: 3×{r} -> 1×{nxt} (осталось слотов: {st['available_slots']}/5)")
                     st["logs"].append(f"⚒️ Переплавлено 3×{r} ➡️ <b>1×{nxt}</b>")
+                save_task_checkpoint("forge", "", stage=f"craft:{aid}:3x{r}", active=True)
 
                 await asyncio.sleep(random.uniform(1.5, 2.5))
                 st["cards_nodes"] = await fetch_all_user_cards_gql(page, st["user_id"], modifier_val=0)
@@ -5243,7 +5277,7 @@ async def run_check_all_5_accounts() -> None:
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v40.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v42.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -5557,7 +5591,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     FARM_STOP_FLAG = False
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v40.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v42.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -5597,7 +5631,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     elif action == "check":
         await run_check_all_5_accounts()
     elif action == "log":
-        await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v40.0")
+        await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v42.0")
     elif action == "screen":
         await send_live_screen_snapshot()
 
@@ -5633,6 +5667,7 @@ async def perform_hard_stop_and_reset(task_queue: asyncio.Queue) -> bool:
         EARLY_QUEUE_FILE.unlink(missing_ok=True)
     except Exception:
         pass
+    save_task_checkpoint("", "", stage="stopped", active=False)
 
     while not task_queue.empty():
         try:
@@ -5697,7 +5732,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             if await perform_hard_stop_and_reset(task_queue):
                 send_tg_message(
                     "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
-                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v40.0)</b> — можете сразу нажимать любую кнопку ниже:",
+                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v42.0)</b> — можете сразу нажимать любую кнопку ниже:",
                     add_keyboard=True,
                 )
             return
@@ -5709,7 +5744,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v40.0")
+            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v42.0")
             return
 
         if data == "check_farm_status":
@@ -5758,7 +5793,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if lower in ("/start", "/menu", "/help", "меню"):
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v40.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v42.0</b>\n\n"
                 "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
                 "или просто напишите промокод одним словом в чат:",
                 add_keyboard=True,
@@ -5771,14 +5806,14 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
-            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v40.0")
+            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v42.0")
             return
 
         if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
             if await perform_hard_stop_and_reset(task_queue):
                 send_tg_message(
                     "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
-                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v40.0)</b> — можете сразу нажимать любую кнопку ниже:",
+                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v42.0)</b> — можете сразу нажимать любую кнопку ниже:",
                     add_keyboard=True,
                 )
             return
@@ -5907,7 +5942,7 @@ async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: fl
     )
     if os.environ.get("GH_EVENT_NAME") in ("push", "workflow_dispatch") and os.environ.get("IS_CONTINUATION_JOB") != "true":
         send_tg_message(
-            "🟢 <b>Сервер полностью запущен и готов к работе (v40.0)!</b>\n\n"
+            "🟢 <b>Сервер полностью запущен и готов к работе (v42.0)!</b>\n\n"
             "Браузер Google Chrome и виртуальный экран готовы — теперь любая кнопка сработает сразу 👇:",
             add_keyboard=True,
         )
@@ -5958,15 +5993,35 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
         ACTIVE_JOB_NAME = key_done
         FARM_STOP_FLAG = False
         log_debug(f"[EXECUTOR] Запуск задачи: action={act_code}, promo={p_code or '-'}")
+        track_ckpt = act_code in ("forge", "packs", "promo", "trade", "all", "check", "balance")
+        if track_ckpt:
+            save_task_checkpoint(act_code, p_code, stage="started", active=True)
+
+        async def _ckpt_heartbeat(a_c: str, p_c: str) -> None:
+            tick = 0
+            while True:
+                await asyncio.sleep(20.0)
+                tick += 20
+                save_task_checkpoint(a_c, p_c, stage=f"running_{tick}s", active=True)
+
+        hb_task = asyncio.create_task(_ckpt_heartbeat(act_code, p_code)) if track_ckpt else None
+        task_finished_cleanly = False
         try:
             ACTIVE_JOB_TASK = asyncio.create_task(execute_single_action(act_code, p_code))
             await ACTIVE_JOB_TASK
+            task_finished_cleanly = True
         except asyncio.CancelledError:
             log_debug(f"[EXECUTOR CANCELLED] Задача {act_code} остановлена пользователем (СТОП).")
+            task_finished_cleanly = True
         except Exception as e:
             log_debug(f"[EXECUTOR ERROR] {act_code}: {e}")
             send_tg_message(f"⚠️ Ошибка при выполнении задачи <code>{act_code}</code>: {str(e).replace('<', '&lt;').replace('>', '&gt;')[:400]}", add_keyboard=True)
+            task_finished_cleanly = True
         finally:
+            if hb_task:
+                hb_task.cancel()
+            if track_ckpt and task_finished_cleanly:
+                save_task_checkpoint(act_code, p_code, stage="completed", active=False)
             for _k, _pg in list(ACTIVE_BROWSER_PAGES.items()):
                 try:
                     if _pg.is_closed():
@@ -5980,7 +6035,7 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v40.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v42.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",
@@ -6062,6 +6117,34 @@ async def async_main() -> None:
             except Exception:
                 pass
 
+    # 2.5. Если на предыдущем сервере задача (Кузня, Паки, Трейд, Промокод) была прервана по 4.5-часовому лимиту GitHub
+    #      и её чекпоинт (обновляемый каждые 20 сек) моложе 25 минут — автоматически доделываем её на новом сервере!
+    if TASK_CHECKPOINT_FILE.exists():
+        try:
+            tc_data = json.loads(TASK_CHECKPOINT_FILE.read_text(encoding="utf-8"))
+            tc_active = bool(tc_data.get("active"))
+            tc_act = str(tc_data.get("action") or "").strip().lower()
+            tc_prm = str(tc_data.get("promo_code") or "").strip()
+            tc_age = time.time() - float(tc_data.get("saved_at") or 0)
+            if tc_active and tc_act and gh_event != "push" and 0 <= tc_age < 1500:
+                if ACTIVE_TASK_LOG_FILE.exists():
+                    try:
+                        prev_task_log = ACTIVE_TASK_LOG_FILE.read_text(encoding="utf-8", errors="ignore")
+                        with open(DEBUG_LOG_FILE, "a", encoding="utf-8") as f_dbg:
+                            f_dbg.write("=== ПРОДОЛЖЕНИЕ ПРЕРВАННОЙ ЗАДАЧИ С ПРЕДЫДУЩЕГО СЕРВЕРА ===\n" + prev_task_log + "\n")
+                    except Exception:
+                        pass
+                log_debug(f"[TASK AUTO-RESUME] Обнаружена незавершённая задача '{tc_act}' с предыдущего сервера (пульс {int(tc_age)} сек назад, этап={tc_data.get('stage')}) — автоматически продолжаю!")
+                send_tg_message(
+                    f"🔄 <b>Сервер планово перезапустился по лимиту времени GitHub и автоматически продолжает незавершённую задачу <code>{tc_act}</code>!</b>",
+                    add_keyboard=True,
+                )
+                await PENDING_TASKS.put((tc_act, tc_prm))
+            else:
+                save_task_checkpoint("", "", stage="idle", active=False)
+        except Exception:
+            save_task_checkpoint("", "", stage="idle", active=False)
+
     if should_resume_farm:
         rem_hours = max(0.25, (480 - elapsed_prev) / 60.0)
         log_debug(f"[FARM AUTO-RESUME] Продолжаю 8ч фарм (уже прошло {elapsed_prev} мин из 480, осталось {rem_hours:.2f} ч)!")
@@ -6101,6 +6184,13 @@ async def async_main() -> None:
         try:
             resume_st = json.loads(FARM_RESUME_FILE.read_text(encoding="utf-8"))
             if resume_st.get("active") and not resume_st.get("stopped") and int(resume_st.get("elapsed_minutes") or 0) < 475:
+                need_continue_job = True
+        except Exception:
+            pass
+    if TASK_CHECKPOINT_FILE.exists():
+        try:
+            tc_st = json.loads(TASK_CHECKPOINT_FILE.read_text(encoding="utf-8"))
+            if tc_st.get("active") and tc_st.get("action"):
                 need_continue_job = True
         except Exception:
             pass
