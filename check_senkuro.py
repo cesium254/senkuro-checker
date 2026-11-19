@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-SENKURO FULL AUTOMATION COMBINE v42.0 (12 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
+SENKURO FULL AUTOMATION COMBINE v43.0 (12 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
 ================================================================================
 Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
 1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
@@ -153,6 +153,136 @@ KNOWN_USER_IDS: dict[str, str] = {
     "neragar": "VVNFUjoyNTc4MDQ1OTExMDAzNDc5MzY",
     "cesium254": "VVNFUjoxODAxNDM0ODEzOTI0ODE4MDE",
 }
+
+# ==============================================================================
+# БАЗА ЦЕН БАНКА SENKUTOOLS (АВТООБНОВЛЕНИЕ С MOZILLA ADD-ONS)
+# ==============================================================================
+SENKUTOOLS_AMO_API_URL = "https://addons.mozilla.org/api/v5/addons/addon/senkutools/"
+SENKUTOOLS_AMO_PAGE_URL = "https://addons.mozilla.org/ru/firefox/addon/senkutools/"
+SENKUTOOLS_PRICES_FILE = Path(".sessions/senkutools_prices.json")
+SENKUTOOLS_META_FILE = Path(".sessions/senkutools_meta.json")
+SENKUTOOLS_PRICE_DB: dict[str, float] = {}
+SENKUTOOLS_META: dict[str, Any] = {}
+DEFAULT_BANK_MIN_NET_PRICE: float = 1.50
+BANK_COMMISSION_MULT: float = 0.80  # комиссия банка 20% -> чистыми 80% (например 2.00 -> 1.60)
+
+
+def _load_cached_senkutools_db() -> None:
+    global SENKUTOOLS_PRICE_DB, SENKUTOOLS_META
+    if not SENKUTOOLS_PRICE_DB and SENKUTOOLS_PRICES_FILE.exists():
+        try:
+            SENKUTOOLS_PRICE_DB = json.loads(SENKUTOOLS_PRICES_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            SENKUTOOLS_PRICE_DB = {}
+    if not SENKUTOOLS_META and SENKUTOOLS_META_FILE.exists():
+        try:
+            SENKUTOOLS_META = json.loads(SENKUTOOLS_META_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            SENKUTOOLS_META = {}
+
+
+def ensure_senkutools_price_db(force_check: bool = True) -> dict[str, Any]:
+    """
+    Проверяет актуальную версию расширения SenkuTools на addons.mozilla.org.
+    Если вышла новая версия (или локальной базы ещё нет) — скачивает .xpi,
+    распаковывает database.json в памяти и сохраняет компактный словарь {slug: raw_price} в .sessions/.
+    """
+    global SENKUTOOLS_PRICE_DB, SENKUTOOLS_META
+    import io
+    import zipfile
+
+    _load_cached_senkutools_db()
+    cached_ver = str(SENKUTOOLS_META.get("version") or "")
+    status_note = "из кэша"
+    updated_now = False
+
+    if force_check or not SENKUTOOLS_PRICE_DB:
+        try:
+            req = urllib.request.Request(
+                SENKUTOOLS_AMO_API_URL,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) SenkuroBot/43.0"},
+            )
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                amo_info = json.loads(resp.read().decode("utf-8"))
+            cur_v_obj = amo_info.get("current_version") or {}
+            latest_ver = str(cur_v_obj.get("version") or "").strip()
+            xpi_url = str((cur_v_obj.get("file") or {}).get("url") or "").strip()
+            last_upd = str(amo_info.get("last_updated") or "")[:10]
+
+            if latest_ver and xpi_url and (latest_ver != cached_ver or not SENKUTOOLS_PRICE_DB):
+                log_debug(f"[SENKUTOOLS] Новая версия базы цен {latest_ver} (была: {cached_ver or 'нет'}), скачиваю .xpi...")
+                req_xpi = urllib.request.Request(
+                    xpi_url,
+                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) SenkuroBot/43.0"},
+                )
+                with urllib.request.urlopen(req_xpi, timeout=25) as xpi_resp:
+                    xpi_bytes = xpi_resp.read()
+                with zipfile.ZipFile(io.BytesIO(xpi_bytes)) as zf:
+                    raw_db = json.loads(zf.read("database.json").decode("utf-8"))
+                compact_db: dict[str, float] = {}
+                if isinstance(raw_db, dict):
+                    for k_slug, v_obj in raw_db.items():
+                        if isinstance(v_obj, dict) and v_obj.get("price") is not None:
+                            try:
+                                compact_db[str(k_slug).strip().lower()] = float(v_obj["price"])
+                            except Exception:
+                                pass
+                if compact_db:
+                    SENKUTOOLS_PRICE_DB = compact_db
+                    SENKUTOOLS_META = {
+                        "version": latest_ver,
+                        "last_updated": last_upd,
+                        "cards_count": len(compact_db),
+                        "source_url": SENKUTOOLS_AMO_PAGE_URL,
+                        "checked_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+                    SENKUTOOLS_PRICES_FILE.parent.mkdir(parents=True, exist_ok=True)
+                    SENKUTOOLS_PRICES_FILE.write_text(json.dumps(compact_db, ensure_ascii=False), encoding="utf-8")
+                    SENKUTOOLS_META_FILE.write_text(json.dumps(SENKUTOOLS_META, ensure_ascii=False), encoding="utf-8")
+                    updated_now = True
+                    status_note = f"обновлена с {cached_ver} до {latest_ver}" if cached_ver else f"загружена {latest_ver}"
+                    log_debug(f"[SENKUTOOLS OK] База v{latest_ver} сохранена ({len(compact_db)} карт).")
+            elif latest_ver:
+                SENKUTOOLS_META["version"] = latest_ver
+                SENKUTOOLS_META["last_updated"] = last_upd or SENKUTOOLS_META.get("last_updated", "")
+                SENKUTOOLS_META["cards_count"] = len(SENKUTOOLS_PRICE_DB)
+                SENKUTOOLS_META["source_url"] = SENKUTOOLS_AMO_PAGE_URL
+                status_note = "актуальна"
+                log_debug(f"[SENKUTOOLS OK] База v{latest_ver} уже актуальна ({len(SENKUTOOLS_PRICE_DB)} карт).")
+        except Exception as e_st:
+            log_debug(f"[SENKUTOOLS WARN] Не удалось проверить Mozilla Add-ons: {e_st}")
+            status_note = "из кэша (нет ответа AMO)" if SENKUTOOLS_PRICE_DB else "недоступна"
+
+    return {
+        "version": str(SENKUTOOLS_META.get("version") or "—"),
+        "last_updated": str(SENKUTOOLS_META.get("last_updated") or ""),
+        "cards_count": len(SENKUTOOLS_PRICE_DB),
+        "updated_now": updated_now,
+        "status_note": status_note,
+        "source_url": SENKUTOOLS_AMO_PAGE_URL,
+    }
+
+
+def get_card_bank_net_price(slug: str) -> Optional[float]:
+    if not slug or not SENKUTOOLS_PRICE_DB:
+        return None
+    clean_slug = str(slug).strip("/").split("/")[-1].lower()
+    raw_p = SENKUTOOLS_PRICE_DB.get(clean_slug)
+    if raw_p is None:
+        return None
+    return round(float(raw_p) * BANK_COMMISSION_MULT, 2)
+
+
+def format_senkutools_status_line(st_info: dict[str, Any]) -> str:
+    ver = st_info.get("version") or "—"
+    cnt = int(st_info.get("cards_count") or 0)
+    note = st_info.get("status_note") or ""
+    upd = st_info.get("last_updated") or ""
+    upd_s = f", от {upd}" if upd else ""
+    return (
+        f"🏦 <b>База цен <a href='{SENKUTOOLS_AMO_PAGE_URL}'>SenkuTools</a>:</b> "
+        f"v<b>{ver}</b> ({note}{upd_s} | {cnt} карт)"
+    )
 
 
 def get_secret_password(idx: int, slug: str, login_email: str) -> str:
@@ -3665,80 +3795,135 @@ async def run_smart_forge_and_trade_pipeline() -> None:
                         for node in st_chk["cards_nodes"]
                     )
 
-                    for aid, st in state_map.items():
-                        if FARM_STOP_FLAG or not has_any_high_rank_on_farm:
-                            break
-                        high_rank_offers = []
-                        acc_cards_cnt: Counter = Counter()
-                        for node in st["cards_nodes"]:
-                            if node.get("locked"):
-                                continue
-                            cid = (node.get("card") or {}).get("id") or node.get("cardId")
-                            qty = int(node.get("quantity") or 1)
-                            mod = int(node.get("modifier") or 0)
-                            rank = str((node.get("card") or {}).get("rank") or "?").upper()
-                            # Фильтр: отправляем на основу ТОЛЬКО ранг A и выше (A, S, R)!
-                            if cid and qty > 0 and rank in ("A", "S", "R"):
-                                high_rank_offers.append({"cardId": cid, "modifier": mod, "quantity": qty})
-                                acc_cards_cnt[rank] += qty
-
-                        # Когда отправляется карта A/S/R хотя бы с одного аккаунта — со ВСЕХ 8 аккаунтов также скидываем осколки на основу,
-                        # НО строго оставляем 1 осколок в резерве на каждом фарм-аккаунте (чтобы всегда был предмет для встречного трейда с основой)!
-                        all_offer_entries = list(high_rank_offers)
-                        acc_shards_cnt: Counter = Counter()
-                        unlocked_shard_items = []
-                        for node in st["shards_nodes"]:
-                            if node.get("locked"):
-                                continue
-                            cid = (node.get("card") or {}).get("id") or node.get("cardId")
-                            qty = int(node.get("quantity") or 1)
-                            mod = int(node.get("modifier") or 1)
-                            rank = str((node.get("card") or {}).get("rank") or "?").upper()
-                            if cid and qty > 0:
-                                unlocked_shard_items.append({"cid": cid, "qty": qty, "mod": mod, "rank": rank})
-
-                        rank_prio_sh = {"F": 0, "D": 1, "C": 2, "B": 3, "A": 4, "S": 5, "R": 6}
-                        unlocked_shard_items.sort(key=lambda x: rank_prio_sh.get(x["rank"], 9))
-                        reserved_one_shard = False
-                        for sh_it in unlocked_shard_items:
-                            send_q = sh_it["qty"]
-                            if not reserved_one_shard:
-                                # Оставляем 1 самый младший осколок на аккаунте про запас!
-                                send_q -= 1
-                                reserved_one_shard = True
-                            if send_q > 0:
-                                all_offer_entries.append({"cardId": sh_it["cid"], "modifier": sh_it["mod"], "quantity": send_q})
-                                acc_shards_cnt[sh_it["rank"]] += send_q
-
-                        if not all_offer_entries:
-                            continue
-
-                        sent_ok_any = False
-                        for i in range(0, len(all_offer_entries), 50):
-                            chunk = all_offer_entries[i : i + 50]
-                            await asyncio.sleep(random.uniform(4.0, 6.2))
-                            s_res = await gql_call(
-                                st["page"],
-                                GQL_SUGGEST_CARD_TRADE,
-                                {
-                                    "input": {
-                                        "userId": main_uid,
-                                        "offer": chunk,
-                                        "request": [],
-                                        "description": [],
-                                    }
-                                },
-                                "suggestCardTrade",
+                    if has_any_high_rank_on_farm and not FARM_STOP_FLAG:
+                        # Выбираем ОДИН случайный аккаунт-курьер среди тех, на которых есть карта A/S/R,
+                        # чтобы на основу cesium254 приходил ОДИН аккуратный трейд, а не 6-12 отдельных трейдов!
+                        high_holders = [
+                            aid_k for aid_k, st_v in state_map.items()
+                            if any(
+                                not nd.get("locked")
+                                and int(nd.get("quantity") or 1) > 0
+                                and str((nd.get("card") or {}).get("rank") or "").upper() in ("A", "S", "R")
+                                for nd in st_v["cards_nodes"]
                             )
-                            if ((s_res.get("data") or {}).get("suggestCardTrade") or {}).get("success"):
-                                sent_ok_any = True
+                        ]
+                        courier_id = random.choice(high_holders)
+                        courier_st = state_map[courier_id]
+                        courier_uid = courier_st["user_id"]
+                        log_debug(f"[FORGE PAYOUT COURIER] Случайный курьер для единого трейда на основу: {courier_id} (из {high_holders})")
 
-                        if sent_ok_any:
-                            accounts_that_sent.append(aid)
-                            for r_k, q_v in acc_cards_cnt.items():
-                                total_sent_cards[r_k] += q_v
-                            for r_k, q_v in acc_shards_cnt.items():
-                                total_sent_shards[r_k] += q_v
+                        def _collect_payout_items(st_obj: dict) -> tuple[list[dict], Counter, Counter]:
+                            offers_out: list[dict] = []
+                            c_cnt: Counter = Counter()
+                            s_cnt: Counter = Counter()
+                            for nd in st_obj["cards_nodes"]:
+                                if nd.get("locked"):
+                                    continue
+                                cid = (nd.get("card") or {}).get("id") or nd.get("cardId")
+                                qty = int(nd.get("quantity") or 1)
+                                mod = int(nd.get("modifier") or 0)
+                                rank = str((nd.get("card") or {}).get("rank") or "?").upper()
+                                if cid and qty > 0 and rank in ("A", "S", "R"):
+                                    offers_out.append({"cardId": cid, "modifier": mod, "quantity": qty})
+                                    c_cnt[rank] += qty
+
+                            unlocked_sh = []
+                            for nd in st_obj["shards_nodes"]:
+                                if nd.get("locked"):
+                                    continue
+                                cid = (nd.get("card") or {}).get("id") or nd.get("cardId")
+                                qty = int(nd.get("quantity") or 1)
+                                mod = int(nd.get("modifier") or 1)
+                                rank = str((nd.get("card") or {}).get("rank") or "?").upper()
+                                if cid and qty > 0:
+                                    unlocked_sh.append({"cid": cid, "qty": qty, "mod": mod, "rank": rank})
+                            rank_prio_sh = {"F": 0, "D": 1, "C": 2, "B": 3, "A": 4, "S": 5, "R": 6}
+                            unlocked_sh.sort(key=lambda x: rank_prio_sh.get(x["rank"], 9))
+                            reserved_one = False
+                            for sh_it in unlocked_sh:
+                                send_q = sh_it["qty"]
+                                if not reserved_one:
+                                    send_q -= 1
+                                    reserved_one = True
+                                if send_q > 0:
+                                    offers_out.append({"cardId": sh_it["cid"], "modifier": sh_it["mod"], "quantity": send_q})
+                                    s_cnt[sh_it["rank"]] += send_q
+                            return offers_out, c_cnt, s_cnt
+
+                        # 4.1. Остальные аккаунты скидывают свои A/S/R и лишние осколки (оставляя 1 про запас) прямо на выбранного курьера
+                        fallback_direct_ids: list[str] = []
+                        consolidated_any = False
+                        for aid, st in state_map.items():
+                            if aid == courier_id or FARM_STOP_FLAG:
+                                continue
+                            donor_offers, _, _ = _collect_payout_items(st)
+                            if not donor_offers:
+                                continue
+                            sent_to_courier = False
+                            for i in range(0, len(donor_offers), 50):
+                                chunk = donor_offers[i : i + 50]
+                                await asyncio.sleep(random.uniform(2.5, 4.0))
+                                c_res = await gql_call(
+                                    st["page"],
+                                    GQL_SUGGEST_CARD_TRADE,
+                                    {
+                                        "input": {
+                                            "userId": courier_uid,
+                                            "offer": chunk,
+                                            "request": [],
+                                            "description": [],
+                                        }
+                                    },
+                                    "suggestCardTrade",
+                                )
+                                if ((c_res.get("data") or {}).get("suggestCardTrade") or {}).get("success"):
+                                    sent_to_courier = True
+                            if sent_to_courier:
+                                consolidated_any = True
+                                log_debug(f"[FORGE CONSOLIDATE] {aid} -> {courier_id}: передано {len(donor_offers)} поз. для общего трейда")
+                                await asyncio.sleep(random.uniform(1.8, 3.0))
+                                await accept_whitelisted_incoming_trades(courier_st["page"], courier_id, courier_uid)
+                            else:
+                                fallback_direct_ids.append(aid)
+
+                        if consolidated_any:
+                            await asyncio.sleep(1.5)
+                            await accept_whitelisted_incoming_trades(courier_st["page"], courier_id, courier_uid)
+                            await refresh_single_account_state(courier_id, courier_st, accept_trades=False)
+
+                        # 4.2. Курьер отправляет ОДИН единый трейд на основу cesium254 (плюс резерв, если донор не смог передать курьеру)
+                        for send_aid in [courier_id] + fallback_direct_ids:
+                            if FARM_STOP_FLAG:
+                                break
+                            st_s = state_map[send_aid]
+                            all_offer_entries, acc_cards_cnt, acc_shards_cnt = _collect_payout_items(st_s)
+                            if not all_offer_entries:
+                                continue
+                            sent_ok_any = False
+                            for i in range(0, len(all_offer_entries), 50):
+                                chunk = all_offer_entries[i : i + 50]
+                                await asyncio.sleep(random.uniform(3.0, 4.8))
+                                s_res = await gql_call(
+                                    st_s["page"],
+                                    GQL_SUGGEST_CARD_TRADE,
+                                    {
+                                        "input": {
+                                            "userId": main_uid,
+                                            "offer": chunk,
+                                            "request": [],
+                                            "description": [],
+                                        }
+                                    },
+                                    "suggestCardTrade",
+                                )
+                                if ((s_res.get("data") or {}).get("suggestCardTrade") or {}).get("success"):
+                                    sent_ok_any = True
+                            if sent_ok_any:
+                                accounts_that_sent.append(send_aid)
+                                for r_k, q_v in acc_cards_cnt.items():
+                                    total_sent_cards[r_k] += q_v
+                                for r_k, q_v in acc_shards_cnt.items():
+                                    total_sent_shards[r_k] += q_v
 
                     if accounts_that_sent:
                         c_summary = ", ".join(
@@ -3823,8 +4008,20 @@ def parse_custom_trade_spec(raw_spec: str) -> Optional[dict]:
     if not s:
         return None
 
+    # Проверяем команду отправки выгодных карт для банка: "банк", "банк 1.5", "выгодные", "профит", "bank 1.6"
+    s_low = s.lower().strip()
+    m_bank = re.match(r"^(?:банк|bank|выгодные|выгода|профит|profit)(?:\s+([0-9]+(?:[.,][0-9]+)?))?$", s_low)
+    if m_bank:
+        min_net = DEFAULT_BANK_MIN_NET_PRICE
+        if m_bank.group(1):
+            try:
+                min_net = max(0.5, float(m_bank.group(1).replace(",", ".")))
+            except Exception:
+                min_net = DEFAULT_BANK_MIN_NET_PRICE
+        return {"mode": "bank", "min_net": round(min_net, 2)}
+
     # Заменяем запятые, точки с запятой, слэши и плюсы на пробелы
-    norm = re.sub(r"[,;/+|]+", " ", s.lower()).strip()
+    norm = re.sub(r"[,;/+|]+", " ", s_low).strip()
     raw_words = [w for w in norm.split() if w]
     if not raw_words:
         return None
@@ -3925,14 +4122,178 @@ def get_trade_prompt_message() -> str:
         "• <code>1B 2C 4D 5C</code> (или <code>1 B, 3 B, 5 C, 6 D</code>) — отправить с <b>#1</b> ранг B, с <b>#2</b> ранг C, с <b>#4</b> ранг D, с <b>#5</b> ранг C\n"
         "• <code>1 4 B</code> (или <code>1-4 B</code>) — отправить ранг <b>B</b> с аккаунтов <b>#1 и #4</b>\n"
         "• <code>все B</code> (или просто <code>B</code>) — собрать все карты ранга <b>B</b> со всех 12 аккаунтов\n"
-        "• <code>5 все</code> — отправить все незакреплённые карты с аккаунта <b>#5</b>\n\n"
+        "• <code>5 все</code> — отправить все незакреплённые карты с аккаунта <b>#5</b>\n"
+        "• <code>банк</code> (или <code>банк 1.6</code>) — 🏦 проверить базу <b>SenkuTools</b>, собрать все выгодные карты (по умолчанию <b>≥1.50</b> чистыми) и отправить <b>одним трейдом</b> на основу!\n\n"
         f"📋 <b>Аккаунты:</b> {acc_hint}\n"
         "<i>(Писать можно слитно, через пробел или через запятую, на английской или русской раскладке: F/Ф, D/Д, C/С/Ц, B/В/Б, A/А, S)</i>"
     )
 
 
+async def run_bank_profitable_trade(min_net_price: float = DEFAULT_BANK_MIN_NET_PRICE) -> None:
+    st_info = await asyncio.to_thread(ensure_senkutools_price_db, True)
+    st_line = format_senkutools_status_line(st_info)
+    if not SENKUTOOLS_PRICE_DB:
+        send_tg_message(f"{st_line}\n\n⚠️ Не удалось загрузить базу цен SenkuTools — отмена поиска выгодных карт.", add_keyboard=True)
+        return
+
+    send_tg_message(
+        f"{st_line}\n\n🏦 <b>Ищу выгодные карты для банка (чистыми ≥ {min_net_price:.2f}) на всех 12 фарм-аккаунтах...</b>\n"
+        "Все найденные карты соберу на один случайный аккаунт и отправлю на основу <b>одним трейдом</b>!",
+        add_keyboard=False,
+    )
+
+    proxy_mgr = AccountProxyManager()
+    found_map: dict[str, dict] = {}
+    contexts: list[BrowserContext] = []
+
+    try:
+        async with async_playwright() as p:
+            browser = await launch_senkuro_browser(p)
+            main_uid: Optional[str] = KNOWN_USER_IDS.get(MAIN_ACCOUNT_SLUG)
+            try:
+                for acc in FARM_ACCOUNTS:
+                    if FARM_STOP_FLAG:
+                        break
+                    aid = acc["id"]
+                    proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
+                    ctx = await create_account_context(browser, acc, proxy_url)
+                    contexts.append(ctx)
+                    page, user_obj = await ensure_logged_in(ctx, acc)
+                    if not user_obj or not user_obj.get("id"):
+                        continue
+                    uid = str(user_obj["id"])
+                    c_nodes = await fetch_all_user_cards_gql(page, uid, modifier_val=0)
+                    prof_offers: list[dict] = []
+                    prof_descs: list[str] = []
+                    for nd in c_nodes:
+                        if nd.get("locked"):
+                            continue
+                        card_obj = nd.get("card") or {}
+                        c_slug = str(card_obj.get("slug") or "")
+                        net_p = get_card_bank_net_price(c_slug)
+                        if net_p is not None and net_p >= min_net_price:
+                            cid = card_obj.get("id") or nd.get("cardId")
+                            qty = int(nd.get("quantity") or 1)
+                            mod = int(nd.get("modifier") or 0)
+                            rnk = str(card_obj.get("rank") or "?").upper()
+                            ttl = extract_card_title(card_obj)
+                            if cid and qty > 0:
+                                prof_offers.append({"cardId": cid, "modifier": mod, "quantity": qty})
+                                prof_descs.append(f"{RANK_BADGE.get(rnk, rnk)} «{ttl}» (<b>{net_p:.2f}</b>)")
+                    if prof_offers:
+                        found_map[aid] = {
+                            "acc": acc,
+                            "page": page,
+                            "context": ctx,
+                            "user_id": uid,
+                            "offers": prof_offers,
+                            "descs": prof_descs,
+                        }
+                    else:
+                        try:
+                            await ctx.storage_state(path=str(get_session_file(aid)))
+                            await ctx.close()
+                        except Exception:
+                            pass
+
+                if not found_map:
+                    send_tg_message(
+                        f"{st_line}\n\nℹ️ <b>Выгодных карт для банка (≥ {min_net_price:.2f} чистыми) на 12 фарм-аккаунтах сейчас нет.</b>",
+                        add_keyboard=True,
+                    )
+                    return
+
+                # Выбираем ОДИН случайный аккаунт-курьер из тех, где нашлись выгодные карты
+                courier_id = random.choice(list(found_map.keys()))
+                courier = found_map[courier_id]
+                courier_uid = courier["user_id"]
+                all_descs: list[str] = []
+                for aid_k, f_st in found_map.items():
+                    for d_s in f_st["descs"]:
+                        all_descs.append(f"• {d_s} <i>({aid_k})</i>")
+
+                # Перекидываем с остальных аккаунтов на курьера, чтобы на основу пришёл ОДИН трейд!
+                fallback_ids: list[str] = []
+                for aid_k, f_st in found_map.items():
+                    if aid_k == courier_id or FARM_STOP_FLAG:
+                        continue
+                    await asyncio.sleep(random.uniform(2.5, 4.0))
+                    t_res = await gql_call(
+                        f_st["page"],
+                        GQL_SUGGEST_CARD_TRADE,
+                        {"input": {"userId": courier_uid, "offer": f_st["offers"][:50], "request": [], "description": []}},
+                        "suggestCardTrade",
+                    )
+                    if ((t_res.get("data") or {}).get("suggestCardTrade") or {}).get("success"):
+                        await asyncio.sleep(random.uniform(2.0, 3.0))
+                        await accept_whitelisted_incoming_trades(courier["page"], courier_id, courier_uid)
+                    else:
+                        fallback_ids.append(aid_k)
+
+                if len(found_map) > 1:
+                    await asyncio.sleep(1.5)
+                    await accept_whitelisted_incoming_trades(courier["page"], courier_id, courier_uid)
+
+                sent_from: list[str] = []
+                total_sent_qty = 0
+                for s_aid in [courier_id] + fallback_ids:
+                    s_st = found_map[s_aid]
+                    cur_nodes = await fetch_all_user_cards_gql(s_st["page"], s_st["user_id"], modifier_val=0)
+                    send_offers = []
+                    for nd in cur_nodes:
+                        if nd.get("locked"):
+                            continue
+                        card_obj = nd.get("card") or {}
+                        net_p = get_card_bank_net_price(str(card_obj.get("slug") or ""))
+                        if net_p is not None and net_p >= min_net_price:
+                            cid = card_obj.get("id") or nd.get("cardId")
+                            qty = int(nd.get("quantity") or 1)
+                            mod = int(nd.get("modifier") or 0)
+                            if cid and qty > 0:
+                                send_offers.append({"cardId": cid, "modifier": mod, "quantity": qty})
+                                total_sent_qty += qty
+                    if send_offers and main_uid:
+                        await asyncio.sleep(random.uniform(2.5, 4.0))
+                        m_res = await gql_call(
+                            s_st["page"],
+                            GQL_SUGGEST_CARD_TRADE,
+                            {"input": {"userId": main_uid, "offer": send_offers[:50], "request": [], "description": []}},
+                            "suggestCardTrade",
+                        )
+                        if ((m_res.get("data") or {}).get("suggestCardTrade") or {}).get("success"):
+                            sent_from.append(s_aid)
+
+                for aid_k, f_st in found_map.items():
+                    try:
+                        await f_st["context"].storage_state(path=str(get_session_file(aid_k)))
+                    except Exception:
+                        pass
+
+                if sent_from:
+                    send_tg_message(
+                        f"{st_line}\n\n"
+                        f"💎 <b>Отправлен единый трейд выгодных карт (≥ {min_net_price:.2f} чистыми) на основу <a href='{MAIN_ACCOUNT_URL}'>{MAIN_ACCOUNT_SLUG}</a> от <b>{', '.join(sent_from)}</b> ({total_sent_qty} шт.):</b>\n\n"
+                        + "\n".join(all_descs),
+                        add_keyboard=True,
+                    )
+                else:
+                    send_tg_message(f"{st_line}\n\n⚠️ Карты найдены, но не удалось отправить трейд на основу.", add_keyboard=True)
+            finally:
+                for ctx in contexts:
+                    try:
+                        await ctx.close()
+                    except Exception:
+                        pass
+            await browser.close()
+    finally:
+        proxy_mgr.stop_all()
+
+
 async def run_custom_trade_command(spec_str: str) -> None:
     parsed = parse_custom_trade_spec(spec_str)
+    if parsed and parsed.get("mode") == "bank":
+        await run_bank_profitable_trade(float(parsed.get("min_net") or DEFAULT_BANK_MIN_NET_PRICE))
+        return
     if not parsed or not parsed.get("plan"):
         send_tg_message(
             "⚠️ <b>Не удалось распознать аккаунты и ранги для трейда.</b>\n\n" + get_trade_prompt_message(),
@@ -4896,12 +5257,21 @@ def build_account_message(account: dict, current: dict) -> tuple[str, list[str]]
     shards = current["shards"]
     cards_summary = format_rank_breakdown(cards)
     shards_summary = format_rank_breakdown(shards)
+    prof_parts = []
+    for c_it in cards:
+        np = c_it.get("bank_net_price")
+        if np is None:
+            np = get_card_bank_net_price(str(c_it.get("slug") or ""))
+        if np is not None and np >= DEFAULT_BANK_MIN_NET_PRICE:
+            prof_parts.append(f"{RANK_BADGE.get(c_it.get('rank', '?'), c_it.get('rank', '?'))} <b>{np:.2f}</b>")
     lines = [
         f"👤 <b><a href=\"{account['url']}\">{account['label']}</a></b>",
         "",
         f"🃏 <b>Карты ({len(cards)}):</b> {cards_summary}",
         f"🧩 <b>Осколки ({len(shards)}):</b> {shards_summary}",
     ]
+    if prof_parts:
+        lines.append(f"💎 <b>В банк (≥{DEFAULT_BANK_MIN_NET_PRICE:.2f}):</b> " + ", ".join(prof_parts))
     card_photos = [c["img"] for c in cards if c.get("img", "").startswith("http")]
     return "\n".join(lines), card_photos
 
@@ -4910,7 +5280,72 @@ PREFETCHED_CARD_IMAGES: dict[str, bytes] = {}
 CARD_META_BY_URL: dict[str, dict[str, str]] = {}
 
 
-def _convert_raw_image_to_jpeg(raw_bytes: bytes) -> Optional[bytes]:
+def _draw_bank_price_badge_on_image(rgb_im, net_price: Optional[float]):
+    if net_price is None:
+        return rgb_im
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        base = rgb_im.convert("RGBA")
+        w, h = base.size
+        font_sz = max(18, min(46, int(w * 0.085)))
+        font = None
+        for f_path in (
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+        ):
+            if Path(f_path).exists():
+                try:
+                    font = ImageFont.truetype(f_path, font_sz)
+                    break
+                except Exception:
+                    pass
+        if font is None:
+            font = ImageFont.load_default()
+
+        label = f"{net_price:.2f}"
+        overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
+        dr = ImageDraw.Draw(overlay)
+        bbox = dr.textbbox((0, 0), label, font=font)
+        tw = bbox[2] - bbox[0]
+        th = bbox[3] - bbox[1]
+        pad_x = max(10, int(font_sz * 0.45))
+        pad_y = max(6, int(font_sz * 0.28))
+        margin = max(10, int(w * 0.035))
+
+        box_w = tw + pad_x * 2
+        box_h = th + pad_y * 2
+        x1 = max(4, w - margin - box_w)
+        y1 = max(4, h - margin - box_h)
+        x2 = w - margin
+        y2 = h - margin
+
+        # Цветовая индикация как в SenkuTools:
+        # >= 2.00 чистыми — яркий акцент; >= 1.50 чистыми — зелёный (выгодно для банка!); < 1.50 — спокойный тёмный
+        if net_price >= 2.00:
+            bg_col = (220, 50, 75, 230)
+            border_col = (255, 215, 90, 255)
+            txt_col = (255, 255, 255, 255)
+        elif net_price >= DEFAULT_BANK_MIN_NET_PRICE:
+            bg_col = (26, 155, 72, 230)
+            border_col = (145, 255, 175, 255)
+            txt_col = (255, 255, 255, 255)
+        else:
+            bg_col = (20, 22, 30, 210)
+            border_col = (130, 138, 155, 200)
+            txt_col = (230, 235, 245, 255)
+
+        radius = max(8, int(box_h * 0.28))
+        dr.rounded_rectangle([x1, y1, x2, y2], radius=radius, fill=bg_col, outline=border_col, width=max(2, int(w * 0.005)))
+        tx = x1 + pad_x - bbox[0]
+        ty = y1 + pad_y - bbox[1]
+        dr.text((tx, ty), label, font=font, fill=txt_col)
+        return Image.alpha_composite(base, overlay).convert("RGB")
+    except Exception:
+        return rgb_im
+
+
+def _convert_raw_image_to_jpeg(raw_bytes: bytes, net_price: Optional[float] = None) -> Optional[bytes]:
     if not raw_bytes or len(raw_bytes) < 64:
         return None
     import io
@@ -4922,6 +5357,8 @@ def _convert_raw_image_to_jpeg(raw_bytes: bytes) -> Optional[bytes]:
             rgb = im.convert("RGB")
             if rgb.width > 2000 or rgb.height > 2000:
                 rgb.thumbnail((2000, 2000), Image.Resampling.LANCZOS)
+            if net_price is not None:
+                rgb = _draw_bank_price_badge_on_image(rgb, net_price)
             out = io.BytesIO()
             rgb.save(out, format="JPEG", quality=96, subsampling=0)
             return out.getvalue()
@@ -4997,10 +5434,14 @@ async def _enrich_and_prefetch_card_images_in_browser(page: Page, cards: list[di
     for c in cards:
         u_orig = str(c.get("img") or "")
         u_shiro = str(c.get("shiro_img") or "")
+        c_net_p = get_card_bank_net_price(str(c.get("slug") or ""))
+        if c_net_p is not None:
+            c["bank_net_price"] = c_net_p
+        meta_obj = {"rank": str(c.get("rank") or "?"), "name": str(c.get("name") or "Карта"), "net_price": c_net_p}
         if u_orig:
-            CARD_META_BY_URL[u_orig] = {"rank": str(c.get("rank") or "?"), "name": str(c.get("name") or "Карта")}
+            CARD_META_BY_URL[u_orig] = meta_obj
         if u_shiro:
-            CARD_META_BY_URL[u_shiro] = {"rank": str(c.get("rank") or "?"), "name": str(c.get("name") or "Карта")}
+            CARD_META_BY_URL[u_shiro] = meta_obj
 
         target_key = u_orig or u_shiro
         if not target_key or target_key in PREFETCHED_CARD_IMAGES:
@@ -5022,7 +5463,7 @@ async def _enrich_and_prefetch_card_images_in_browser(page: Page, cards: list[di
                 )
                 if resp.ok:
                     body_b = await resp.body()
-                    jpg_b = _convert_raw_image_to_jpeg(body_b)
+                    jpg_b = _convert_raw_image_to_jpeg(body_b, net_price=c_net_p)
                     if jpg_b:
                         PREFETCHED_CARD_IMAGES[target_key] = jpg_b
                         if u_shiro:
@@ -5056,7 +5497,7 @@ async def _enrich_and_prefetch_card_images_in_browser(page: Page, cards: list[di
                     cand_url,
                 )
                 if b64_str:
-                    jpg_b = _convert_raw_image_to_jpeg(base64.b64decode(b64_str))
+                    jpg_b = _convert_raw_image_to_jpeg(base64.b64decode(b64_str), net_price=c_net_p)
                     if jpg_b:
                         PREFETCHED_CARD_IMAGES[target_key] = jpg_b
                         if u_shiro:
@@ -5107,7 +5548,7 @@ def _download_and_normalize_card_photo(url: str) -> Optional[bytes]:
                 req = urllib.request.Request(cand_u, headers=headers)
                 with opener.open(req, timeout=10) as resp:
                     raw_bytes = resp.read()
-                jpg_b = _convert_raw_image_to_jpeg(raw_bytes)
+                jpg_b = _convert_raw_image_to_jpeg(raw_bytes, net_price=(CARD_META_BY_URL.get(url) or {}).get('net_price'))
                 if jpg_b:
                     PREFETCHED_CARD_IMAGES[url] = jpg_b
                     return jpg_b
@@ -5252,6 +5693,9 @@ def send_account_report(text: str, photo_urls: list[str], add_reply_button: bool
 
 async def run_check_all_5_accounts() -> None:
     log_debug("[TASK START] Запуск проверки всех 13 аккаунтов (через Opera VPN + сохранённые сессии + KNOWN_USER_IDS)...")
+    PREFETCHED_CARD_IMAGES.clear()
+    st_info = await asyncio.to_thread(ensure_senkutools_price_db, True)
+    send_tg_message(format_senkutools_status_line(st_info), add_keyboard=False)
     proxy_mgr = AccountProxyManager()
     try:
         async with async_playwright() as p:
@@ -5277,7 +5721,7 @@ async def run_check_all_5_accounts() -> None:
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v42.0 — БЕЗ CLOUDFLARE WORKER!)
+# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v43.0 — БЕЗ CLOUDFLARE WORKER!)
 # ==============================================================================
 
 CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
@@ -5385,26 +5829,43 @@ async def run_background_8h_farm(base_elapsed_minutes: int = 0, segment_hours: f
             for acc in FARM_ACCOUNTS:
                 if FARM_STOP_FLAG:
                     break
-                proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
-                ip_used = proxy_mgr.active_ips.get(acc["acc_id"], acc["pinned_ip"])
-                log_debug(f"[FARM STEP] #{acc['idx']}/12 {acc['id']} -> IP: {ip_used}")
-                send_tg_message(
-                    f"⏳ <b>[Фарм {acc['idx']}/12] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): вхожу в профиль, открываю закладки и листаю в самый низ...",
-                    add_keyboard=False,
-                )
-                ctx = await create_account_context(browser, acc, proxy_url)
-                await ctx.add_init_script(FULL_FARM_USERSCRIPT_V9)
-                page, user_obj = await ensure_logged_in(ctx, acc)
-                await page.goto(acc["bookmarks_url"], wait_until="domcontentloaded", timeout=40000)
-                await page.evaluate(FULL_FARM_USERSCRIPT_V9)
-                farm_sessions.append(
-                    {
-                        "acc": acc,
-                        "context": ctx,
-                        "page": page,
-                        "ip": ip_used,
-                    }
-                )
+                try:
+                    proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
+                    ip_used = proxy_mgr.active_ips.get(acc["acc_id"], acc["pinned_ip"])
+                    log_debug(f"[FARM STEP] #{acc['idx']}/12 {acc['id']} -> IP: {ip_used}")
+                    send_tg_message(
+                        f"⏳ <b>[Фарм {acc['idx']}/12] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): вхожу в профиль, открываю закладки и листаю в самый низ...",
+                        add_keyboard=False,
+                    )
+                    ctx = await create_account_context(browser, acc, proxy_url)
+                    await ctx.add_init_script(FULL_FARM_USERSCRIPT_V9)
+                    page, user_obj = await ensure_logged_in(ctx, acc)
+                    nav_ok = False
+                    for nav_try, wait_mode in enumerate(("domcontentloaded", "commit"), start=1):
+                        try:
+                            await page.goto(acc["bookmarks_url"], wait_until=wait_mode, timeout=45000)
+                            nav_ok = True
+                            break
+                        except Exception as nav_err:
+                            log_debug(f"[FARM BOOKMARKS RETRY #{nav_try}] {acc['id']}: {nav_err}")
+                            await asyncio.sleep(2.0)
+                    if not nav_ok:
+                        log_debug(f"[FARM BOOKMARKS WARN] {acc['id']}: закладки грузились долго, продолжаю с текущей вкладкой.")
+                    try:
+                        await page.evaluate(FULL_FARM_USERSCRIPT_V9)
+                    except Exception:
+                        pass
+                    farm_sessions.append(
+                        {
+                            "acc": acc,
+                            "context": ctx,
+                            "page": page,
+                            "ip": ip_used,
+                        }
+                    )
+                except Exception as acc_err:
+                    log_debug(f"[FARM ACC SKIP WARN] #{acc['idx']} {acc['id']}: ошибка запуска ({acc_err}) — продолжаю фарм остальных аккаунтов!")
+                    continue
 
             for _ in range(12):
                 if FARM_STOP_FLAG:
@@ -5591,7 +6052,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     FARM_STOP_FLAG = False
     if action == "menu":
         send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v42.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
+            "✅ <b>Единый комбайн Senkuro v43.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
             "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
             add_keyboard=True,
         )
@@ -5631,7 +6092,7 @@ async def execute_single_action(action: str, promo_code: str = "") -> None:
     elif action == "check":
         await run_check_all_5_accounts()
     elif action == "log":
-        await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v42.0")
+        await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v43.0")
     elif action == "screen":
         await send_live_screen_snapshot()
 
@@ -5732,7 +6193,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             if await perform_hard_stop_and_reset(task_queue):
                 send_tg_message(
                     "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
-                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v42.0)</b> — можете сразу нажимать любую кнопку ниже:",
+                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v43.0)</b> — можете сразу нажимать любую кнопку ниже:",
                     add_keyboard=True,
                 )
             return
@@ -5744,7 +6205,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if data == "dump_full_log":
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v42.0")
+            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v43.0")
             return
 
         if data == "check_farm_status":
@@ -5793,7 +6254,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
 
         if lower in ("/start", "/menu", "/help", "меню"):
             send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v42.0</b>\n\n"
+                "🤖 <b>Панель управления фермой Senkuro v43.0</b>\n\n"
                 "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
                 "или просто напишите промокод одним словом в чат:",
                 add_keyboard=True,
@@ -5806,14 +6267,14 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             return
 
         if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
-            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v42.0")
+            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v43.0")
             return
 
         if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
             if await perform_hard_stop_and_reset(task_queue):
                 send_tg_message(
                     "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
-                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v42.0)</b> — можете сразу нажимать любую кнопку ниже:",
+                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v43.0)</b> — можете сразу нажимать любую кнопку ниже:",
                     add_keyboard=True,
                 )
             return
@@ -5888,6 +6349,7 @@ async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
             or ("," in raw_text)
             or len(raw_text) <= 3
             or bool(re.match(r"^(?:1[0-2]|[1-9])[rрsыaаbвбcсцdдfф]+$", lower))
+            or bool(re.match(r"^(?:банк|bank|выгодные|выгода|профит|profit)(?:\s+[0-9.,]+)?$", lower))
         )
         if is_explicit_trade_cmd:
             parsed_tr = parse_custom_trade_spec(raw_text)
@@ -5942,7 +6404,7 @@ async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: fl
     )
     if os.environ.get("GH_EVENT_NAME") in ("push", "workflow_dispatch") and os.environ.get("IS_CONTINUATION_JOB") != "true":
         send_tg_message(
-            "🟢 <b>Сервер полностью запущен и готов к работе (v42.0)!</b>\n\n"
+            "🟢 <b>Сервер полностью запущен и готов к работе (v43.0)!</b>\n\n"
             "Браузер Google Chrome и виртуальный экран готовы — теперь любая кнопка сработает сразу 👇:",
             add_keyboard=True,
         )
@@ -6035,7 +6497,7 @@ async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> N
 
 async def async_main() -> None:
     global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v42.0")
+    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v43.0")
     parser.add_argument(
         "--action",
         default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",
