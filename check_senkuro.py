@@ -1,52 +1,24 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
-================================================================================
-SENKURO FULL AUTOMATION COMBINE v43.0 (12 ФАРМ-АККАУНТОВ + ОСНОВА | ПАРОЛИ В GITHUB SECRETS)
-================================================================================
-Полный единый комбайн (Kaggle больше НЕ нужен — всё запускается из Telegram!):
-1. ▶️ Запустить фарм (8 ч) (--action farm_part1 / farm_part2 / farm):
-   - Запускается прямо с кнопки в Telegram на 8 часов (2 этапа по 4 часа в одном
-     воркфлоу GitHub Actions с передачей сессий через артефакты).
-   - Поднимает виртуальный экран Xvfb (реальный браузер без headless-ограничений),
-     12 изолированных туннелей opera-proxy (12 разных IP), входит в 12 аккаунтов,
-     подключает полный боевой скрипт Senkuro Automation Suite v4.0 (анти-сон через
-     Web Worker + AudioContext + WebLocks + requestAnimationFrame, сбор карт в 2 этапа,
-     прокрутка закладок в самый низ, автоскролл глав и смена манги в конце).
-   - Присылает отчет в Telegram при старте (когда все 12 аккаунтов открыли главы)
-     и финальный отчет ровно через 8 часов (без лишних уведомлений за 5 минут).
-2. 📊 Проверить статус фарма (--action farm_status):
-   - Показывает живую сводку: сколько времени идет фарм, какие IP у 4 аккаунтов,
-     читают ли они сейчас главы манги и какие именно тайтлы открыты.
-3. 🎟 Ввести промокод (--action promo --promo-code КОД):
-   - Заходит на 12 фарм-аккаунтов под их уникальными IP, проверяет баланс ДО,
-     вводит промокод, запрашивает свежий баланс с сервера ПОСЛЕ, строго проверяет,
-     что монеты реально начислились (after > before), и пишет финальный баланс.
-4. 🪙 Баланс монет (4 акка) (--action balance):
-   - Прямая кнопка без подменю: заходит на 12 фарм-аккаунтов и показывает точное
-     количество сенкоинов и сколько паков «Хардкор» (по 480 монет) доступно.
-5. 🎴 Крутить паки Хардкор (--action packs):
-   - Прямая кнопка без подменю: крутит пак https://senkuro.com/packs/for-hardcore-gamers
-     за 480 монет, выбирает из первых 2 слотов карту выше рангом (S > A > B > C > D > F)
-     и пишет статистику по каждому аккаунту: что выпало, что забрал и остаток монет.
-6. ⚒️ Переплавка + Трейд (--action forge):
-   - Строго вкладка «Переплавка» (UPGRADE: 3 карты одного ранга -> 1 карта выше до S).
-   - Перекидывает недостающие карты между 4 аккаунтами, принимает трейды строго из
-     белого списка (ber_turtle, ainz, catswat, wolfrice, cesium254), а по завершении
-     отправляет все карты и осколки трейдом на основу cesium254.
-7. 🔄 Проверить 13 аккаунтов (--action check):
-   - Стандартная проверка карт и осколков всех 13 аккаунтов с альбомами фотографий.
-================================================================================
+Senkuro Public Trade Assistant v45.0 (Read-Only, Zero Passwords, Zero Alts)
+---------------------------------------------------------------------------
+1. Автообновляемая база цен банка SenkuTools (addons.mozilla.org -> database.json, комиссия 20% -> x0.80).
+2. Мгновенная проверка основы cesium254 с бейджами чистой цены банка на фото карточек.
+3. Автоматическое определение свободных дешёвых карт (расходников) на основе cesium254.
+4. Поиск и накопление локальной базы целей (.sessions/trade_targets_db.json, обновление раз в 48-72 ч):
+   - только дорогие карты (чистыми >= 1.60 / в банке >= 2.00) под твои текущие ранги расходников;
+   - проверка, что карта НЕ закреплена (locked == False);
+   - проверка, что владелец НЕ состоит в гильдии (гильдейские уходят в чёрный список).
 """
 
 import argparse
 import asyncio
+import base64
+import io
 import json
 import os
-import platform
 import random
 import re
-import shutil
 import socket
 import subprocess
 import sys
@@ -54,39 +26,64 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-from collections import Counter, defaultdict
+import zipfile
+from collections import Counter
 from pathlib import Path
 from typing import Any, Optional
 
-from playwright.async_api import async_playwright, BrowserContext, Page
+from playwright.async_api import BrowserContext, Page, async_playwright
 
 # ==============================================================================
-# 1. КОНФИГУРАЦИЯ TELEGRAM, АККАУНТОВ И КАНАЛА СИНХРОНИЗАЦИИ СТАТУСА ФАРМА
+# 1. КОНФИГУРАЦИЯ (БЕЗ ПАРОЛЕЙ И ТВИНКОВ!)
 # ==============================================================================
 
-# Флаг отладки: пока мы тестируем бота = True (включает кнопки «📸 Посмотреть экран» и «📜 Полный лог»,
-# авто-загрузку полного лога на GitHub и авто-скриншоты при ошибках).
-# Когда всё протестируем, достаточно поменять True на False — и отладка скроется без риска сломать код!
-DEBUG_MODE = True
+APP_VERSION_TAG = "v45.0"
+APP_HEADER_VERSION = "2.2.1"
+GRAPHQL_API_URL = "https://api.senkuro.com/graphql"
+
+MAIN_ACCOUNT_SLUG = os.environ.get("SENKURO_MAIN_SLUG", "cesium254").strip() or "cesium254"
+MAIN_ACCOUNT_UID = os.environ.get("SENKURO_MAIN_UID", "VVNFUjoxODAxNDM0ODEzOTI0ODE4MDE").strip() or "VVNFUjoxODAxNDM0ODEzOTI0ODE4MDE"
+MAIN_ACCOUNT_URL = f"https://senkuro.com/users/{MAIN_ACCOUNT_SLUG}"
+MAIN_CARDS_URL = f"https://senkuro.com/users/{MAIN_ACCOUNT_SLUG}/cards"
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-if not TELEGRAM_BOT_TOKEN:
-    print("❌ [SECURITY ERROR] TELEGRAM_BOT_TOKEN не задан в Secrets GitHub Actions! Добавьте секрет TELEGRAM_BOT_TOKEN в Settings -> Secrets -> Actions.")
-TELEGRAM_CHAT_ID = (
-    os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-    or "457787014"
-)
-GITHUB_REPO_FULL = os.environ.get("GITHUB_REPOSITORY", "cesium254/senkuro-checker").strip() or "cesium254/senkuro-checker"
-GITHUB_PAT_TOKEN = (
-    os.environ.get("GITHUB_PAT", "").strip()
-    or os.environ.get("GITHUB_TOKEN", "").strip()
-    or ""
-)
+TELEGRAM_CHAT_ID = (os.environ.get("TELEGRAM_CHAT_ID", "").strip() or "457787014")
 
-DEBUG_LOG_FILE = Path("/tmp/senkuro_full_debug.log")
-ACTIVE_TASK_LOG_FILE = Path(".sessions/active_task_log.txt")
-TASK_CHECKPOINT_FILE = Path(".sessions/task_checkpoint.json")
-ACTIVE_BROWSER_PAGES: dict[str, Page] = {}
+SESSIONS_DIR = Path(".sessions")
+SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+DEBUG_LOG_FILE = Path("/tmp/senkuro_trader_debug.log")
+TG_OFFSET_FILE = Path("/tmp/tg_offset.txt")
+EARLY_QUEUE_FILE = Path("/tmp/senkuro_early_queue.jsonl")
+
+SENKUTOOLS_AMO_API_URL = "https://addons.mozilla.org/api/v5/addons/addon/senkutools/"
+SENKUTOOLS_AMO_PAGE_URL = "https://addons.mozilla.org/ru/firefox/addon/senkutools/"
+SENKUTOOLS_PRICES_FILE = SESSIONS_DIR / "senkutools_prices.json"
+SENKUTOOLS_META_FILE = SESSIONS_DIR / "senkutools_meta.json"
+TRADE_DB_FILE = SESSIONS_DIR / "trade_targets_db.json"
+
+BANK_COMMISSION_MULT = 0.80          # 20% комиссия банка -> 80% чистыми
+MIN_BANK_PROFIT_NET = 1.50           # Порог "выгодно слить в банк" на основе (2.00 -> 1.60)
+MIN_TARGET_NET_PRICE = 1.60          # Порог для поиска целей под обмен 1-в-1 (в банке >= 2.00)
+TARGET_TTL_SECONDS = 72 * 3600       # Обновлять записи старше 72 часов (3 дня)
+SEARCHABLE_RANKS = ("F", "D", "C", "B", "A")
+RANK_ORDER = ("R", "S", "A", "B", "C", "D", "F")
+RANK_BADGE = {
+    "R": "💠[R]",
+    "S": "🔴[S]",
+    "A": "🟡[A]",
+    "B": "🟣[B]",
+    "C": "🔵[C]",
+    "D": "🟢[D]",
+    "F": "⚪[F]",
+}
+
+SENKUTOOLS_DB: dict[str, dict[str, Any]] = {}
+SENKUTOOLS_META: dict[str, Any] = {}
+STOP_FLAG: bool = False
+ACTIVE_JOB_TASK: Optional[asyncio.Task] = None
+ACTIVE_JOB_NAME: str = ""
+QUEUED_KEYS: set[str] = set()
+PREFETCHED_IMAGES: dict[str, bytes] = {}
 
 
 def log_debug(msg: str) -> None:
@@ -94,581 +91,51 @@ def log_debug(msg: str) -> None:
     line = f"[{ts}] {msg}"
     print(line, flush=True)
     try:
-        if DEBUG_LOG_FILE.exists() and DEBUG_LOG_FILE.stat().st_size > 250_000:
-            tail_bytes = DEBUG_LOG_FILE.read_bytes()[-140_000:]
-            DEBUG_LOG_FILE.write_bytes(tail_bytes)
+        if DEBUG_LOG_FILE.exists() and DEBUG_LOG_FILE.stat().st_size > 200_000:
+            DEBUG_LOG_FILE.write_bytes(DEBUG_LOG_FILE.read_bytes()[-120_000:])
         with open(DEBUG_LOG_FILE, "a", encoding="utf-8") as f:
             f.write(line + "\n")
     except Exception:
         pass
-    # Во время работы активной задачи также сохраняем её текущий лог во временный файл чекпоинта
-    try:
-        if TASK_CHECKPOINT_FILE.exists():
-            ACTIVE_TASK_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-            if ACTIVE_TASK_LOG_FILE.exists() and ACTIVE_TASK_LOG_FILE.stat().st_size > 150_000:
-                ACTIVE_TASK_LOG_FILE.write_bytes(ACTIVE_TASK_LOG_FILE.read_bytes()[-90_000:])
-            with open(ACTIVE_TASK_LOG_FILE, "a", encoding="utf-8") as f_act:
-                f_act.write(line + "\n")
-    except Exception:
-        pass
 
-
-def save_task_checkpoint(action: str, promo_code: str = "", stage: str = "running", active: bool = True) -> None:
-    try:
-        if not active:
-            # Когда задача завершилась — полностью удаляем временный чекпоинт и временный лог незавершённой задачи!
-            TASK_CHECKPOINT_FILE.unlink(missing_ok=True)
-            ACTIVE_TASK_LOG_FILE.unlink(missing_ok=True)
-            return
-        TASK_CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "active": True,
-            "action": action,
-            "promo_code": promo_code,
-            "stage": stage,
-            "saved_at": time.time(),
-            "saved_human": time.strftime("%Y-%m-%d %H:%M:%S"),
-        }
-        TASK_CHECKPOINT_FILE.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    except Exception:
-        pass
-
-FARM_STATE_SYNC_TOPIC = "senkuro_cesium254_v8_state_sync"
-
-MAIN_ACCOUNT_SLUG = "cesium254"
-MAIN_ACCOUNT_URL = f"https://senkuro.com/users/{MAIN_ACCOUNT_SLUG}"
-
-KNOWN_USER_IDS: dict[str, str] = {
-    "ber_turtle": "VVNFUjoyNTM0NjAyNTY0OTM5NDY0MTY",
-    "ainz": "VVNFUjoyNTQxMzk3NTk2NjI3NDUxNDk",
-    "catswat": "VVNFUjoyNTQxNDA2Mjg1Mzc5ODQ1NzM",
-    "wolfrice": "VVNFUjoyNTQxNDQ2NTA5MDkwNzUwMDU",
-    "lanar": "VVNFUjoyNTY3ODk1MDgyMTE2MjM0NjQ",
-    "canva": "VVNFUjoyNTY3OTA1NTY3ODc2MjM0NjQ",
-    "raya": "VVNFUjoyNTY3OTE0MDI4NjI2MjYzNDQ",
-    "tnt": "VVNFUjoyNTY3OTIxOTEyMjQwMDYxODQ",
-    "begbug": "VVNFUjoyNTc3OTk4MDYzNzI1NjI0NjQ",
-    "irola": "VVNFUjoyNTc4MDI1ODU5NzEzNzc2OTY",
-    "darkcore": "VVNFUjoyNTc4MDM5NzI2NzUzODg5NjA",
-    "neragar": "VVNFUjoyNTc4MDQ1OTExMDAzNDc5MzY",
-    "cesium254": "VVNFUjoxODAxNDM0ODEzOTI0ODE4MDE",
-}
 
 # ==============================================================================
-# БАЗА ЦЕН БАНКА SENKUTOOLS (АВТООБНОВЛЕНИЕ С MOZILLA ADD-ONS)
+# 2. TELEGRAM API + КОМПАКТНОЕ МЕНЮ
 # ==============================================================================
-SENKUTOOLS_AMO_API_URL = "https://addons.mozilla.org/api/v5/addons/addon/senkutools/"
-SENKUTOOLS_AMO_PAGE_URL = "https://addons.mozilla.org/ru/firefox/addon/senkutools/"
-SENKUTOOLS_PRICES_FILE = Path(".sessions/senkutools_prices.json")
-SENKUTOOLS_META_FILE = Path(".sessions/senkutools_meta.json")
-SENKUTOOLS_PRICE_DB: dict[str, float] = {}
-SENKUTOOLS_META: dict[str, Any] = {}
-DEFAULT_BANK_MIN_NET_PRICE: float = 1.50
-BANK_COMMISSION_MULT: float = 0.80  # комиссия банка 20% -> чистыми 80% (например 2.00 -> 1.60)
 
-
-def _load_cached_senkutools_db() -> None:
-    global SENKUTOOLS_PRICE_DB, SENKUTOOLS_META
-    if not SENKUTOOLS_PRICE_DB and SENKUTOOLS_PRICES_FILE.exists():
-        try:
-            SENKUTOOLS_PRICE_DB = json.loads(SENKUTOOLS_PRICES_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            SENKUTOOLS_PRICE_DB = {}
-    if not SENKUTOOLS_META and SENKUTOOLS_META_FILE.exists():
-        try:
-            SENKUTOOLS_META = json.loads(SENKUTOOLS_META_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            SENKUTOOLS_META = {}
-
-
-def ensure_senkutools_price_db(force_check: bool = True) -> dict[str, Any]:
-    """
-    Проверяет актуальную версию расширения SenkuTools на addons.mozilla.org.
-    Если вышла новая версия (или локальной базы ещё нет) — скачивает .xpi,
-    распаковывает database.json в памяти и сохраняет компактный словарь {slug: raw_price} в .sessions/.
-    """
-    global SENKUTOOLS_PRICE_DB, SENKUTOOLS_META
-    import io
-    import zipfile
-
-    _load_cached_senkutools_db()
-    cached_ver = str(SENKUTOOLS_META.get("version") or "")
-    status_note = "из кэша"
-    updated_now = False
-
-    if force_check or not SENKUTOOLS_PRICE_DB:
-        try:
-            req = urllib.request.Request(
-                SENKUTOOLS_AMO_API_URL,
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) SenkuroBot/43.0"},
-            )
-            with urllib.request.urlopen(req, timeout=12) as resp:
-                amo_info = json.loads(resp.read().decode("utf-8"))
-            cur_v_obj = amo_info.get("current_version") or {}
-            latest_ver = str(cur_v_obj.get("version") or "").strip()
-            xpi_url = str((cur_v_obj.get("file") or {}).get("url") or "").strip()
-            last_upd = str(amo_info.get("last_updated") or "")[:10]
-
-            if latest_ver and xpi_url and (latest_ver != cached_ver or not SENKUTOOLS_PRICE_DB):
-                log_debug(f"[SENKUTOOLS] Новая версия базы цен {latest_ver} (была: {cached_ver or 'нет'}), скачиваю .xpi...")
-                req_xpi = urllib.request.Request(
-                    xpi_url,
-                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) SenkuroBot/43.0"},
-                )
-                with urllib.request.urlopen(req_xpi, timeout=25) as xpi_resp:
-                    xpi_bytes = xpi_resp.read()
-                with zipfile.ZipFile(io.BytesIO(xpi_bytes)) as zf:
-                    raw_db = json.loads(zf.read("database.json").decode("utf-8"))
-                compact_db: dict[str, float] = {}
-                if isinstance(raw_db, dict):
-                    for k_slug, v_obj in raw_db.items():
-                        if isinstance(v_obj, dict) and v_obj.get("price") is not None:
-                            try:
-                                compact_db[str(k_slug).strip().lower()] = float(v_obj["price"])
-                            except Exception:
-                                pass
-                if compact_db:
-                    SENKUTOOLS_PRICE_DB = compact_db
-                    SENKUTOOLS_META = {
-                        "version": latest_ver,
-                        "last_updated": last_upd,
-                        "cards_count": len(compact_db),
-                        "source_url": SENKUTOOLS_AMO_PAGE_URL,
-                        "checked_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    }
-                    SENKUTOOLS_PRICES_FILE.parent.mkdir(parents=True, exist_ok=True)
-                    SENKUTOOLS_PRICES_FILE.write_text(json.dumps(compact_db, ensure_ascii=False), encoding="utf-8")
-                    SENKUTOOLS_META_FILE.write_text(json.dumps(SENKUTOOLS_META, ensure_ascii=False), encoding="utf-8")
-                    updated_now = True
-                    status_note = f"обновлена с {cached_ver} до {latest_ver}" if cached_ver else f"загружена {latest_ver}"
-                    log_debug(f"[SENKUTOOLS OK] База v{latest_ver} сохранена ({len(compact_db)} карт).")
-            elif latest_ver:
-                SENKUTOOLS_META["version"] = latest_ver
-                SENKUTOOLS_META["last_updated"] = last_upd or SENKUTOOLS_META.get("last_updated", "")
-                SENKUTOOLS_META["cards_count"] = len(SENKUTOOLS_PRICE_DB)
-                SENKUTOOLS_META["source_url"] = SENKUTOOLS_AMO_PAGE_URL
-                status_note = "актуальна"
-                log_debug(f"[SENKUTOOLS OK] База v{latest_ver} уже актуальна ({len(SENKUTOOLS_PRICE_DB)} карт).")
-        except Exception as e_st:
-            log_debug(f"[SENKUTOOLS WARN] Не удалось проверить Mozilla Add-ons: {e_st}")
-            status_note = "из кэша (нет ответа AMO)" if SENKUTOOLS_PRICE_DB else "недоступна"
-
+def get_reply_keyboard() -> dict:
     return {
-        "version": str(SENKUTOOLS_META.get("version") or "—"),
-        "last_updated": str(SENKUTOOLS_META.get("last_updated") or ""),
-        "cards_count": len(SENKUTOOLS_PRICE_DB),
-        "updated_now": updated_now,
-        "status_note": status_note,
-        "source_url": SENKUTOOLS_AMO_PAGE_URL,
-    }
-
-
-def get_card_bank_net_price(slug: str) -> Optional[float]:
-    if not slug or not SENKUTOOLS_PRICE_DB:
-        return None
-    clean_slug = str(slug).strip("/").split("/")[-1].lower()
-    raw_p = SENKUTOOLS_PRICE_DB.get(clean_slug)
-    if raw_p is None:
-        return None
-    return round(float(raw_p) * BANK_COMMISSION_MULT, 2)
-
-
-def format_senkutools_status_line(st_info: dict[str, Any]) -> str:
-    ver = st_info.get("version") or "—"
-    cnt = int(st_info.get("cards_count") or 0)
-    note = st_info.get("status_note") or ""
-    upd = st_info.get("last_updated") or ""
-    upd_s = f", от {upd}" if upd else ""
-    return (
-        f"🏦 <b>База цен <a href='{SENKUTOOLS_AMO_PAGE_URL}'>SenkuTools</a>:</b> "
-        f"v<b>{ver}</b> ({note}{upd_s} | {cnt} карт)"
-    )
-
-
-def get_secret_password(idx: int, slug: str, login_email: str) -> str:
-    """
-    Безопасно загружает пароль аккаунта из Secrets GitHub Actions (никаких паролей в открытом коде!):
-    Поддерживает любые варианты имени секрета (SENKURO_PASSWORDS, SENKURO_PASSWORD, SENKURO_PASS, PASSWORDS,
-    SENKURO_PASS_1..8) и любые форматы записи (многострочный 1:пароль, 1=пароль, однострочный через пробел,
-    список без ключей на 8 или 4 строки).
-    """
-    for k_env in (f"SENKURO_PASS_{idx}", f"SENKURO_PASSWORD_{idx}", f"PASS_{idx}"):
-        direct = os.environ.get(k_env, "").strip()
-        if direct:
-            return direct
-
-    bulk_sources = [
-        os.environ.get("SENKURO_PASSWORDS", "").strip(),
-        os.environ.get("SENKURO_PASSWORD", "").strip(),
-        os.environ.get("PASSWORDS", "").strip(),
-        os.environ.get("PASSWORD", "").strip(),
-        os.environ.get("SENKURO_PASS", "").strip(),
-    ]
-    bulk = next((b for b in bulk_sources if b), "")
-    if bulk:
-        valid_keys = {
-            str(idx),
-            f"#{idx}",
-            f"№{idx}",
-            f"acc_{idx}",
-            f"acc{idx}",
-            f"account_{idx}",
-            f"account{idx}",
-            slug.lower(),
-            login_email.lower(),
-        }
-        lines = [ln.strip() for ln in bulk.splitlines() if ln.strip() and not ln.strip().startswith("#")]
-        # 1. Построчный разбор вида "1:пароль", "1=пароль", "lanar:пароль"
-        for ln in lines:
-            for sep in (":", "="):
-                if sep in ln:
-                    k, v = ln.split(sep, 1)
-                    k_clean = k.strip().lower().lstrip("#№")
-                    if k.strip().lower() in valid_keys or k_clean in valid_keys:
-                        # Если в одной строке записано несколько пар через пробел ("1:pass1 2:pass2")
-                        v_clean = v.strip()
-                        m_next = re.search(r"\s+(?:#|№|acc_?)?(?:1[0-2]|[1-9])\s*[:=]", v_clean)
-                        if m_next:
-                            v_clean = v_clean[:m_next.start()].strip()
-                        if v_clean:
-                            return v_clean
-        # 2. Если все пары записаны в одну строку через пробел/запятую/точку с запятой
-        inline_matches = re.findall(
-            r"(?:^|[\s,;]+)(?:#|№|acc_?)?(1[0-2]|[1-9]|ber_turtle|ainz|catswat|wolfrice|lanar|canva|raya|tnt|begbug|irola|darkcore|neragar)\s*[:=]\s*([^\s,;]+)",
-            bulk,
-            flags=re.IGNORECASE,
-        )
-        for k_m, v_m in inline_matches:
-            if k_m.lower() in valid_keys:
-                return v_m.strip()
-        # 3. Если просто 12 строк с паролями без номеров
-        if len(lines) >= idx:
-            cand = lines[idx - 1]
-            if not re.match(r"^(?:#|№|acc_?)?(?:1[0-2]|[1-9])\s*[:=]", cand):
-                return cand
-        # 4. Если передана ровно 1 строка (единый общий пароль)
-        if len(lines) == 1 and not re.match(r"^(?:#|№|acc_?)?(?:1[0-2]|[1-9])\s*[:=]", lines[0]):
-            return lines[0]
-
-    if idx >= 5:
-        shared_new = os.environ.get("SENKURO_PASS_NEW", "").strip()
-        if shared_new:
-            return shared_new
-
-    return os.environ.get("SENKURO_PASS", "").strip()
-
-
-FARM_ACCOUNTS = [
-    {
-        "idx": 1,
-        "acc_id": "acc_1",
-        "id": "ber_turtle",
-        "label": "#1 Ber Turtle (ber_turtle)",
-        "login": os.environ.get("SENKURO_LOGIN_1", "").strip() or "zerovillbusiness@gmail.com",
-        "password": get_secret_password(1, "ber_turtle", "zerovillbusiness@gmail.com"),
-        "pinned_ip": "77.111.244.37",
-        "proxy_port": 25341,
-        "url": "https://senkuro.com/users/ber_turtle/cards",
-        "bookmarks_url": "https://senkuro.com/users/ber_turtle/bookmarks",
-    },
-    {
-        "idx": 2,
-        "acc_id": "acc_2",
-        "id": "ainz",
-        "label": "#2 Ainz (ainz)",
-        "login": os.environ.get("SENKURO_LOGIN_2", "").strip() or "dert124689@gmail.com",
-        "password": get_secret_password(2, "ainz", "dert124689@gmail.com"),
-        "pinned_ip": "77.111.244.209",
-        "proxy_port": 25342,
-        "url": "https://senkuro.com/users/ainz/cards",
-        "bookmarks_url": "https://senkuro.com/users/ainz/bookmarks",
-    },
-    {
-        "idx": 3,
-        "acc_id": "acc_3",
-        "id": "catswat",
-        "label": "#3 Cat Swat (catswat)",
-        "login": os.environ.get("SENKURO_LOGIN_3", "").strip() or "gamerecapbusiness@gmail.com",
-        "password": get_secret_password(3, "catswat", "gamerecapbusiness@gmail.com"),
-        "pinned_ip": "77.111.244.210",
-        "proxy_port": 25343,
-        "url": "https://senkuro.com/users/catswat/cards",
-        "bookmarks_url": "https://senkuro.com/users/catswat/bookmarks",
-    },
-    {
-        "idx": 4,
-        "acc_id": "acc_4",
-        "id": "wolfrice",
-        "label": "#4 Wolf Rice (wolfrice)",
-        "login": os.environ.get("SENKURO_LOGIN_4", "").strip() or "gameepicenterbusiness@gmail.com",
-        "password": get_secret_password(4, "wolfrice", "gameepicenterbusiness@gmail.com"),
-        "pinned_ip": "77.111.246.8",
-        "proxy_port": 25344,
-        "url": "https://senkuro.com/users/wolfrice/cards",
-        "bookmarks_url": "https://senkuro.com/users/wolfrice/bookmarks",
-    },
-    {
-        "idx": 5,
-        "acc_id": "acc_5",
-        "id": "lanar",
-        "label": "#5 Lanar (lanar)",
-        "login": os.environ.get("SENKURO_LOGIN_5", "").strip() or "Cesium254@proton.me",
-        "password": get_secret_password(5, "lanar", "Cesium254@proton.me"),
-        "pinned_ip": "77.111.246.10",
-        "proxy_port": 25345,
-        "url": "https://senkuro.com/users/lanar/cards",
-        "bookmarks_url": "https://senkuro.com/users/lanar/bookmarks",
-    },
-    {
-        "idx": 6,
-        "acc_id": "acc_6",
-        "id": "canva",
-        "label": "#6 Canva (canva)",
-        "login": os.environ.get("SENKURO_LOGIN_6", "").strip() or "woodlandcava@gmail.com",
-        "password": get_secret_password(6, "canva", "woodlandcava@gmail.com"),
-        "pinned_ip": "77.111.246.14",
-        "proxy_port": 25346,
-        "url": "https://senkuro.com/users/canva/cards",
-        "bookmarks_url": "https://senkuro.com/users/canva/bookmarks",
-    },
-    {
-        "idx": 7,
-        "acc_id": "acc_7",
-        "id": "raya",
-        "label": "#7 Raya (raya)",
-        "login": os.environ.get("SENKURO_LOGIN_7", "").strip() or "restunger@gmail.com",
-        "password": get_secret_password(7, "raya", "restunger@gmail.com"),
-        "pinned_ip": "77.111.245.10",
-        "proxy_port": 25347,
-        "url": "https://senkuro.com/users/raya/cards",
-        "bookmarks_url": "https://senkuro.com/users/raya/bookmarks",
-    },
-    {
-        "idx": 8,
-        "acc_id": "acc_8",
-        "id": "tnt",
-        "label": "#8 TNT (tnt)",
-        "login": os.environ.get("SENKURO_LOGIN_8", "").strip() or "jekadinamit@gmail.com",
-        "password": get_secret_password(8, "tnt", "jekadinamit@gmail.com"),
-        "pinned_ip": "77.111.245.14",
-        "proxy_port": 25348,
-        "url": "https://senkuro.com/users/tnt/cards",
-        "bookmarks_url": "https://senkuro.com/users/tnt/bookmarks",
-    },
-    {
-        "idx": 9,
-        "acc_id": "acc_9",
-        "id": "begbug",
-        "label": "#9 Begbug (begbug)",
-        "login": os.environ.get("SENKURO_LOGIN_9", "").strip() or "Gentuiner@outlook.com",
-        "password": get_secret_password(9, "begbug", "Gentuiner@outlook.com"),
-        "pinned_ip": "77.111.246.17",
-        "proxy_port": 25349,
-        "url": "https://senkuro.com/users/begbug/cards",
-        "bookmarks_url": "https://senkuro.com/users/begbug/bookmarks",
-    },
-    {
-        "idx": 10,
-        "acc_id": "acc_10",
-        "id": "irola",
-        "label": "#10 Irola (irola)",
-        "login": os.environ.get("SENKURO_LOGIN_10", "").strip() or "ironleafsecure15@outlook.com",
-        "password": get_secret_password(10, "irola", "ironleafsecure15@outlook.com"),
-        "pinned_ip": "77.111.246.21",
-        "proxy_port": 25350,
-        "url": "https://senkuro.com/users/irola/cards",
-        "bookmarks_url": "https://senkuro.com/users/irola/bookmarks",
-    },
-    {
-        "idx": 11,
-        "acc_id": "acc_11",
-        "id": "darkcore",
-        "label": "#11 Darkcore (darkcore)",
-        "login": os.environ.get("SENKURO_LOGIN_11", "").strip() or "nightcorehaven9@outlook.com",
-        "password": get_secret_password(11, "darkcore", "nightcorehaven9@outlook.com"),
-        "pinned_ip": "77.111.245.11",
-        "proxy_port": 25351,
-        "url": "https://senkuro.com/users/darkcore/cards",
-        "bookmarks_url": "https://senkuro.com/users/darkcore/bookmarks",
-    },
-    {
-        "idx": 12,
-        "acc_id": "acc_12",
-        "id": "neragar",
-        "label": "#12 Neragar (neragar)",
-        "login": os.environ.get("SENKURO_LOGIN_12", "").strip() or "quantumstride21@outlook.com",
-        "password": get_secret_password(12, "neragar", "quantumstride21@outlook.com"),
-        "pinned_ip": "77.111.245.15",
-        "proxy_port": 25352,
-        "url": "https://senkuro.com/users/neragar/cards",
-        "bookmarks_url": "https://senkuro.com/users/neragar/bookmarks",
-    },
-]
-
-ALL_CHECK_ACCOUNTS = FARM_ACCOUNTS + [
-    {
-        "idx": 13,
-        "acc_id": "acc_main",
-        "id": "cesium254",
-        "label": "Main (Cesium254)",
-        "login": "",
-        "password": "",
-        "pinned_ip": "",
-        "proxy_port": 0,
-        "url": "https://senkuro.com/users/cesium254/cards",
-    }
-]
-
-ALLOWED_TRADE_SLUGS = {
-    "ber_turtle",
-    "ainz",
-    "catswat",
-    "wolfrice",
-    "lanar",
-    "canva",
-    "raya",
-    "tnt",
-    "begbug",
-    "irola",
-    "darkcore",
-    "neragar",
-    "cesium254",
-}
-
-HARDCORE_PACK_SLUG = "for-hardcore-gamers"
-HARDCORE_PACK_COST = 480
-GRAPHQL_API_URL = "https://api.senkuro.com/graphql"
-APP_VERSION = "301026"
-
-RANK_ORDER = ["R", "S", "A", "B", "C", "D", "F", "?"]
-RANK_PRIORITY = {"F": 1, "D": 2, "C": 3, "B": 4, "A": 5, "S": 6, "R": 7, "X": 8, "?": 0}
-FORGE_UPGRADE_CHAIN = ["F", "D", "C", "B", "A"]
-NEXT_FORGE_RANK = {"F": "D", "D": "C", "C": "B", "B": "A", "A": "S"}
-
-RANK_BADGE = {
-    "R": "💎 R",
-    "S": "🟥 S",
-    "A": "🟨 A",
-    "B": "🟪 B",
-    "C": "🟦 C",
-    "D": "🟩 D",
-    "F": "⬜ F",
-}
-
-BASE_DIR = Path(__file__).resolve().parent
-SESSIONS_DIR = BASE_DIR / ".sessions"
-BIN_DIR = BASE_DIR / "bin"
-SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
-BIN_DIR.mkdir(parents=True, exist_ok=True)
-KNOWN_IDS_CACHE_FILE = SESSIONS_DIR / "known_user_ids.json"
-if KNOWN_IDS_CACHE_FILE.exists():
-    try:
-        _cached_ids = json.loads(KNOWN_IDS_CACHE_FILE.read_text(encoding="utf-8"))
-        if isinstance(_cached_ids, dict):
-            for _k, _v in _cached_ids.items():
-                if isinstance(_v, str) and _v.startswith("VVNFU"):
-                    KNOWN_USER_IDS[_k] = _v
-    except Exception:
-        pass
-
-
-def save_known_user_id(slug: str, uid: str) -> None:
-    if not slug or not isinstance(uid, str) or not uid.startswith("VVNFU"):
-        return
-    if KNOWN_USER_IDS.get(slug) == uid:
-        return
-    KNOWN_USER_IDS[slug] = uid
-    try:
-        KNOWN_IDS_CACHE_FILE.write_text(json.dumps(KNOWN_USER_IDS, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
-
-OPERA_244_CANDIDATE_POOL = [
-    "77.111.244.37",
-    "77.111.244.209",
-    "77.111.244.210",
-    "77.111.244.22",
-    "77.111.244.42",
-    "77.111.244.29",
-    "77.111.244.38",
-    "77.111.244.28",
-    "77.111.244.48",
-    "77.111.244.51",
-    "77.111.244.52",
-    "77.111.244.53",
-    "77.111.244.54",
-    "77.111.244.72",
-    "77.111.244.74",
-    "77.111.244.76",
-    "77.111.244.77",
-    "77.111.244.78",
-    "77.111.244.183",
-    "77.111.244.185",
-    "77.111.244.11",
-    "77.111.244.12",
-    "77.111.244.21",
-    "77.111.244.27",
-]
-
-
-# ==============================================================================
-# 2. ЕДИНАЯ БАЗОВАЯ ПАНЕЛЬ КНОПОК TELEGRAM (БЕЗ ПОДПУНКТОВ, 1 КНОПКА = 1 ЗАДАЧА)
-# ==============================================================================
-
-def get_collapsible_reply_keyboard() -> dict:
-    """
-    4-рядная компактная нижняя клавиатура Telegram (помещается на экран целиком БЕЗ прокрутки!).
-    Кнопка «🛑 СТОП» вынесена в САМЫЙ ВЕРХНИЙ РЯД справа, чтобы её никогда не нужно было листать вниз,
-    а стрелочка [v] справа в поле ввода позволяет сворачивать и разворачивать меню в 1 клик.
-    """
-    rows = [
-        [{"text": "▶️ Фарм (8 ч)"}, {"text": "📊 Статус"}, {"text": "🛑 СТОП"}],
-        [{"text": "🪙 Баланс"}, {"text": "🎴 Паки"}, {"text": "🎟 Промокод"}],
-        [{"text": "⚒️ Кузня+Трейд"}, {"text": "🤝 Трейд"}, {"text": "🔄 Чекать"}],
-    ]
-    if DEBUG_MODE:
-        rows.append([{"text": "📸 Экран"}, {"text": "📜 Лог"}])
-    return {
-        "keyboard": rows,
+        "keyboard": [
+            [{"text": "🃏 Мои карты"}, {"text": "🎯 Найти обмены"}],
+            [{"text": "📜 Лог"}],
+        ],
         "resize_keyboard": True,
         "is_persistent": False,
-        "input_field_placeholder": "Промокод или меню 🎛 👇",
+        "input_field_placeholder": "Выберите действие 🎛 👇",
     }
-
-
-def get_main_inline_keyboard() -> dict:
-    # Полностью отключено старое верхнее inline-меню, чтобы оно никогда не дублировалось и не сбивало нижнюю панель!
-    return get_collapsible_reply_keyboard()
 
 
 def tg_request(method: str, payload: dict, max_retries: int = 4) -> dict:
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print(f"[DRY-RUN] {method}: {json.dumps(payload, ensure_ascii=False)[:300]}")
         return {"ok": True}
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
     data = json.dumps(payload).encode("utf-8")
-
     for attempt in range(1, max_retries + 1):
         req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
         try:
-            with urllib.request.urlopen(req, timeout=35) as resp:
-                res_data = json.loads(resp.read().decode("utf-8"))
-                print(f"[TG OK] {method}")
-                return res_data
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", errors="ignore")
             if e.code == 429 and attempt < max_retries:
                 retry_after = 5
                 try:
-                    err_json = json.loads(err_body)
-                    retry_after = int((err_json.get("parameters") or {}).get("retry_after") or 5)
+                    retry_after = int((json.loads(err_body).get("parameters") or {}).get("retry_after") or 5)
                 except Exception:
                     pass
-                wait_s = max(2, min(retry_after + 1, 35))
-                log_debug(f"[TG 429 WAIT] Лимит Telegram на {method}, жду {wait_s} сек (попытка {attempt}/{max_retries})...")
-                time.sleep(wait_s)
+                time.sleep(max(2, min(retry_after + 1, 30)))
                 continue
-            log_debug(f"[TG ERROR] {method} ({e.code}): {err_body}")
+            log_debug(f"[TG ERROR] {method} ({e.code}): {err_body[:200]}")
             return {"ok": False, "error_code": e.code, "error": err_body}
         except Exception as e:
             if attempt < max_retries:
@@ -676,57 +143,56 @@ def tg_request(method: str, payload: dict, max_retries: int = 4) -> dict:
                 continue
             log_debug(f"[TG ERROR] {method}: {e}")
             return {"ok": False, "error": str(e)}
-    return {"ok": False, "error": "max_retries_exceeded"}
+    return {"ok": False}
 
 
-def _split_long_tg_text(text: str, limit: int = 3800) -> list[str]:
+def _split_long_text(text: str, limit: int = 3800) -> list[str]:
     if len(text) <= limit:
         return [text]
-    parts: list[str] = []
-    cur_lines: list[str] = []
-    cur_len = 0
-    for line in text.splitlines(keepends=True):
-        if cur_len + len(line) > limit and cur_lines:
-            parts.append("".join(cur_lines).rstrip())
-            cur_lines = [line]
-            cur_len = len(line)
+    parts, cur, cur_len = [], [], 0
+    for ln in text.splitlines(keepends=True):
+        if cur_len + len(ln) > limit and cur:
+            parts.append("".join(cur).rstrip())
+            cur, cur_len = [ln], len(ln)
         else:
-            cur_lines.append(line)
-            cur_len += len(line)
-    if cur_lines:
-        parts.append("".join(cur_lines).rstrip())
+            cur.append(ln)
+            cur_len += len(ln)
+    if cur:
+        parts.append("".join(cur).rstrip())
     return parts or [text[:limit]]
 
 
-def send_tg_message(text: str, add_keyboard: bool = True, force_reply_kb: bool = False) -> dict:
-    chunks = _split_long_tg_text(text, limit=3800)
+def send_tg_message(text: str, add_keyboard: bool = True, inline_markup: Optional[dict] = None) -> dict:
+    chunks = _split_long_text(text)
     last_res: dict[str, Any] = {"ok": False}
-    for i, chunk_text in enumerate(chunks):
-        is_last = i == len(chunks) - 1
+    for idx, ch in enumerate(chunks):
+        is_last = idx == len(chunks) - 1
         payload: dict[str, Any] = {
             "chat_id": TELEGRAM_CHAT_ID,
-            "text": chunk_text,
+            "text": ch,
             "parse_mode": "HTML",
             "disable_web_page_preview": True,
         }
-        if (add_keyboard or force_reply_kb) and is_last:
-            payload["reply_markup"] = get_collapsible_reply_keyboard()
+        if is_last:
+            if inline_markup:
+                payload["reply_markup"] = inline_markup
+            elif add_keyboard:
+                payload["reply_markup"] = get_reply_keyboard()
         res = tg_request("sendMessage", payload)
         if not res.get("ok"):
-            log_debug(f"[TG WARN] sendMessage HTML failed ({res}), повтор без parse_mode...")
-            payload_plain = dict(payload)
-            payload_plain.pop("parse_mode", None)
-            res = tg_request("sendMessage", payload_plain)
+            plain = dict(payload)
+            plain.pop("parse_mode", None)
+            res = tg_request("sendMessage", plain)
         last_res = res
         if not is_last:
-            time.sleep(0.8)
+            time.sleep(0.5)
     return last_res
 
 
 def send_tg_multipart(method: str, file_field: str, filename: str, file_bytes: bytes, mime_type: str, extra_fields: dict[str, str]) -> dict:
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return {"ok": False}
-    boundary = f"----SenkuroBoundary{int(time.time() * 1000)}"
+    boundary = f"----SenkuroTrader{int(time.time() * 1000)}"
     body = bytearray()
     for k, v in extra_fields.items():
         body.extend(f"--{boundary}\r\n".encode("utf-8"))
@@ -737,7 +203,6 @@ def send_tg_multipart(method: str, file_field: str, filename: str, file_bytes: b
     body.extend(f"Content-Type: {mime_type}\r\n\r\n".encode("utf-8"))
     body.extend(file_bytes)
     body.extend(f"\r\n--{boundary}--\r\n".encode("utf-8"))
-
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
     req = urllib.request.Request(
         url,
@@ -748,652 +213,272 @@ def send_tg_multipart(method: str, file_field: str, filename: str, file_bytes: b
     try:
         with urllib.request.urlopen(req, timeout=35) as resp:
             return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        err_body = ""
-        try:
-            err_body = e.read().decode("utf-8", errors="ignore")
-        except Exception:
-            pass
-        log_debug(f"[TG MULTIPART ERROR] {method}: HTTP {e.code} -> {err_body[:240]}")
-        return {"ok": False, "error_code": e.code, "error": err_body}
     except Exception as e:
-        log_debug(f"[TG MULTIPART ERROR] {method}: {e}")
+        log_debug(f"[TG MULTIPART ERR] {method}: {e}")
         return {"ok": False, "error": str(e)}
 
 
-def _safe_trim_html_caption(caption: str, max_len: int = 960) -> str:
-    """Обрезает подпись к фото строго по целым строкам, чтобы НИКОГДА не разорвать HTML-теги <b> или <code>!"""
-    if not caption or len(caption) <= max_len:
-        return caption
-    out_lines: list[str] = []
-    cur_len = 0
-    for ln in caption.splitlines():
-        add_len = len(ln) + (1 if out_lines else 0)
-        if cur_len + add_len > max_len:
-            break
-        out_lines.append(ln)
-        cur_len += add_len
-    return "\n".join(out_lines)
+def send_tg_media_album(images_bytes: list[bytes], caption: str = "") -> bool:
+    if not images_bytes or not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return False
+    if len(images_bytes) == 1:
+        fields = {"chat_id": str(TELEGRAM_CHAT_ID), "parse_mode": "HTML"}
+        if caption:
+            fields["caption"] = caption[:960]
+        res = send_tg_multipart("sendPhoto", "photo", "card.jpg", images_bytes[0], "image/jpeg", fields)
+        return bool(res.get("ok"))
 
-
-def send_tg_photo_bytes(img_bytes: bytes, caption: str = "", add_keyboard: bool = False) -> dict:
-    is_jpeg = len(img_bytes) > 3 and img_bytes[:3] == b"\xff\xd8\xff"
-    fname = "screen.jpg" if is_jpeg else "screen.png"
-    mtype = "image/jpeg" if is_jpeg else "image/png"
-
-    safe_cap = _safe_trim_html_caption(caption, 960) if caption else ""
-    fields: dict[str, str] = {"chat_id": str(TELEGRAM_CHAT_ID), "parse_mode": "HTML"}
-    if safe_cap:
-        fields["caption"] = safe_cap
-    if add_keyboard:
-        fields["reply_markup"] = json.dumps(get_collapsible_reply_keyboard(), ensure_ascii=False)
-
-    res = send_tg_multipart("sendPhoto", "photo", fname, img_bytes, mtype, fields)
-    if res.get("ok"):
-        return res
-
-    # Резерв 1: если Telegram вернул 400 из-за HTML-разметки в подписи — очищаем теги и отправляем без parse_mode!
-    plain_fields: dict[str, str] = {"chat_id": str(TELEGRAM_CHAT_ID)}
-    if safe_cap:
-        plain_cap = re.sub(r"<[^>]+>", "", safe_cap)
-        plain_fields["caption"] = plain_cap[:960]
-    if add_keyboard:
-        plain_fields["reply_markup"] = json.dumps(get_collapsible_reply_keyboard(), ensure_ascii=False)
-    res2 = send_tg_multipart("sendPhoto", "photo", fname, img_bytes, mtype, plain_fields)
-    if res2.get("ok"):
-        return res2
-
-    # Резерв 2: отправка файлом без сжатия (sendDocument), если картинка нестандартного размера
-    return send_tg_multipart("sendDocument", "document", fname, img_bytes, mtype, plain_fields)
-
-
-def upload_debug_log_to_github_noop(reason: str = "task") -> Optional[str]:
-    """
-    Автоматически загружает полный файл лога /tmp/senkuro_full_debug.log в ваш репозиторий
-    cesium254/senkuro-checker по пути logs/senkuro_debug.log с тегом [skip ci], чтобы вы или ИИ
-    всегда могли открыть полный лог по прямой ссылке!
-    """
-    if not DEBUG_LOG_FILE.exists() or not GITHUB_PAT_TOKEN:
-        return None
-    import base64
-    try:
-        raw_bytes = DEBUG_LOG_FILE.read_bytes()
-        # Ограничим последними 450 КБ, если лог огромный
-        if len(raw_bytes) > 450_000:
-            raw_bytes = raw_bytes[-450_000:]
-        b64_content = base64.b64encode(raw_bytes).decode("ascii")
-        api_url = f"https://api.github.com/repos/{GITHUB_REPO_FULL}/contents/logs/senkuro_debug.log"
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {GITHUB_PAT_TOKEN}",
-            "User-Agent": "SenkuroBot/24.0",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "Content-Type": "application/json",
-        }
-        sha_val = None
-        try:
-            get_req = urllib.request.Request(api_url, headers=headers, method="GET")
-            with urllib.request.urlopen(get_req, timeout=10) as g_resp:
-                g_data = json.loads(g_resp.read().decode("utf-8"))
-                sha_val = g_data.get("sha")
-        except Exception:
-            pass
-
-        put_payload: dict[str, Any] = {
-            "message": f"Update full debug log ({reason}) [skip ci]",
-            "content": b64_content,
-            "branch": "main",
-        }
-        if sha_val:
-            put_payload["sha"] = sha_val
-
-        put_req = urllib.request.Request(
-            api_url,
-            data=json.dumps(put_payload).encode("utf-8"),
-            headers=headers,
-            method="PUT",
-        )
-        with urllib.request.urlopen(put_req, timeout=15) as p_resp:
-            if p_resp.status in (200, 201):
-                return f"https://github.com/{GITHUB_REPO_FULL}/blob/main/logs/senkuro_debug.log"
-    except Exception as e:
-        log_debug(f"[GH LOG UPLOAD WARNING] {e}")
-    return None
-
-
-def upload_debug_log_to_github_noop(reason: str = "task") -> None:
-    return None
-
-
-def send_full_debug_log_to_user(reason_title: str = "Полный лог работы") -> None:
-    if not DEBUG_LOG_FILE.exists():
-        send_tg_message("ℹ️ Файл лога пока пуст.", add_keyboard=True)
-        return
-    raw_bytes = DEBUG_LOG_FILE.read_bytes()
-    if len(raw_bytes) > 180_000:
-        raw_bytes = raw_bytes[-180_000:]
-    caption = (
-        f"📜 <b>{reason_title}</b> (размер: {max(1, len(raw_bytes) // 1024)} КБ)\n\n"
-        "Откройте этот файл и скопируйте текст (или перешлите его в чат с ИИ) для мгновенной проверки!"
+    boundary = f"----SenkuroAlbum{int(time.time() * 1000)}"
+    media = []
+    for i in range(len(images_bytes)):
+        item: dict[str, Any] = {"type": "photo", "media": f"attach://p{i}"}
+        if i == 0 and caption:
+            item["caption"] = caption[:960]
+            item["parse_mode"] = "HTML"
+        media.append(item)
+    body = bytearray()
+    for k, v in [("chat_id", str(TELEGRAM_CHAT_ID)), ("media", json.dumps(media, ensure_ascii=False))]:
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(f'Content-Disposition: form-data; name="{k}"\r\n\r\n'.encode("utf-8"))
+        body.extend(f"{v}\r\n".encode("utf-8"))
+    for i, b in enumerate(images_bytes):
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(f'Content-Disposition: form-data; name="p{i}"; filename="card_{i}.jpg"\r\n'.encode("utf-8"))
+        body.extend(b"Content-Type: image/jpeg\r\n\r\n")
+        body.extend(b)
+        body.extend(b"\r\n")
+    body.extend(f"--{boundary}--\r\n".encode("utf-8"))
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMediaGroup"
+    req = urllib.request.Request(
+        url,
+        data=bytes(body),
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
     )
-    fields = {
-        "chat_id": str(TELEGRAM_CHAT_ID),
-        "caption": caption[:1000],
-        "parse_mode": "HTML",
-        "reply_markup": json.dumps(get_collapsible_reply_keyboard(), ensure_ascii=False),
-    }
-    for _ in range(2):
-        res = send_tg_multipart("sendDocument", "document", "senkuro_debug_log.txt", raw_bytes, "text/plain", fields)
-        if res.get("ok"):
-            return
-        time.sleep(1.0)
-    # Если файл не прошёл из-за сетевого таймаута — отправляем последние строки лога обычным текстом!
-    tail_txt = raw_bytes[-3200:].decode("utf-8", errors="ignore")
-    send_tg_message(f"📜 <b>Последние строки лога ({reason_title}):</b>\n<pre>{tail_txt[-3000:].replace('<', '&lt;').replace('>', '&gt;')}</pre>", add_keyboard=True)
-
-
-async def capture_page_png_fast(pg: Page) -> Optional[bytes]:
-    """
-    Мгновенный захват скриншота через Chrome DevTools Protocol (Page.captureScreenshot) за 0.05 сек!
-    Не зависает на ожидании шрифтов или анимаций через прокси, в отличие от обычного pg.screenshot().
-    """
-    import base64
     try:
-        cdp = await pg.context.new_cdp_session(pg)
-        try:
-            res = await asyncio.wait_for(cdp.send("Page.captureScreenshot", {"format": "png"}), timeout=4.0)
-            if res and res.get("data"):
-                return base64.b64decode(res["data"])
-        finally:
-            await cdp.detach()
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            return bool(json.loads(resp.read().decode("utf-8")).get("ok"))
     except Exception as e:
-        log_debug(f"[CDP SCREENSHOT FALLBACK] {e}")
-    try:
-        return await pg.screenshot(full_page=False, animations="disabled", timeout=5000)
-    except Exception as e2:
-        log_debug(f"[STD SCREENSHOT ERR] {e2}")
-        return None
-
-
-def is_local_port_open(port: int) -> bool:
-    try:
-        with socket.create_connection(("127.0.0.1", int(port)), timeout=0.25):
-            return True
-    except Exception:
+        log_debug(f"[TG ALBUM ERR] {e}")
         return False
 
 
-is_port_open = is_local_port_open
-
-
-def _stitch_screens_2x2_png(screens: list[tuple[str, bytes]]) -> Optional[bytes]:
-    """
-    Склеивает от 2 до 8 скриншотов аккаунтов в ЕДИНУЮ HD-картинку (2x2 для 2..4 экранов или 2x4 для 5..8 экранов),
-    чтобы кнопка «📸 Экран» присылала РОВНО 1 СООБЩЕНИЕ со всеми 8 аккаунтами!
-    """
-    if not screens:
-        return None
-    if len(screens) == 1:
-        return screens[0][1]
-    try:
-        import io
-        from PIL import Image, ImageDraw
-
-        count = min(12, len(screens))
-        cols = 2 if count <= 4 else 3
-        rows = (count + cols - 1) // cols
-        tile_w = 1280 if rows <= 2 else 854
-        tile_h = 900 if rows <= 2 else 600
-
-        canvas = Image.new("RGB", (tile_w * cols, tile_h * rows), (18, 18, 22))
-        draw = ImageDraw.Draw(canvas)
-
-        for idx, (label_txt, png_b) in enumerate(screens[:12]):
-            col_i = idx % cols
-            row_i = idx // cols
-            px = col_i * tile_w
-            py = row_i * tile_h
-            try:
-                im = Image.open(io.BytesIO(png_b)).convert("RGB")
-                im = im.resize((tile_w - 4, tile_h - 4))
-                canvas.paste(im, (px + 2, py + 2))
-                draw.rectangle([px + 8, py + 8, px + 240, py + 34], fill=(0, 0, 0))
-                draw.text((px + 14, py + 14), f"#{idx + 1} {label_txt}", fill=(80, 255, 120))
-            except Exception:
-                pass
-
-        out_buf = io.BytesIO()
-        canvas.save(out_buf, format="JPEG", quality=88, optimize=True)
-        return out_buf.getvalue()
-    except Exception as e:
-        log_debug(f"[GRID STITCH FALLBACK] {e}")
-        return screens[0][1]
-
-
-def _short_clean_url_for_caption(raw_url: str) -> str:
-    u = (raw_url or "").strip()
-    u = re.sub(r"^https?://(?:www\.)?senkuro\.com", "", u)
-    if not u:
-        u = "/"
-    u = u.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    return u[:46]
-
-
-async def send_live_screen_snapshot(custom_caption: str = "") -> None:
-    """
-    Собирает скриншоты всех открытых вкладок/окон (нативные окна Chrome 26411..26422 + вкладки Playwright),
-    объединяет их в ОДНУ общую плитку 3x4 и отправляет ОДНИМ сообщением в Telegram!
-    """
-    import base64
-    collected_screens: list[tuple[str, bytes]] = []
-    caption_lines: list[str] = ["📸 <b>Снимок экранов фермы (12 аккаунтов):</b>"]
-    seen_labels: set[str] = set()
-
-    # 1. Проверяем открытые нативные окна Chrome (порты 26411..26422)
-    for acc_item in FARM_ACCOUNTS:
-        c_port = 26410 + int(acc_item["idx"])
-        if is_local_port_open(c_port):
-            try:
-                def _grab_nat(p_num: int):
-                    with urllib.request.urlopen(f"http://127.0.0.1:{p_num}/json/list", timeout=1.0) as r:
-                        t_list = json.loads(r.read().decode("utf-8", errors="ignore"))
-                    p_tabs = [t for t in t_list if t.get("type") == "page" and t.get("webSocketDebuggerUrl")]
-                    if not p_tabs:
-                        return None, "", ""
-                    ws_u = p_tabs[0]["webSocketDebuggerUrl"]
-                    sc = _cdp_ws_call_sync(ws_u, "Page.captureScreenshot", {"format": "png"}, timeout_sec=3.5)
-                    if sc.get("data"):
-                        return base64.b64decode(sc["data"]), str(p_tabs[0].get("url") or ""), str(p_tabs[0].get("title") or "")
-                    return None, "", ""
-                nat_png, nat_url, nat_title = await asyncio.to_thread(_grab_nat, c_port)
-                if nat_png:
-                    aid = acc_item["id"]
-                    seen_labels.add(aid)
-                    collected_screens.append((aid, nat_png))
-                    caption_lines.append(f"• <b>#{acc_item['idx']} {aid}</b>: <code>{_short_clean_url_for_caption(nat_url)}</code>")
-            except Exception as e:
-                log_debug(f"[NAT SNAPSHOT WARN] {acc_item['id']}: {e}")
-
-    # 2. Проверяем открытые вкладки Playwright
-    acc_idx_map = {a["id"]: a["idx"] for a in FARM_ACCOUNTS}
-    for label, pg in list(ACTIVE_BROWSER_PAGES.items()):
-        if label in seen_labels:
-            continue
-        try:
-            if pg.is_closed():
-                ACTIVE_BROWSER_PAGES.pop(label, None)
-                continue
-            png_data = await capture_page_png_fast(pg)
-            if not png_data:
-                ACTIVE_BROWSER_PAGES.pop(label, None)
-                continue
-            seen_labels.add(label)
-            collected_screens.append((label, png_data))
-            idx_prefix = f"#{acc_idx_map[label]} " if label in acc_idx_map else ""
-            caption_lines.append(f"• <b>{idx_prefix}{label}</b>: <code>{_short_clean_url_for_caption(pg.url)}</code>")
-        except Exception as e:
-            log_debug(f"[SCREENSHOT WARNING] {label}: {e}")
-
-    if not collected_screens:
-        send_tg_message(
-            "⚪ <b>Сейчас ни одно окно браузера не открыто</b> (сервер в режиме ожидания).\n\n"
-            "Запустите любую задачу (например, «▶️ Фарм (8 ч)», «🎴 Паки» или «⚒️ Кузня+Трейд»), и нажимайте <b>«📸 Экран»</b>!",
-            add_keyboard=True,
-        )
+def send_debug_log() -> None:
+    if not DEBUG_LOG_FILE.exists():
+        send_tg_message("ℹ️ Файл лога пока пуст.", add_keyboard=True)
         return
-
-    combined_png = await asyncio.to_thread(_stitch_screens_2x2_png, collected_screens)
-    if combined_png:
-        final_cap = (f"{custom_caption}\n\n" if custom_caption else "") + "\n".join(caption_lines)
-        await asyncio.to_thread(send_tg_photo_bytes, combined_png, final_cap[:1000], True)
-
-
-WORKER_PUBLIC_URL = "https://sparkling-meadow-68b3.ev20291.workers.dev/"
-INSTANT_CMD_QUEUE_TOPIC = "senkuro_cesium254_v11_cmd_queue"
-INSTANT_CMD_ACK_TOPIC = "senkuro_cesium254_v11_cmd_ack"
-
-
-def configure_telegram_bot_profile() -> None:
-    # 1. Полностью отключаем старый вебхук Cloudflare, чтобы Telegram работал напрямую с GitHub без ошибок!
-    tg_request(
-        "deleteWebhook",
-        {
-            "drop_pending_updates": False,
-        },
-    )
-    # 2. Автоматически очищаем спам-рекламу ("What can this bot do? Free ChatGPT...") во всех языковых версиях бота!
-    clean_desc = "Личный бот автоматизации Senkuro (проверка аккаунтов, паки Хардкор, Переплавка, промокоды и 8-часовой фарм)."
-    clean_short = "Автоматизация Senkuro"
-    for lang in ("", "ru", "uk", "en", "be", "kk"):
-        desc_payload = {"description": clean_desc}
-        short_payload = {"short_description": clean_short}
-        if lang:
-            desc_payload["language_code"] = lang
-            short_payload["language_code"] = lang
-        tg_request("setMyDescription", desc_payload)
-        tg_request("setMyShortDescription", short_payload)
-
-    commands = [
-        {"command": "menu", "description": "📋 Открыть панель управления"},
-        {"command": "check", "description": "🔄 Проверить карты и осколки (13 аккаунтов)"},
-        {"command": "balance", "description": "🪙 Баланс монет на 12 аккаунтах"},
-        {"command": "packs", "description": "🎴 Крутить паки Хардкор (480 монет)"},
-        {"command": "forge", "description": "⚒️ Переплавка карт до S + трейд на основу"},
-        {"command": "trade", "description": "🤝 Трейд выбранных карт на основу / принять трейд"},
-        {"command": "farm", "description": "▶️ Запустить 8-часовой фарм манги"},
-        {"command": "status", "description": "📊 Статус фарма (читают или нет)"},
-        {"command": "screen", "description": "📸 Посмотреть экран браузера (Скриншот)"},
-        {"command": "log", "description": "📜 Скачать полный лог (Файл + GitHub)"},
-        {"command": "stop", "description": "🛑 Остановить фарм и все задачи"},
-    ]
-    tg_request("setMyCommands", {"commands": commands})
-    tg_request("setChatMenuButton", {"menu_button": {"type": "commands"}})
-
-
-def ack_instant_command(cmd_id: str) -> None:
-    if not cmd_id:
-        return
-    try:
-        req = urllib.request.Request(
-            f"https://ntfy.sh/{INSTANT_CMD_ACK_TOPIC}",
-            data=cmd_id.encode("utf-8"),
-            headers={"Content-Type": "text/plain"},
-            method="POST",
-        )
-        urllib.request.urlopen(req, timeout=4)
-    except Exception:
-        pass
-
-
-def poll_instant_commands(since_ts: int, seen_ids: set[str]) -> list[dict]:
-    cmds: list[dict] = []
-    try:
-        url = f"https://ntfy.sh/{INSTANT_CMD_QUEUE_TOPIC}/json?poll=1&since={since_ts}"
-        req = urllib.request.Request(url, headers={"User-Agent": "SenkuroCombine/11.0"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            raw_lines = resp.read().decode("utf-8", errors="ignore").strip().splitlines()
-        for line in raw_lines:
-            try:
-                outer = json.loads(line)
-                msg_id = outer.get("id") or ""
-                if outer.get("event") != "message" or not outer.get("message"):
-                    continue
-                inner = json.loads(outer["message"])
-                if not isinstance(inner, dict) or "action" not in inner:
-                    continue
-                cmd_id = str(inner.get("cmd_id") or msg_id)
-                if cmd_id in seen_ids or (msg_id and msg_id in seen_ids):
-                    continue
-                seen_ids.add(cmd_id)
-                if msg_id:
-                    seen_ids.add(msg_id)
-                ack_instant_command(cmd_id)
-                cmds.append(inner)
-            except Exception:
-                continue
-    except Exception:
-        pass
-    return cmds
+    raw = DEBUG_LOG_FILE.read_bytes()[-150_000:]
+    fields = {
+        "chat_id": str(TELEGRAM_CHAT_ID),
+        "caption": f"📜 <b>Лог помощника Senkuro {APP_VERSION_TAG}</b> ({max(1, len(raw)//1024)} КБ)",
+        "parse_mode": "HTML",
+        "reply_markup": json.dumps(get_reply_keyboard(), ensure_ascii=False),
+    }
+    res = send_tg_multipart("sendDocument", "document", "senkuro_trader_log.txt", raw, "text/plain", fields)
+    if not res.get("ok"):
+        tail = raw[-2800:].decode("utf-8", errors="ignore").replace("<", "&lt;").replace(">", "&gt;")
+        send_tg_message(f"<pre>{tail}</pre>", add_keyboard=True)
 
 
 # ==============================================================================
-# 3. СИНХРОНИЗАЦИЯ ЖИВОГО СТАТУСА 8-ЧАСОВОГО ФАРМА ДЛЯ TELEGRAM
+# 3. АВТООБНОВЛЯЕМАЯ БАЗА ЦЕН БАНКА SENKUTOOLS
 # ==============================================================================
 
-def publish_live_farm_status(status_dict: dict) -> None:
-    try:
-        data = json.dumps(status_dict, ensure_ascii=False).encode("utf-8")
-        req = urllib.request.Request(
-            f"https://ntfy.sh/{FARM_STATE_SYNC_TOPIC}",
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        urllib.request.urlopen(req, timeout=5)
-    except Exception:
-        pass
-
-
-FARM_CONTROL_SYNC_TOPIC = "senkuro_cesium254_v8_ctrl_sync"
-
-
-def check_remote_stop_signal(since_ts: int) -> bool:
-    """Проверяет, нажал ли пользователь кнопку 🛑 ОСТАНОВИТЬ ФАРМ в Telegram."""
-    try:
-        url = f"https://ntfy.sh/{FARM_CONTROL_SYNC_TOPIC}/json?poll=1&since={since_ts}"
-        req = urllib.request.Request(url, headers={"User-Agent": "SenkuroBot/9.5"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            lines = resp.read().decode("utf-8", errors="ignore").strip().splitlines()
-        for line in lines:
-            if "STOP_NOW" in line:
-                return True
-    except Exception:
-        pass
-    return False
-
-
-def fetch_latest_farm_status() -> Optional[dict]:
-    try:
-        url = f"https://ntfy.sh/{FARM_STATE_SYNC_TOPIC}/json?poll=1&since=20m"
-        req = urllib.request.Request(url, headers={"User-Agent": "SenkuroBot/9.0"})
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            raw_lines = resp.read().decode("utf-8", errors="ignore").strip().splitlines()
-        latest_obj = None
-        for line in raw_lines:
-            try:
-                outer = json.loads(line)
-                if outer.get("event") == "message" and outer.get("message"):
-                    inner = json.loads(outer["message"])
-                    if isinstance(inner, dict) and "accounts" in inner:
-                        latest_obj = inner
-            except Exception:
-                continue
-        return latest_obj
-    except Exception:
-        return None
-
-
-# ==============================================================================
-# 4. УПРАВЛЕНИЕ ТУННЕЛЯМИ OPERA-PROXY (УНИКАЛЬНЫЙ IP НА КАЖДЫЙ АККАУНТ)
-# ==============================================================================
-
-def is_ipv4_address(ip_str: str) -> bool:
-    s = (ip_str or "").strip()
-    parts = s.split(".")
-    return len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts)
-
-
-def ensure_opera_proxy_binary() -> Optional[str]:
-    sys_name = platform.system().lower()
-    exe_name = "opera-proxy.exe" if "windows" in sys_name else "opera-proxy"
-    target_path = BIN_DIR / exe_name
-    if target_path.exists() and target_path.stat().st_size > 1_000_000:
-        if not sys.platform.startswith("win"):
-            try:
-                target_path.chmod(0o755)
-            except Exception:
-                pass
-        return str(target_path)
-
-    which_bin = shutil.which("opera-proxy")
-    if which_bin:
-        return which_bin
-
-    asset = "opera-proxy.windows-amd64.exe" if "windows" in sys_name else "opera-proxy.linux-amd64"
-    url = f"https://github.com/Alexey71/opera-proxy/releases/latest/download/{asset}"
-    log_debug(f"[VPN] Скачивание {asset} с GitHub...")
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=30) as resp, open(target_path, "wb") as out_f:
-            shutil.copyfileobj(resp, out_f)
-        if not sys.platform.startswith("win"):
-            target_path.chmod(0o755)
-        return str(target_path)
-    except Exception as e:
-        print(f"[VPN WARNING] Не удалось скачать opera-proxy: {e}")
-        return None
-
-
-def verify_proxy_exit_ip(local_port: int, timeout: float = 3.0) -> tuple[bool, str]:
-    proxy_handler = urllib.request.ProxyHandler(
-        {
-            "http": f"http://127.0.0.1:{local_port}",
-            "https": f"http://127.0.0.1:{local_port}",
-        }
-    )
-    opener = urllib.request.build_opener(proxy_handler)
-    for url in ("https://checkip.amazonaws.com", "https://icanhazip.com", "https://api.ipify.org"):
+def _load_cached_senkutools() -> None:
+    global SENKUTOOLS_DB, SENKUTOOLS_META
+    if not SENKUTOOLS_DB and SENKUTOOLS_PRICES_FILE.exists():
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "curl/12.5.0"})
-            with opener.open(req, timeout=timeout) as resp:
-                ip = resp.read().decode("utf-8", errors="ignore").strip()
-                if is_ipv4_address(ip):
-                    return True, ip
+            SENKUTOOLS_DB = json.loads(SENKUTOOLS_PRICES_FILE.read_text(encoding="utf-8"))
         except Exception:
-            continue
-    return False, ""
+            SENKUTOOLS_DB = {}
+    if not SENKUTOOLS_META and SENKUTOOLS_META_FILE.exists():
+        try:
+            SENKUTOOLS_META = json.loads(SENKUTOOLS_META_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            SENKUTOOLS_META = {}
 
 
-class AccountProxyManager:
-    """Поднимает и контролирует 12 изолированных VPN-туннелей (динамический выбор свободного IP без пересечений между 12 аккаунтами)."""
+def ensure_senkutools_db(force_check: bool = True) -> dict[str, Any]:
+    global SENKUTOOLS_DB, SENKUTOOLS_META
+    _load_cached_senkutools()
+    cached_ver = str(SENKUTOOLS_META.get("version") or "")
+    note = "из кэша"
+    if force_check or not SENKUTOOLS_DB:
+        try:
+            req = urllib.request.Request(
+                SENKUTOOLS_AMO_API_URL,
+                headers={"User-Agent": f"Mozilla/5.0 SenkuroTrader/{APP_VERSION_TAG}"},
+            )
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                amo = json.loads(resp.read().decode("utf-8"))
+            cur_v = amo.get("current_version") or {}
+            latest_ver = str(cur_v.get("version") or "").strip()
+            xpi_url = str((cur_v.get("file") or {}).get("url") or "").strip()
+            last_upd = str(amo.get("last_updated") or "")[:10]
 
+            if latest_ver and xpi_url and (latest_ver != cached_ver or not SENKUTOOLS_DB):
+                log_debug(f"[SENKUTOOLS] Загружаю новую версию v{latest_ver} (была: {cached_ver or 'нет'})...")
+                req_x = urllib.request.Request(xpi_url, headers={"User-Agent": f"Mozilla/5.0 SenkuroTrader/{APP_VERSION_TAG}"})
+                with urllib.request.urlopen(req_x, timeout=25) as xr:
+                    xpi_bytes = xr.read()
+                with zipfile.ZipFile(io.BytesIO(xpi_bytes)) as zf:
+                    raw_db = json.loads(zf.read("database.json").decode("utf-8"))
+                parsed_db: dict[str, dict[str, Any]] = {}
+                if isinstance(raw_db, dict):
+                    for slug_k, val in raw_db.items():
+                        if isinstance(val, dict) and val.get("price") is not None:
+                            try:
+                                parsed_db[str(slug_k).strip().lower()] = {
+                                    "price": float(val["price"]),
+                                    "rank": str(val.get("rank") or "?").upper(),
+                                    "name": str(val.get("name") or slug_k),
+                                    "manga": str(val.get("manga") or ""),
+                                }
+                            except Exception:
+                                pass
+                if parsed_db:
+                    SENKUTOOLS_DB = parsed_db
+                    SENKUTOOLS_META = {
+                        "version": latest_ver,
+                        "last_updated": last_upd,
+                        "cards_count": len(parsed_db),
+                        "checked_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+                    SENKUTOOLS_PRICES_FILE.write_text(json.dumps(parsed_db, ensure_ascii=False), encoding="utf-8")
+                    SENKUTOOLS_META_FILE.write_text(json.dumps(SENKUTOOLS_META, ensure_ascii=False), encoding="utf-8")
+                    note = f"обновлена до {latest_ver}"
+                    log_debug(f"[SENKUTOOLS OK] Сохранена база v{latest_ver} ({len(parsed_db)} карт).")
+            elif latest_ver:
+                SENKUTOOLS_META["version"] = latest_ver
+                SENKUTOOLS_META["last_updated"] = last_upd or SENKUTOOLS_META.get("last_updated", "")
+                SENKUTOOLS_META["cards_count"] = len(SENKUTOOLS_DB)
+                note = "актуальна"
+        except Exception as e:
+            log_debug(f"[SENKUTOOLS WARN] {e}")
+            note = "из кэша" if SENKUTOOLS_DB else "недоступна"
+
+    return {
+        "version": str(SENKUTOOLS_META.get("version") or "—"),
+        "last_updated": str(SENKUTOOLS_META.get("last_updated") or ""),
+        "cards_count": len(SENKUTOOLS_DB),
+        "note": note,
+    }
+
+
+def get_net_price(slug: str) -> Optional[float]:
+    clean = str(slug or "").strip("/").split("/")[-1].lower()
+    entry = SENKUTOOLS_DB.get(clean)
+    if not entry:
+        return None
+    raw_p = entry["price"] if isinstance(entry, dict) else float(entry)
+    return round(float(raw_p) * BANK_COMMISSION_MULT, 2)
+
+
+def format_st_header(st_info: dict[str, Any]) -> str:
+    upd = f", от {st_info['last_updated']}" if st_info.get("last_updated") else ""
+    return (
+        f"🏦 <b><a href='{SENKUTOOLS_AMO_PAGE_URL}'>SenkuTools</a>:</b> "
+        f"v<b>{st_info['version']}</b> ({st_info['note']}{upd} | {st_info['cards_count']} карт)"
+    )
+
+
+# ==============================================================================
+# 4. ЛОКАЛЬНАЯ БАЗА ЦЕЛЕЙ (БЕЗ ГИЛЬДИИ + НЕ ЗАКРЕПЛЕНЫ + ОБНОВЛЕНИЕ РАЗ В 72 Ч)
+# ==============================================================================
+
+def load_trade_db() -> dict[str, Any]:
+    default_db: dict[str, Any] = {
+        "guild_blacklist": {},   # slug -> {"guild": name, "ts": float}
+        "shown_users": {},       # "user_slug|card_slug" -> ts
+        "targets": {},           # "user_slug|card_slug" -> {user_slug, card_slug, card_name, rank, net_price, raw_price, verified_at}
+        "scanned_cards": {},     # card_slug -> ts
+    }
+    if TRADE_DB_FILE.exists():
+        try:
+            loaded = json.loads(TRADE_DB_FILE.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                for k, v in default_db.items():
+                    if k not in loaded or not isinstance(loaded[k], dict):
+                        loaded[k] = v
+                return loaded
+        except Exception:
+            pass
+    return default_db
+
+
+def save_trade_db(db: dict[str, Any]) -> None:
+    try:
+        # Чистим устаревшие записи старше 72 часов из targets и scanned_cards (чёрный список гильдий держим 14 дней)
+        now = time.time()
+        db["targets"] = {
+            k: v for k, v in db.get("targets", {}).items()
+            if now - float(v.get("verified_at") or 0) < TARGET_TTL_SECONDS
+        }
+        db["scanned_cards"] = {
+            k: ts for k, ts in db.get("scanned_cards", {}).items()
+            if now - float(ts or 0) < TARGET_TTL_SECONDS
+        }
+        db["guild_blacklist"] = {
+            k: v for k, v in db.get("guild_blacklist", {}).items()
+            if now - float(v.get("ts") or 0) < 14 * 86400
+        }
+        TRADE_DB_FILE.write_text(json.dumps(db, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        log_debug(f"[DB SAVE WARN] {e}")
+
+
+# ==============================================================================
+# 5. ЛЁГКИЙ OPERA VPN ПРОКСИ (ТОЛЬКО ЧТОБЫ НЕ БЛОЧИЛО IP GITHUB НА ПУБЛИЧНЫХ СТРАНИЦАХ)
+# ==============================================================================
+
+class LightweightProxyPool:
     def __init__(self) -> None:
-        self.procs: dict[str, subprocess.Popen] = {}
-        self.active_ips: dict[str, str] = {}
+        self.procs: list[subprocess.Popen] = []
+        self.ports: list[int] = []
 
     def _port_open(self, port: int) -> bool:
         try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.25):
+            with socket.create_connection(("127.0.0.1", port), timeout=0.4):
                 return True
         except Exception:
             return False
 
-    def start_account_proxy(self, acc: dict) -> Optional[str]:
-        aid = acc["acc_id"]
-        port = acc["proxy_port"]
-        pinned_ip = acc["pinned_ip"]
-        if not port:
-            return None
-
-        if self._port_open(port):
-            ok, ip = verify_proxy_exit_ip(port, timeout=3.5)
-            if ok:
-                self.active_ips[aid] = ip
-                log_debug(f"[VPN] {acc['id']}: используется активный туннель 127.0.0.1:{port} -> {ip}")
-                return f"http://127.0.0.1:{port}"
-            elif aid not in self.procs:
-                fallback_ip = acc.get("pinned_ip") or "активный VPN"
-                self.active_ips[aid] = fallback_ip
-                log_debug(f"[VPN] {acc['id']}: порт 127.0.0.1:{port} уже занят фоновым фармом, переиспользую ({fallback_ip})")
-                return f"http://127.0.0.1:{port}"
-
-        exe_path = ensure_opera_proxy_binary()
-        if not exe_path:
-            return None
-
-        used_ips = {ip for k, ip in self.active_ips.items() if k != aid and ip}
-        kaggle_eu_gateways = ["77.111.244.37", "77.111.244.209", "77.111.244.210"]
-        free_eu_gateways = [ip for ip in kaggle_eu_gateways if ip not in used_ips]
-
-        free_candidates = [ip for ip in OPERA_244_CANDIDATE_POOL if ip not in used_ips]
-        if pinned_ip in free_candidates:
-            free_candidates.remove(pinned_ip)
-            free_candidates.insert(0, pinned_ip)
-
-        if free_eu_gateways and pinned_ip.startswith("77.111.244."):
-            target_list = [pinned_ip] if pinned_ip in free_eu_gateways else [free_eu_gateways[0]]
-            for cand_list in (target_list, free_candidates):
-                self._stop_proc(aid)
-                b_path = self._write_blacklist(aid, used_ips)
-                csv_path = self._write_discover_csv(aid, cand_list)
-                args = [
-                    exe_path,
+    def start_pool(self, count: int = 3) -> list[str]:
+        bin_path = Path("bin/opera-proxy")
+        if not bin_path.exists():
+            return []
+        regions = ["EU", "AM", "AS"]
+        urls: list[str] = []
+        for idx in range(count):
+            port = 25410 + idx
+            reg = regions[idx % len(regions)]
+            if self._port_open(port):
+                self.ports.append(port)
+                urls.append(f"http://127.0.0.1:{port}")
+                continue
+            proc = subprocess.Popen(
+                [
+                    str(bin_path),
+                    "-country", reg,
                     "-bind-address", f"127.0.0.1:{port}",
-                    "-country", "EU",
-                    "-discover-csv", csv_path,
-                    "-proxy-blacklist", b_path,
-                    "-server-selection", "first",
                     "-bootstrap-dns", "https://1.1.1.1/dns-query,https://12.8.8.8/dns-query",
-                ]
-                proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                self.procs[aid] = proc
-                for _ in range(25):
-                    if proc.poll() is not None or self._port_open(port):
-                        break
-                    time.sleep(0.2)
-                if self._port_open(port):
-                    ok, ip = verify_proxy_exit_ip(port, timeout=3.0)
-                    if ok and ip not in used_ips and not ip.startswith("77.111.247."):
-                        self.active_ips[aid] = ip
-                        log_debug(f"[VPN] {acc['id']}: закреплен уникальный IP {ip} (порт {port})")
-                        return f"http://127.0.0.1:{port}"
-                    elif ok and ip:
-                        used_ips.add(ip)
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            self.procs.append(proc)
+            for _ in range(25):
+                if proc.poll() is not None or self._port_open(port):
+                    break
+                time.sleep(0.2)
+            if self._port_open(port):
+                self.ports.append(port)
+                urls.append(f"http://127.0.0.1:{port}")
+                log_debug(f"[PROXY OK] Поднят публичный туннель {reg} на 127.0.0.1:{port}")
+        return urls
 
-        if pinned_ip.startswith("77.111.245."):
-            regions = ["AS", "AM", "EU"]
-        elif pinned_ip.startswith("77.111.246."):
-            regions = ["AM", "AS", "EU"]
-        else:
-            regions = ["EU", "AM", "AS"]
-
-        for region in regions:
-            for sub_try, sel_mode in enumerate(("first", "random", "random", "random", "random", "random"), start=1):
-                self._stop_proc(aid)
-                b_path = self._write_blacklist(aid, used_ips)
-                args = [
-                    exe_path,
-                    "-bind-address", f"127.0.0.1:{port}",
-                    "-country", region,
-                    "-discover-repeat", "8",
-                    "-proxy-blacklist", b_path,
-                    "-server-selection", sel_mode,
-                    "-bootstrap-dns", "https://1.1.1.1/dns-query,https://12.8.8.8/dns-query",
-                ]
-                proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                self.procs[aid] = proc
-                for _ in range(25):
-                    if proc.poll() is not None or self._port_open(port):
-                        break
-                    time.sleep(0.2)
-                if self._port_open(port):
-                    ok, ip = verify_proxy_exit_ip(port, timeout=3.0)
-                    if ok and ip not in used_ips and not ip.startswith("77.111.247."):
-                        self.active_ips[aid] = ip
-                        log_debug(f"[VPN] {acc['id']} ({region} #{sub_try}): закреплен уникальный IP {ip} (порт {port})")
-                        return f"http://127.0.0.1:{port}"
-                    elif ok and ip:
-                        used_ips.add(ip)
-
-        self._stop_proc(aid)
-        return None
-
-    def _write_blacklist(self, aid: str, used_ips: set[str]) -> str:
-        b_path = os.path.join(tempfile.gettempdir(), f"senkuro_bl_{aid}.txt")
-        lines = ["eu2.sec-tunnel.com:443", "eu2.sec-tunnel.com"]
-        for octet in range(256):
-            lines.append(f"77.111.247.{octet}:443")
-        for ip in sorted(used_ips):
-            if is_ipv4_address(ip):
-                lines.append(f"{ip}:443")
-                lines.append(ip)
-        with open(b_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
-        return b_path
-
-    def _write_discover_csv(self, aid: str, candidate_ips: list[str]) -> str:
-        csv_path = os.path.join(tempfile.gettempdir(), f"senkuro_disc_{aid}.csv")
-        lines = ["country_code,country_name,host,ip_address,port"]
-        for ip in candidate_ips:
-            if is_ipv4_address(ip) and ip.startswith("77.111.244."):
-                lines.append(f"EU,Netherlands,eu0.sec-tunnel.com,{ip},443")
-        with open(csv_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
-        return csv_path
-
-    def _stop_proc(self, aid: str) -> None:
-        proc = self.procs.pop(aid, None)
-        if proc and proc.poll() is None:
+    def stop_all(self) -> None:
+        for proc in self.procs:
             try:
                 proc.terminate()
                 proc.wait(timeout=1.0)
@@ -1402,31 +487,13 @@ class AccountProxyManager:
                     proc.kill()
                 except Exception:
                     pass
-
-    def stop_all(self) -> None:
-        for aid in list(self.procs.keys()):
-            self._stop_proc(aid)
+        self.procs.clear()
+        self.ports.clear()
 
 
 # ==============================================================================
-# 5. ПРЯМЫЕ GRAPHQL ЗАПРОСЫ И АВТОРИЗАЦИЯ В АККАУНТАХ SENKURO
+# 6. ПУБЛИЧНЫЕ GRAPHQL-ЗАПРОСЫ И РЕНДЕР БЕЙДЖЕЙ ЦЕН НА ФОТО
 # ==============================================================================
-
-GQL_FETCH_VIEWER = """
-query fetchViewer {
-  viewer {
-    sessionId
-    user {
-      id
-      slug
-      name
-      points
-      credits
-      subscriptionTier
-    }
-  }
-}
-"""
 
 GQL_FETCH_USER_BY_SLUG = """
 query fetchUserBySlug($slug: String!) {
@@ -1434,165 +501,14 @@ query fetchUserBySlug($slug: String!) {
     id
     slug
     name
-    points
-    credits
   }
 }
 """
 
-GQL_REDEEM_PROMO = """
-mutation redeemRedemption($input: RedeemRedemptionInput!) {
-  redeemRedemption(input: $input) {
-    points
-    experience
-    collectible {
-      id
-      type
-      titles {
-        lang
-        content
-      }
-    }
-  }
-}
-"""
-
-GQL_FETCH_PACK_AND_PENDING = """
-query fetchPackAndPending($slug: String!) {
-  cardPack(slug: $slug) {
-    id
-    slug
-    points
-    credits
-    pickCount
-    pickLimit
-    subscriptionPick
-    quantity
-    maxRolls
-    viewerOpens
-    viewerFreeOpens
-    titles {
-      lang
-      content
-    }
-  }
-  viewerPendingCardPackOpens {
-    id
-    completedAt
-    pack {
-      id
-      subscriptionPick
-      pickLimit
-    }
-    resultCards {
-      id
-      slug
-      rank
-      animated
-      titles {
-        lang
-        content
-      }
-    }
-  }
-}
-"""
-
-GQL_OPEN_CARD_PACK = """
-mutation openCardPack($input: OpenCardPackInput!) {
-  openCardPack(input: $input) {
-    opens {
-      id
-      completedAt
-      pack {
-        id
-        subscriptionPick
-        pickLimit
-      }
-      resultCards {
-        id
-        slug
-        rank
-        animated
-        titles {
-          lang
-          content
-        }
-      }
-    }
-  }
-}
-"""
-
-GQL_BULK_CHOOSE_PACK_OPEN = """
-mutation bulkChooseCardPackOpen($input: BulkChooseCardPackOpenInput!) {
-  bulkChooseCardPackOpen(input: $input) {
-    success
-  }
-}
-"""
-
-GQL_FETCH_FORGE_SLOTS = """
-query fetchForgeCardsSlots($mode: ForgeCardMode!) {
-  forgeCardsSlots(mode: $mode) {
-    baseSlots
-    subscriptionSlots
-    used
-    available
-    resetAt
-  }
-}
-"""
-
-GQL_FORGE_CARDS = """
-mutation forgeCards($input: ForgeCardInput!) {
-  forgeCards(input: $input) {
-    userId
-    newCards {
-      quantity
-      modifier
-      shard
-      card {
-        id
-        slug
-        rank
-        titles {
-          lang
-          content
-        }
-      }
-    }
-    addUserCards {
-      userId
-      cardId
-      quantity
-      modifier
-      shard
-      locked
-      card {
-        id
-        slug
-        rank
-        titles {
-          lang
-          content
-        }
-      }
-    }
-    removeUserCards {
-      cardId
-      modifier
-      quantity
-      shard
-    }
-  }
-}
-"""
-
-GQL_FETCH_USER_CARDS_FULL = """
+GQL_FETCH_USER_CARDS = """
 query fetchUserCards($userId: ID!, $after: String, $modifier: UserCardModifierFilter) {
   userCards(
-    first: 20
+    first: 40
     after: $after
     userId: $userId
     modifier: $modifier
@@ -1600,7 +516,6 @@ query fetchUserCards($userId: ID!, $after: String, $modifier: UserCardModifierFi
   ) {
     edges {
       node {
-        userId
         cardId
         quantity
         modifier
@@ -1610,5059 +525,799 @@ query fetchUserCards($userId: ID!, $after: String, $modifier: UserCardModifierFi
           id
           slug
           rank
-          animated
-          explicit
-          titles {
-            lang
-            content
-          }
-          image {
-            original {
-              url
-            }
-          }
+          titles { lang content }
+          image { original { url } }
         }
       }
     }
-    pageInfo {
-      hasNextPage
-      endCursor
-    }
-  }
-}
-"""
-
-GQL_FETCH_CARD_TRADES = """
-query fetchCardTrades($userId: ID!, $status: CardTradeStatus, $after: String) {
-  cardTrades(
-    first: 20
-    after: $after
-    userId: $userId
-    status: $status
-    orderBy: { field: CREATED_AT, direction: DESC }
-  ) {
-    edges {
-      node {
-        id
-        status
-        createdAt
-        viewerCanAccept
-        viewerCanDecline
-        source {
-          id
-          slug
-          name
-        }
-        destination {
-          id
-          slug
-          name
-        }
-        offer {
-          cardId
-          modifier
-          quantity
-          shard
-          card {
-            id
-            slug
-            rank
-            titles {
-              lang
-              content
-            }
-          }
-        }
-        request {
-          cardId
-          modifier
-          quantity
-          shard
-          card {
-            id
-            slug
-            rank
-          }
-        }
-      }
-    }
-    pageInfo {
-      hasNextPage
-      endCursor
-    }
-  }
-}
-"""
-
-GQL_SUGGEST_CARD_TRADE = """
-mutation suggestCardTrade($input: SuggestCardTradeInput!) {
-  suggestCardTrade(input: $input) {
-    success
-  }
-}
-"""
-
-GQL_ACCEPT_CARD_TRADE = """
-mutation acceptCardTrade($input: AcceptCardTradeInput!) {
-  acceptCardTrade(input: $input) {
-    success
+    pageInfo { hasNextPage endCursor }
   }
 }
 """
 
 
-def _strip_bad_gql_field(query_str: str, bad_field: str) -> str:
-    pattern_block = re.compile(r"\b" + re.escape(bad_field) + r"\s*\{")
-    m = pattern_block.search(query_str)
-    if m:
-        start_idx = m.start()
-        brace_open = query_str.find("{", m.start())
-        depth = 0
-        end_idx = brace_open
-        for i in range(brace_open, len(query_str)):
-            if query_str[i] == "{":
-                depth += 1
-            elif query_str[i] == "}":
-                depth -= 1
-                if depth == 0:
-                    end_idx = i + 1
-                    break
-        return query_str[:start_idx] + query_str[end_idx:]
-    return re.sub(r"\b" + re.escape(bad_field) + r"\b", "", query_str)
-
-
-def _direct_python_gql_fallback(payload: dict, token: str = "") -> dict:
-    """
-    Прямой серверный GraphQL-запрос из Python (через активный туннель Opera VPN или напрямую),
-    полностью обходящий любые браузерные ограничения CORS / ServiceWorker / редиректы!
-    """
+async def gql_public_call(page: Page, query: str, variables: dict, op_name: str) -> dict:
+    payload = {"query": query, "variables": variables, "operationName": op_name}
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "App-Version": APP_VERSION,
+        "App-Version": APP_HEADER_VERSION,
         "Origin": "https://senkuro.com",
         "Referer": "https://senkuro.com/",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
     }
-    if token:
-        headers["Authorization"] = token if token.startswith("Bearer ") else f"Bearer {token}"
-
-    body_bytes = json.dumps(payload).encode("utf-8")
-
-    # Сначала пробуем через любой открытый локальный порт Opera VPN (25341..25348), затем напрямую
-    candidate_ports = [25340 + i for i in range(1, 13) if is_local_port_open(25340 + i)]
-    openers = []
-    for p_num in candidate_ports[:2]:
-        ph = urllib.request.ProxyHandler({"http": f"http://127.0.0.1:{p_num}", "https": f"http://127.0.0.1:{p_num}"})
-        openers.append((f"proxy:{p_num}", urllib.request.build_opener(ph)))
-    openers.append(("direct", urllib.request.build_opener()))
-
-    last_err = "Failed to fetch"
-    for label_op, opener in openers:
+    for attempt in range(3):
         try:
-            req = urllib.request.Request(GRAPHQL_API_URL, data=body_bytes, headers=headers, method="POST")
-            with opener.open(req, timeout=15) as resp:
-                raw_txt = resp.read().decode("utf-8", errors="ignore")
-                data_obj = json.loads(raw_txt)
-                if isinstance(data_obj, dict) and ("data" in data_obj or "errors" in data_obj):
-                    return data_obj
-        except Exception as e:
-            last_err = f"{label_op}: {e}"
-            continue
-    return {"errors": [{"message": f"PythonFallbackError: {last_err}"}]}
-
-
-NON_IDEMPOTENT_OPS = {"suggestCardTrade", "openCardPack", "forgeCards", "redeemRedemption"}
-
-
-async def gql_call(page: Page, query: str, variables: Optional[dict] = None, operation_name: Optional[str] = None) -> dict:
-    cur_query = query
-    is_mutation_once = str(operation_name or "") in NON_IDEMPOTENT_OPS
-    max_attempts = 1 if is_mutation_once else 4
-    for attempt in range(max_attempts):
-        payload: dict[str, Any] = {"query": cur_query, "variables": variables or {}}
-        if operation_name:
-            payload["operationName"] = operation_name
-
-        # Уровень 1: Браузерный fetch без заголовка Cache-Control (чтобы не ломать CORS preflight OPTIONS на api.senkuro.com)
-        eval_out = {"res": {}, "token": ""}
-        try:
-            eval_out = await page.evaluate(
-                """async ({ apiUrl, appVersion, bodyPayload }) => {
-                    function getCookie(name) {
-                        const m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/([.$?*|{}()\[\]\\/+^])/g, '\\$1') + '=([^;]*)'));
-                        return m ? decodeURIComponent(m[1]) : '';
-                    }
-                    let token = getCookie('access_token') || getCookie('token') || '';
-                    if (!token) {
-                        try {
-                            for (let i = 0; i < localStorage.length; i++) {
-                                const k = localStorage.key(i) || '';
-                                const v = localStorage.getItem(k) || '';
-                                if (k.toLowerCase().includes('token') && v.length > 20 && !v.startsWith('{')) {
-                                    token = v.replace(/^"|"$/g, '');
-                                    break;
-                                }
-                            }
-                        } catch (e) {}
-                    }
-                    const headers = {
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json',
-                        'App-Version': appVersion
-                    };
-                    if (token) {
-                        headers['Authorization'] = token.startsWith('Bearer ') ? token : ('Bearer ' + token);
-                    }
-                    try {
-                        const resp = await fetch(apiUrl, {
-                            method: 'POST',
-                            headers: headers,
-                            credentials: 'include',
-                            cache: 'no-store',
-                            body: JSON.stringify(bodyPayload)
-                        });
-                        const json = await resp.json();
-                        return { res: json, token: token };
-                    } catch (err) {
-                        return { res: { errors: [{ message: String(err) }] }, token: token };
-                    }
-                }""",
-                {"apiUrl": GRAPHQL_API_URL, "appVersion": APP_VERSION, "bodyPayload": payload},
+            resp = await page.context.request.post(
+                GRAPHQL_API_URL,
+                headers=headers,
+                data=json.dumps(payload),
+                timeout=15000,
             )
-        except Exception as e_eval:
-            eval_out = {"res": {"errors": [{"message": str(e_eval)}]}, "token": ""}
-
-        res = (eval_out or {}).get("res") or {}
-        extracted_token = str((eval_out or {}).get("token") or "")
-        errs = res.get("errors") or []
-        err_msgs = " | ".join(str(e.get("message") or "") for e in errs if isinstance(e, dict))
-
-        # Уровень 2: Если браузерный fetch выдал Failed to fetch / NetworkError (например из-за CORS или редиректа),
-        # мгновенно отправляем запрос через нативный сетевой стек Playwright (page.context.request.post), который НЕ подвержен CORS!
-        if errs and (not is_mutation_once or any(w in err_msgs for w in ("Target closed", "Execution context"))) and any(w in err_msgs for w in ("Failed to fetch", "NetworkError", "Load failed", "Target closed", "Execution context")):
-            try:
-                pw_headers = {
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                    "App-Version": APP_VERSION,
-                    "Origin": "https://senkuro.com",
-                    "Referer": "https://senkuro.com/",
-                }
-                if extracted_token:
-                    pw_headers["Authorization"] = extracted_token if extracted_token.startswith("Bearer ") else f"Bearer {extracted_token}"
-                pw_resp = await page.context.request.post(
-                    GRAPHQL_API_URL,
-                    headers=pw_headers,
-                    data=json.dumps(payload),
-                    timeout=15000,
-                )
-                if pw_resp.ok:
-                    pw_json = await pw_resp.json()
-                    if isinstance(pw_json, dict) and not pw_json.get("errors"):
-                        log_debug(f"[GQL OK via ContextAPI] op={operation_name} -> keys={list((pw_json.get('data') or {}).keys())}")
-                        return pw_json
-                    elif isinstance(pw_json, dict):
-                        res = pw_json
-                        errs = res.get("errors") or []
-                        err_msgs = " | ".join(str(e.get("message") or "") for e in errs if isinstance(e, dict))
-            except Exception as pw_e:
-                log_debug(f"[GQL ContextAPI WARN] op={operation_name}: {pw_e}")
-
-        # Уровень 3: Если и ContextAPI не достучался — прямой запрос из Python через активный туннель Opera VPN!
-        if errs and any(w in err_msgs for w in ("Failed to fetch", "NetworkError", "Load failed", "Target closed", "Execution context")):
-            py_res = await asyncio.to_thread(_direct_python_gql_fallback, payload, extracted_token)
-            if isinstance(py_res, dict) and not py_res.get("errors"):
-                log_debug(f"[GQL OK via PythonProxy] op={operation_name} -> keys={list((py_res.get('data') or {}).keys())}")
-                return py_res
-
-        if not errs:
-            log_debug(f"[GQL OK] op={operation_name} -> keys={list((res.get('data') or {}).keys())}")
-            return res
-
-        log_debug(f"[GQL WARN #{attempt+1}] op={operation_name} errors={err_msgs[:300]}")
-        m_bad = re.search(r'(?:Cannot query field|Unknown field) "([A-Za-z0-9_]+)"', err_msgs)
-        if m_bad:
-            bad_f = m_bad.group(1)
-            new_q = _strip_bad_gql_field(cur_query, bad_f)
-            if new_q != cur_query:
-                log_debug(f"[GQL AUTO-HEAL] Удалено неподдерживаемое поле '{bad_f}' из {operation_name}, повтор...")
-                cur_query = new_q
-                continue
-        if any(w in err_msgs for w in ("SyntaxError", "upstream", "Failed to fetch", "NetworkError", "502", "503", "504")) and attempt < 2:
-            await asyncio.sleep(1.5)
-            continue
-        break
-    return res
-
-
-async def launch_senkuro_browser(playwright_obj):
-    has_display = bool(os.environ.get("DISPLAY"))
-    launch_args = [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--test-type",
-        "--disable-dev-shm-usage",
-        "--disable-blink-features=AutomationControlled",
-        "--password-store=basic",
-        "--disable-save-password-bubble",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-background-timer-throttling",
-        "--disable-backgrounding-occluded-windows",
-        "--disable-renderer-backgrounding",
-        "--window-size=1280,900",
-    ]
-    # На GitHub Actions (ubuntu-latest) предустановлен настоящий Google Chrome (/usr/bin/google-chrome-stable).
-    # Запускаем именно его (как на сервере Kaggle) и убираем --enable-automation, чтобы капча sso.senkuro.org проходила с 1-го раза!
-    chrome_bin = None
-    for cand in (
-        "/usr/bin/google-chrome-stable",
-        "/usr/bin/google-chrome",
-        shutil.which("google-chrome-stable"),
-        shutil.which("google-chrome"),
-    ):
-        if cand and os.path.exists(cand):
-            chrome_bin = cand
-            break
-    if chrome_bin:
-        log_debug(f"[BROWSER] Запуск настоящего Google Chrome: {chrome_bin} (headless={not has_display})")
-        try:
-            b_inst = await playwright_obj.chromium.launch(
-                executable_path=chrome_bin,
-                headless=not has_display,
-                ignore_default_args=["--enable-automation"],
-                args=launch_args,
-            )
-            log_debug("[BROWSER OK] Google Chrome успешно запущен и готов к работе")
-            return b_inst
+            if resp.ok:
+                data = await resp.json()
+                if isinstance(data, dict) and not data.get("errors"):
+                    return data
         except Exception as e:
-            log_debug(f"[BROWSER WARN] Не удалось запустить {chrome_bin}: {e}, резервный Chromium")
-    log_debug(f"[BROWSER] Запуск Chromium без флага автоматизации (headless={not has_display})")
-    return await playwright_obj.chromium.launch(
-        headless=not has_display,
-        ignore_default_args=["--enable-automation"],
-        args=launch_args,
-    )
-
-
-async def get_fresh_points_balance(page: Page, slug: str) -> int:
-    # 1. Пробуем через GQL_FETCH_VIEWER (с поддержкой как viewer.user.points, так и viewer.points)
-    v_res = await gql_call(page, GQL_FETCH_VIEWER, {}, "fetchViewer")
-    v_data = (v_res.get("data") or {}).get("viewer") or {}
-    v_user = v_data.get("user") if isinstance(v_data.get("user"), dict) else v_data
-    if isinstance(v_user, dict) and v_user.get("points") is not None:
-        pts = int(v_user["points"])
-        log_debug(f"[BALANCE] {slug}: получено через fetchViewer = {pts}")
-        return pts
-
-    # 2. Пробуем через fetchUserBySlug
-    u_res = await gql_call(page, GQL_FETCH_USER_BY_SLUG, {"slug": slug}, "fetchUserBySlug")
-    u_obj = (u_res.get("data") or {}).get("user") or {}
-    if isinstance(u_obj, dict) and u_obj.get("points") is not None:
-        pts = int(u_obj["points"])
-        log_debug(f"[BALANCE] {slug}: получено через fetchUserBySlug = {pts}")
-        return pts
-
-    # 3. Открываем страницу пака «Для хардкорщиков», перехватываем реальные ответы GraphQL и проверяем DOM
-    intercepted_pts: list[int] = []
-
-    async def on_pack_resp(resp):
-        if "graphql" in resp.url and resp.request.method == "POST":
-            try:
-                j = await resp.json()
-                raw_s = json.dumps(j)
-                for m_p in re.finditer(r'"points"\s*:\s*(\d+)', raw_s):
-                    val = int(m_p.group(1))
-                    if val != 480:
-                        intercepted_pts.append(val)
-            except Exception:
-                pass
-
-    page.on("response", on_pack_resp)
-    try:
-        if "/packs/for-hardcore-gamers" not in page.url:
-            await page.goto("https://senkuro.com/packs/for-hardcore-gamers", wait_until="domcontentloaded", timeout=35000)
-        for _ in range(12):
-            await page.wait_for_timeout(600)
-            body_t = await page.evaluate("() => document.body ? (document.body.innerText || '') : ''")
-            if "Приготовьтесь к приключениям" not in body_t:
-                break
-        await page.wait_for_timeout(1500)
-        if intercepted_pts:
-            log_debug(f"[BALANCE] {slug}: перехвачено из трафика паков = {intercepted_pts[-1]}")
-            return intercepted_pts[-1]
-
-        dom_pts = await page.evaluate(
-            """() => {
-                // Ищем баланс монет в шапке или на странице пака
-                const candidates = Array.from(document.querySelectorAll('[class*="point"], [class*="coin"], [class*="balance"], [class*="currency"], header span, header div'));
-                for (const el of candidates) {
-                    if (el.children.length === 0) {
-                        const txt = (el.innerText || el.textContent || '').trim().replace(/\s+/g, '');
-                        if (/^\d{1,7}$/.test(txt) && txt !== '480') {
-                            return parseInt(txt, 10);
-                        }
-                    }
-                }
-                return null;
-            }"""
-        )
-        if dom_pts is not None:
-            log_debug(f"[BALANCE] {slug}: считано из DOM = {dom_pts}")
-            return int(dom_pts)
-    except Exception as e:
-        log_debug(f"[BALANCE ERROR] {slug}: {e}")
-    finally:
-        try:
-            page.remove_listener("response", on_pack_resp)
-        except Exception:
-            pass
-
-    return 0
-
-
-def get_session_file(acc_id: str) -> Path:
-    return SESSIONS_DIR / f"session_{acc_id}.json"
-
-
-async def create_account_context(playwright_browser, acc: dict, proxy_url: Optional[str]) -> BrowserContext:
-    sess_file = get_session_file(acc["id"])
-    # ВАЖНО: Никаких add_init_script с Object.defineProperty(navigator, "webdriver")!
-    # Флаг --disable-blink-features=AutomationControlled уже делает navigator.webdriver === false нативно в C++ движке Chrome.
-    ctx_kwargs: dict[str, Any] = {
-        "viewport": {"width": 1280, "height": 900},
-        "locale": "ru-RU",
-    }
-    if proxy_url:
-        ctx_kwargs["proxy"] = {"server": proxy_url}
-    if sess_file.exists():
-        try:
-            ctx_kwargs["storage_state"] = str(sess_file)
-            log_debug(f"[SESSION] Загружена сохраненная сессия для {acc['id']}")
-        except Exception as e:
-            log_debug(f"[SESSION WARN] {acc['id']}: {e}")
-    ctx = await playwright_browser.new_context(**ctx_kwargs)
-    return ctx
-
-
-async def check_is_authenticated_on_senkuro(page: Page, acc_slug: str, intercepted_user: dict) -> Optional[dict]:
-    if intercepted_user.get("id"):
-        return intercepted_user
-
-    try:
-        dom_state = await page.evaluate(
-            """(slug) => {
-                const bodyTxt = document.body ? (document.body.innerText || '') : '';
-                if (!document.body || bodyTxt.includes('Приготовьтесь к приключениям')) {
-                    return { loading: true };
-                }
-                const loginBtn = Array.from(document.querySelectorAll('a, button')).find(el => {
-                    const t = (el.innerText || el.textContent || '').trim();
-                    return t === 'Войти' || t === 'Вход';
-                });
-                const hasTokenCookie = document.cookie.includes('access_token') || document.cookie.includes('refresh_token');
-                const profileLink = document.querySelector(`header a[href*="/users/${slug}"], nav a[href*="/users/${slug}"], a[href="/users/${slug}"]`);
-                return {
-                    loading: false,
-                    hasLoginBtn: !!loginBtn,
-                    hasTokenCookie,
-                    hasProfileLink: !!profileLink,
-                    url: window.location.href,
-                    title: document.title
-                };
-            }""",
-            acc_slug,
-        )
-    except Exception as e:
-        log_debug(f"[DOM AUTH CHECK WARN] {acc_slug}: {e}")
-        dom_state = {"loading": True}
-
-    if dom_state.get("loading"):
-        return None
-
-    v_res = await gql_call(page, GQL_FETCH_VIEWER, {}, "fetchViewer")
-    v_data = (v_res.get("data") or {}).get("viewer") or {}
-    v_user = v_data.get("user") if isinstance(v_data.get("user"), dict) else v_data
-    if isinstance(v_user, dict) and v_user.get("id"):
-        save_known_user_id(acc_slug, str(v_user["id"]))
-        return v_user
-
-    if not dom_state.get("hasLoginBtn") and "senkuro.com" in str(dom_state.get("url", "")) and "/auth/" not in str(dom_state.get("url", "")):
-        u_res = await gql_call(page, GQL_FETCH_USER_BY_SLUG, {"slug": acc_slug}, "fetchUserBySlug")
-        u_obj = (u_res.get("data") or {}).get("user") or {}
-        if isinstance(u_obj, dict) and u_obj.get("id"):
-            save_known_user_id(acc_slug, str(u_obj["id"]))
-            log_debug(f"[AUTH DOM+SLUG OK] {acc_slug}: вход подтвержден по отсутствию кнопки 'Войти' (id={u_obj['id']})")
-            return u_obj
-        if dom_state.get("hasTokenCookie") or dom_state.get("hasProfileLink"):
-            real_uid = KNOWN_USER_IDS.get(acc_slug, acc_slug)
-            log_debug(f"[AUTH DOM OK] {acc_slug}: вход подтвержден по куке/профилю в шапке (id={real_uid})")
-            return {"id": real_uid, "slug": acc_slug, "points": 0}
-
-    return None
-
-
-async def ensure_real_user_id(page: Page, slug: str, candidate_uid: str = "") -> str:
-    """
-    Гарантирует получение настоящего GraphQL ID (VVNFU...) для любого из 8 аккаунтов
-    (включая новые аккаунты lanar, canva, raya, tnt) через fetchUserBySlug / fetchViewer.
-    """
-    if isinstance(candidate_uid, str) and candidate_uid.startswith("VVNFU"):
-        save_known_user_id(slug, candidate_uid)
-        return candidate_uid
-    cached = KNOWN_USER_IDS.get(slug, "")
-    if isinstance(cached, str) and cached.startswith("VVNFU"):
-        return cached
-    for _ in range(3):
-        u_res = await gql_call(page, GQL_FETCH_USER_BY_SLUG, {"slug": slug}, "fetchUserBySlug")
-        u_obj = (u_res.get("data") or {}).get("user") or {}
-        if isinstance(u_obj, dict) and str(u_obj.get("id") or "").startswith("VVNFU"):
-            uid_str = str(u_obj["id"])
-            save_known_user_id(slug, uid_str)
-            return uid_str
-        v_res = await gql_call(page, GQL_FETCH_VIEWER, {}, "fetchViewer")
-        v_data = (v_res.get("data") or {}).get("viewer") or {}
-        v_user = v_data.get("user") if isinstance(v_data.get("user"), dict) else v_data
-        if isinstance(v_user, dict) and str(v_user.get("id") or "").startswith("VVNFU"):
-            uid_str = str(v_user["id"])
-            save_known_user_id(slug, uid_str)
-            return uid_str
-        await asyncio.sleep(1.0)
-    return candidate_uid or slug
-
-
-def _cdp_ws_call_sync(ws_url: str, method: str, params: Optional[dict] = None, timeout_sec: float = 4.0) -> dict:
-    """
-    Выполняет одиночный CDP-запрос по WebSocket (используется ТОЛЬКО после завершения входа
-    для чтения кук или финального скриншота, чтобы во время прохождения Turnstile на sso.senkuro.org
-    к браузеру НЕ был подключен ни один отладчик CDP!).
-    """
-    import base64
-    import struct
-    from urllib.parse import urlparse
-
-    u = urlparse(ws_url)
-    host = u.hostname or "127.0.0.1"
-    port = u.port or 80
-    path = u.path
-    try:
-        with socket.create_connection((host, port), timeout=timeout_sec) as s:
-            s.settimeout(timeout_sec)
-            key = base64.b64encode(os.urandom(16)).decode("ascii")
-            req = (
-                f"GET {path} HTTP/1.1\r\n"
-                f"Host: {host}:{port}\r\n"
-                f"Upgrade: websocket\r\n"
-                f"Connection: Upgrade\r\n"
-                f"Sec-WebSocket-Key: {key}\r\n"
-                f"Sec-WebSocket-Version: 13\r\n\r\n"
-            )
-            s.sendall(req.encode("ascii"))
-            resp = b""
-            while b"\r\n\r\n" not in resp:
-                chunk = s.recv(4096)
-                if not chunk:
-                    break
-                resp += chunk
-            if b"101" not in resp.split(b"\r\n", 1)[0]:
-                return {}
-
-            cmd_id = 777
-            payload = json.dumps({"id": cmd_id, "method": method, "params": params or {}}, ensure_ascii=False).encode("utf-8")
-            length = len(payload)
-            mask_key = os.urandom(4)
-            header = bytearray([0x81])
-            if length < 126:
-                header.append(0x80 | length)
-            elif length < 65536:
-                header.append(0x80 | 126)
-                header.extend(struct.pack("!H", length))
-            else:
-                header.append(0x80 | 127)
-                header.extend(struct.pack("!Q", length))
-            header.extend(mask_key)
-            masked = bytearray(payload[i] ^ mask_key[i % 4] for i in range(length))
-            s.sendall(header + masked)
-
-            buf = bytearray(resp.split(b"\r\n\r\n", 1)[1])
-            deadline = time.time() + timeout_sec
-            while time.time() < deadline:
-                while len(buf) < 2:
-                    chunk = s.recv(65536)
-                    if not chunk:
-                        return {}
-                    buf.extend(chunk)
-                b1 = buf[1]
-                plen = b1 & 0x7F
-                hlen = 2
-                if plen == 126:
-                    hlen = 4
-                    while len(buf) < hlen:
-                        buf.extend(s.recv(65536))
-                    plen = struct.unpack("!H", buf[2:4])[0]
-                elif plen == 127:
-                    hlen = 10
-                    while len(buf) < hlen:
-                        buf.extend(s.recv(65536))
-                    plen = struct.unpack("!Q", buf[2:10])[0]
-                if b1 & 0x80:
-                    hlen += 4
-                while len(buf) < hlen + plen:
-                    chunk = s.recv(65536)
-                    if not chunk:
-                        break
-                    buf.extend(chunk)
-                frame_data = bytes(buf[hlen : hlen + plen])
-                del buf[: hlen + plen]
-                try:
-                    msg_obj = json.loads(frame_data.decode("utf-8", errors="ignore"))
-                    if msg_obj.get("id") == cmd_id:
-                        return msg_obj.get("result") or {}
-                except Exception:
-                    pass
-    except Exception as e:
-        log_debug(f"[CDP WS WARN] {method}: {e}")
+            if attempt == 2:
+                log_debug(f"[GQL WARN] {op_name}: {e}")
+        await asyncio.sleep(1.2)
     return {}
 
 
-def _run_xdotool(args_list: list[str]) -> None:
-    if not shutil.which("xdotool"):
-        return
-    try:
-        subprocess.run(["xdotool"] + args_list, timeout=3.0, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
-
-
-def login_via_native_chrome_sync(acc: dict, proxy_url: Optional[str]) -> tuple[Optional[str], list[dict], Optional[bytes], str]:
-    """
-    Точная копия рабочего движка входа из Senkuro_Kaggle_Server_v6_5_Ready.ipynb (который успешно входит во все 4/12 аккаунта):
-    1) Запускает отдельный изолированный процесс /usr/bin/google-chrome-stable (subprocess.Popen) со своей папкой профиля
-       (.sessions/chrome_profile_<id>) и своим индивидуальным VPN-прокси (127.0.0.1:2534X).
-    2) Поскольку Google Chrome 156 игнорирует флаг --load-extension, скрипт инжектируется напрямую в главную вкладку
-       через одиночный CDP-вызов Runtime.evaluate (БЕЗ включения Runtime.enable и БЕЗ подключения Playwright к фреймам Turnstile!).
-    3) Дополнительно при необходимости нажимает на поля, чекбокс Turnstile и кнопку «Войти» системной мышью X11 (xdotool).
-    """
-    chrome_bin = None
-    for cand in (
-        "/usr/bin/google-chrome-stable",
-        "/usr/bin/google-chrome",
-        shutil.which("google-chrome-stable"),
-        shutil.which("google-chrome"),
-        "/usr/bin/chromium",
-        "/usr/bin/chromium-browser",
-        shutil.which("chromium"),
-    ):
-        if cand and os.path.exists(cand):
-            chrome_bin = cand
+async def fetch_public_user_cards(page: Page, user_id: str, modifier_val: int = 0, max_pages: int = 12) -> list[dict]:
+    nodes: list[dict] = []
+    after: Optional[str] = None
+    for _ in range(max_pages):
+        vars_d: dict[str, Any] = {"userId": user_id, "modifier": {"include": [modifier_val]}}
+        if after:
+            vars_d["after"] = after
+        res = await gql_public_call(page, GQL_FETCH_USER_CARDS, vars_d, "fetchUserCards")
+        uc = (res.get("data") or {}).get("userCards") or {}
+        edges = uc.get("edges") or []
+        for e in edges:
+            nd = e.get("node")
+            if nd:
+                nodes.append(nd)
+        pi = uc.get("pageInfo") or {}
+        if not pi.get("hasNextPage") or not pi.get("endCursor"):
             break
-    if not chrome_bin:
-        return None, [], None, "Chrome binary not found"
-
-    aid = acc["id"]
-    cdp_port = 26410 + int(acc.get("idx", 1))
-    prof_dir = SESSIONS_DIR / f"chrome_profile_{aid}"
-    cache_dir = Path(tempfile.gettempdir()) / "SenkuroCache" / aid
-    prof_dir.mkdir(parents=True, exist_ok=True)
-    cache_dir.mkdir(parents=True, exist_ok=True)
-
-    for lock_name in ("SingletonLock", "SingletonCookie", "SingletonSocket", "lockfile"):
-        lp = prof_dir / lock_name
-        if lp.exists() or lp.is_symlink():
-            try:
-                lp.unlink()
-            except Exception:
-                pass
-
-    # Скрипт авто-входа v6.5 (из рабочего ноутбука Kaggle) + диагностика координат для X11 (xdotool)
-    sso_eval_js = f"""
-    (function() {{
-        const LOGIN_STR = {json.dumps(acc["login"])};
-        const PASS_STR = {json.dumps(acc["password"])};
-        const MY_UNAME = {json.dumps(acc["id"])};
-        const TARGET_BM_URL = 'https://senkuro.com/users/' + MY_UNAME + '/bookmarks';
-
-        function getCookie(name) {{
-            const m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
-            return m ? decodeURIComponent(m[1]) : '';
-        }}
-
-        function setNativeVal(el, val) {{
-            if (!el) return;
-            el.focus();
-            const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
-            const desc = Object.getOwnPropertyDescriptor(proto, 'value');
-            if (desc && desc.set) desc.set.call(el, val);
-            else el.value = val;
-            el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-            el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-        }}
-
-        function toX11(r, ox, oy) {{
-            const cTop = Math.max(0, (window.outerHeight || 900) - (window.innerHeight || 810));
-            const cLeft = Math.max(0, Math.round(((window.outerWidth || 1280) - (window.innerWidth || 1280)) / 2));
-            return {{
-                x: Math.round((window.screenX || 0) + cLeft + r.left + ox),
-                y: Math.round((window.screenY || 0) + cTop + r.top + oy),
-                w: Math.round(r.width),
-                h: Math.round(r.height)
-            }};
-        }}
-
-        const host = window.location.hostname;
-        const path = window.location.pathname;
-        const bodyTxt = document.body ? (document.body.innerText || '') : '';
-
-        if (!document.body || bodyTxt.includes('Приготовьтесь к приключениям')) {{
-            return JSON.stringify({{ stage: 'SPLASH_LOADING', url: location.href }});
-        }}
-
-        // 1. Если мы на основном домене senkuro.com
-        if (host.includes('senkuro.com')) {{
-            if (path.includes('/auth/')) {{
-                let authEnterTs = parseInt(sessionStorage.getItem('senkuro_auth_enter_ts') || '0', 10);
-                if (!authEnterTs) {{
-                    authEnterTs = Date.now();
-                    sessionStorage.setItem('senkuro_auth_enter_ts', String(authEnterTs));
-                }}
-                if (bodyTxt.includes('Отсутствуют важные данные') || (Date.now() - authEnterTs > 12000)) {{
-                    sessionStorage.removeItem('senkuro_auth_enter_ts');
-                    sessionStorage.removeItem('senkuro_login_click_ts');
-                    window.location.href = 'https://senkuro.com/';
-                }}
-                return JSON.stringify({{ stage: 'OAUTH_CALLBACK', url: location.href, txt: bodyTxt.slice(0, 120) }});
-            }}
-            sessionStorage.removeItem('senkuro_auth_enter_ts');
-
-            const tok = getCookie('access_token');
-            const loginBtn = Array.from(document.querySelectorAll('a, button')).find(el => {{
-                const t = (el.innerText || el.textContent || '').trim();
-                return t === 'Войти' || t === 'Вход';
-            }});
-
-            if (!loginBtn && tok && tok.length > 15) {{
-                return JSON.stringify({{ stage: 'TOKEN_OK', token: tok, url: location.href }});
-            }}
-
-            if (loginBtn) {{
-                const r = loginBtn.getBoundingClientRect();
-                const bBox = toX11(r, r.width / 2, r.height / 2);
-                const lastClickTs = parseInt(sessionStorage.getItem('senkuro_login_click_ts') || '0', 10);
-                if (Date.now() - lastClickTs > 11000) {{
-                    sessionStorage.setItem('senkuro_login_click_ts', String(Date.now()));
-                    loginBtn.click();
-                }}
-                return JSON.stringify({{ stage: 'CLICK_LOGIN_BTN', url: location.href, btnBox: bBox }});
-            }}
-
-            if (tok && tok.length > 15) {{
-                return JSON.stringify({{ stage: 'TOKEN_OK', token: tok, url: location.href }});
-            }}
-            return JSON.stringify({{ stage: 'SENKURO_WAIT', url: location.href, txt: bodyTxt.slice(0, 120) }});
-        }}
-
-        // 2. Если мы на домене авторизации sso.senkuro.org
-        if (host.includes('sso.senkuro.')) {{
-            // Перехватываем закрытый Shadow DOM Turnstile на случай интерактивного чекбокса
-            if (!window.__skShadowHooked) {{
-                window.__skShadowHooked = true;
-                window.__tsHosts = window.__tsHosts || [];
-                try {{
-                    const origAttach = Element.prototype.attachShadow;
-                    Element.prototype.attachShadow = function(init) {{
-                        const sr = origAttach.call(this, init);
-                        try {{ window.__tsHosts.push({{ host: this, shadow: sr }}); }} catch (e) {{}}
-                        return sr;
-                    }};
-                }} catch (e) {{}}
-            }}
-
-            if (path.includes('/account') || bodyTxt.includes('Популярные действия') || bodyTxt.includes('Выйти')) {{
-                window.location.href = TARGET_BM_URL;
-                return JSON.stringify({{ stage: 'SSO_ACCOUNT_REDIRECT', url: location.href }});
-            }}
-
-            if (path.includes('/oauth/')) {{
-                const allowBtn = Array.from(document.querySelectorAll('button, a')).find(el => {{
-                    const t = (el.innerText || '').trim().toLowerCase();
-                    return t.includes('разрешить') || t.includes('продолжить') || t.includes('авториз') || t.includes('allow');
-                }});
-                if (allowBtn) allowBtn.click();
-                return JSON.stringify({{ stage: 'SSO_OAUTH_ALLOW', url: location.href }});
-            }}
-
-            const passInput = document.querySelector('input[type="password"]');
-            if (passInput && passInput.offsetParent !== null) {{
-                const allInputs = Array.from(document.querySelectorAll('input:not([type="hidden"]):not([type="password"]):not([type="checkbox"])')).filter(i => i.offsetParent !== null);
-                const userInput = allInputs[0];
-
-                if (userInput && userInput.value !== LOGIN_STR) {{
-                    setNativeVal(userInput, LOGIN_STR);
-                }}
-                if (passInput.value !== PASS_STR) {{
-                    setNativeVal(passInput, PASS_STR);
-                }}
-
-                const submitBtn = Array.from(document.querySelectorAll('button')).find(b => {{
-                    const t = (b.innerText || b.textContent || '').trim().toLowerCase();
-                    return t === 'войти' || t === 'продолжить' || t === 'вход' || t === 'login' || t.includes('войти');
-                }}) || document.querySelector('button[type="submit"]');
-
-                let tsToken = '';
-                try {{
-                    if (window.turnstile && typeof window.turnstile.getResponse === 'function') {{
-                        tsToken = window.turnstile.getResponse() || '';
-                    }}
-                }} catch (e) {{}}
-
-                const pr = passInput.getBoundingClientRect();
-                const br = submitBtn ? submitBtn.getBoundingClientRect() : null;
-                let tsBox = null;
-                const cand = document.querySelector('.cf-turnstile, [id*="turnstile"], [class*="turnstile"], [class*="captcha"]');
-                if (cand && cand.getBoundingClientRect().height > 20) {{
-                    const cr = cand.getBoundingClientRect();
-                    tsBox = toX11(cr, 28, cr.height / 2);
-                }} else if (br && (br.top - pr.bottom) >= 45) {{
-                    tsBox = toX11({{ left: pr.left, top: pr.bottom + 8, width: pr.width, height: br.top - pr.bottom - 16 }}, 28, (br.top - pr.bottom - 16) / 2);
-                }}
-
-                const lastSub = parseInt(sessionStorage.getItem('senkuro_sso_submit_ts') || '0', 10);
-                let clickedSubmitNow = false;
-                if (Date.now() - lastSub > 8500) {{
-                    sessionStorage.setItem('senkuro_sso_submit_ts', String(Date.now()));
-                    clickedSubmitNow = true;
-                    setTimeout(() => {{
-                        if (userInput && userInput.value !== LOGIN_STR) setNativeVal(userInput, LOGIN_STR);
-                        if (passInput && passInput.value !== PASS_STR) setNativeVal(passInput, PASS_STR);
-                        if (submitBtn) submitBtn.click();
-                    }}, 750);
-                }}
-
-                return JSON.stringify({{
-                    stage: 'SSO_FORM',
-                    url: location.href,
-                    uOk: !!(userInput && userInput.value === LOGIN_STR),
-                    pOk: !!(passInput && passInput.value === PASS_STR),
-                    uBox: userInput ? toX11(userInput.getBoundingClientRect(), 60, 18) : null,
-                    pBox: toX11(pr, 60, 18),
-                    btnBox: br ? toX11(br, br.width / 2, br.height / 2) : null,
-                    tsBox: tsBox,
-                    tsLen: (tsToken || '').length,
-                    clickedSubmitNow: clickedSubmitNow,
-                    hasCaptchaErr: bodyTxt.includes('Ошибка при прохождении капчи') || bodyTxt.includes('Что-то пошло не так'),
-                    txt: bodyTxt.replace(/\s+/g, ' ').trim().slice(0, 180)
-                }});
-            }}
-            return JSON.stringify({{ stage: 'SSO_WAIT_INPUTS', url: location.href, txt: bodyTxt.replace(/\s+/g, ' ').trim().slice(0, 140) }});
-        }}
-
-        return JSON.stringify({{ stage: 'OTHER', url: location.href }});
-    }})();
-    """
-
-    target_url = "https://senkuro.com/"
-    # Открываем сначала главную https://senkuro.com/ для чистого входа (без экрана 401!)
-    # Флаги запуска один в один из рабочего Senkuro_Kaggle_Server_v6_5_Ready.ipynb!
-    args = [
-        chrome_bin,
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--test-type",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-        "--password-store=basic",
-        "--disable-save-password-bubble",
-        "--disable-features=PasswordManagerOnboarding,PasswordImport",
-        "--disable-SmoothScrolling",
-        "--wm-window-animations-disabled",
-        "--animation-duration-scale=0",
-        f"--user-data-dir={prof_dir}",
-        f"--disk-cache-dir={cache_dir}",
-        "--disk-cache-size=67108864",
-        f"--remote-debugging-port={cdp_port}",
-        "--remote-allow-origins=*",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-background-timer-throttling",
-        "--disable-backgrounding-occluded-windows",
-        "--disable-renderer-backgrounding",
-        "--window-position=0,0",
-        "--window-size=1280,900",
-    ]
-    if proxy_url:
-        args.extend([f"--proxy-server={proxy_url}", "--proxy-bypass-list=<-loopback>"])
-    args.append(target_url)
-
-    log_debug(f"[NATIVE CHROME] {aid}: старт изолированного профиля {prof_dir.name} (CDP=:{cdp_port}, proxy={proxy_url}) -> {target_url}")
-    proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-    access_token_found: Optional[str] = None
-    cdp_cookies: list[dict] = []
-    err_png: Optional[bytes] = None
-    last_diag_str = ""
-    last_ws_url = ""
-
-    clicked_ts_time = 0.0
-    clicked_btn_time = 0.0
-
-    try:
-        start_t = time.time()
-        while time.time() - start_t < 70.0 and not FARM_STOP_FLAG:
-            if proc.poll() is not None:
-                log_debug(f"[NATIVE CHROME] {aid}: процесс Chrome завершился (код {proc.poll()})")
-                break
-            time.sleep(1.2)
-            if FARM_STOP_FLAG:
-                break
-
-            try:
-                with urllib.request.urlopen(f"http://127.0.0.1:{cdp_port}/json/list", timeout=1.5) as r:
-                    tabs = json.loads(r.read().decode("utf-8", errors="ignore"))
-            except Exception:
-                continue
-
-            page_tabs = [t for t in tabs if t.get("type") == "page" and "senkuro" in str(t.get("url", ""))]
-            if not page_tabs:
-                page_tabs = [t for t in tabs if t.get("type") == "page"]
-            if not page_tabs:
-                continue
-
-            tab = page_tabs[0]
-            ws_u = str(tab.get("webSocketDebuggerUrl") or "")
-            if not ws_u:
-                continue
-            last_ws_url = ws_u
-
-            eval_res = _cdp_ws_call_sync(
-                ws_u,
-                "Runtime.evaluate",
-                {"expression": sso_eval_js, "returnByValue": True},
-                timeout_sec=3.0,
-            )
-            val_str = str(((eval_res.get("result") or {}).get("value")) or "")
-            if not val_str:
-                continue
-
-            if val_str != last_diag_str:
-                last_diag_str = val_str
-                log_debug(f"[NATIVE STEP] {aid}: {val_str}")
-
-            try:
-                st = json.loads(val_str)
-            except Exception:
-                continue
-
-            stage = st.get("stage")
-            if stage == "TOKEN_OK" and st.get("token"):
-                access_token_found = str(st["token"]).strip()
-                log_debug(f"[NATIVE CHROME SUCCESS] {aid}: вход выполнен, получен access_token (длина={len(access_token_found)})!")
-                break
-
-            if stage == "CLICK_LOGIN_BTN" and st.get("btnBox") and (time.time() - clicked_btn_time > 4.5):
-                clicked_btn_time = time.time()
-                lb = st["btnBox"]
-                _run_xdotool(["mousemove", "--sync", str(lb["x"]), str(lb["y"]), "sleep", "0.12", "click", "1"])
-
-            if stage == "SSO_FORM":
-                # Если есть бокс капчи Turnstile — дополнительно кликаем системной мышью X11 (xdotool)
-                ts_box = st.get("tsBox")
-                if ts_box and int(st.get("tsLen") or 0) == 0 and (time.time() - clicked_ts_time > 5.0):
-                    clicked_ts_time = time.time()
-                    _run_xdotool(["mousemove", "--sync", str(ts_box["x"]), str(ts_box["y"]), "sleep", "0.12", "click", "1"])
-                btn_box = st.get("btnBox")
-                if btn_box and st.get("uOk") and st.get("pOk") and (time.time() - clicked_btn_time > 8.5):
-                    clicked_btn_time = time.time()
-                    _run_xdotool(["mousemove", "--sync", str(btn_box["x"]), str(btn_box["y"]), "sleep", "0.12", "click", "1"])
-
-        if last_ws_url and not FARM_STOP_FLAG:
-            ck_res = _cdp_ws_call_sync(last_ws_url, "Network.getAllCookies", {}, timeout_sec=3.5)
-            cdp_cookies = ck_res.get("cookies") or []
-            for c in cdp_cookies:
-                if c.get("name") == "access_token" and c.get("value") and len(str(c["value"])) > 15:
-                    access_token_found = str(c["value"])
-            if not access_token_found:
-                import base64
-                sc_res = _cdp_ws_call_sync(last_ws_url, "Page.captureScreenshot", {"format": "png"}, timeout_sec=4.0)
-                if sc_res.get("data"):
-                    err_png = base64.b64decode(sc_res["data"])
-    finally:
-        try:
-            proc.terminate()
-            proc.wait(timeout=2.0)
-        except Exception:
-            try:
-                proc.kill()
-            except Exception:
-                pass
-
-    return access_token_found, cdp_cookies, err_png, last_diag_str
-
-
-async def ensure_logged_in(context: BrowserContext, acc: dict) -> tuple[Page, Optional[dict]]:
-    page = await context.new_page()
-    ACTIVE_BROWSER_PAGES[acc["id"]] = page
-    intercepted_user: dict[str, Any] = {}
-
-    async def on_gql_or_sso_resp(resp):
-        u_str = resp.url
-        if "graphql" in u_str and resp.request.method == "POST":
-            try:
-                j = await resp.json()
-                d = j.get("data") or {}
-                vw = d.get("viewer") or {}
-                u = vw.get("user") if isinstance(vw.get("user"), dict) else (vw if isinstance(vw, dict) and vw.get("id") else None)
-                if isinstance(u, dict) and u.get("id"):
-                    intercepted_user.update(u)
-            except Exception:
-                pass
-
-    page.on("response", on_gql_or_sso_resp)
-
-    target_start_url = "https://senkuro.com/"
-    log_debug(f"[AUTH START] {acc['id']}: открываю главную {target_start_url} для проверки входа")
-    try:
-        await page.goto(target_start_url, wait_until="domcontentloaded", timeout=40000)
-    except Exception as e:
-        log_debug(f"[AUTH GOTO WARN] {acc['id']}: {e}")
-
-    for _ in range(15):
-        await page.wait_for_timeout(800)
-        try:
-            b_txt = await page.evaluate("() => document.body ? (document.body.innerText || '') : ''")
-            if b_txt and "Приготовьтесь к приключениям" not in b_txt:
-                break
-        except Exception:
-            pass
-
-    user_obj = await check_is_authenticated_on_senkuro(page, acc["id"], intercepted_user)
-    if user_obj:
-        log_debug(f"[AUTH ALREADY OK] {acc['id']}: уже авторизован (id={user_obj.get('id')})")
-        await context.storage_state(path=str(get_session_file(acc["id"])))
-        return page, user_obj
-
-    if not acc.get("password"):
-        acc["password"] = get_secret_password(int(acc.get("idx", 1)), str(acc.get("id", "")), str(acc.get("login", "")))
-    if not acc.get("login") or not acc.get("password"):
-        log_debug(
-            f"[AUTH NO SECRET] {acc['id']}: login_present={bool(acc.get('login'))}, pass_present={bool(acc.get('password'))}! Проверьте секрет SENKURO_PASSWORDS."
-        )
-        return page, None
-
-    proxy_port = 25340 + int(acc.get("idx", 1))
-    proxy_url = f"http://127.0.0.1:{proxy_port}" if is_local_port_open(proxy_port) else None
-    log_debug(f"[AUTH LOGIN] {acc['id']}: выполняю нативный вход без Playwright ({acc['login']})...")
-
-    token_val, native_cookies, err_png, sso_diag = None, [], None, ""
-    for auth_try in range(1, 3):
-        if FARM_STOP_FLAG:
-            break
-        if auth_try > 1:
-            log_debug(f"[AUTH RETRY #{auth_try}] {acc['id']}: повторная попытка нативного входа (если прокси загружал капчу дольше обычного)...")
-        token_val, native_cookies, err_png, sso_diag = await asyncio.to_thread(login_via_native_chrome_sync, acc, proxy_url)
-        if token_val or any(c.get("name") == "access_token" and c.get("value") for c in (native_cookies or [])):
-            break
-
-    if token_val or native_cookies:
-        pw_cookies = []
-        if token_val:
-            pw_cookies.append(
-                {
-                    "name": "access_token",
-                    "value": token_val,
-                    "domain": "senkuro.com",
-                    "path": "/",
-                    "httpOnly": False,
-                    "secure": True,
-                    "sameSite": "Lax",
-                }
-            )
-            pw_cookies.append(
-                {
-                    "name": "access_token",
-                    "value": token_val,
-                    "domain": ".senkuro.com",
-                    "path": "/",
-                    "httpOnly": False,
-                    "secure": True,
-                    "sameSite": "Lax",
-                }
-            )
-        for c in native_cookies:
-            if c.get("name") and c.get("value") and c.get("domain"):
-                pw_cookies.append(
-                    {
-                        "name": str(c["name"]),
-                        "value": str(c["value"]),
-                        "domain": str(c["domain"]),
-                        "path": str(c.get("path") or "/"),
-                        "httpOnly": bool(c.get("httpOnly", False)),
-                        "secure": bool(c.get("secure", True)),
-                    }
-                )
-        try:
-            await context.add_cookies(pw_cookies)
-        except Exception as e:
-            log_debug(f"[ADD COOKIES WARN] {acc['id']}: {e}")
-
-        try:
-            await page.goto(target_start_url, wait_until="domcontentloaded", timeout=35000)
-            for _ in range(12):
-                await page.wait_for_timeout(700)
-                b_t = await page.evaluate("() => document.body ? (document.body.innerText || '') : ''")
-                if b_t and "Приготовьтесь к приключениям" not in b_t:
-                    break
-            u_final = await check_is_authenticated_on_senkuro(page, acc["id"], intercepted_user)
-            if u_final:
-                log_debug(f"[AUTH SUCCESS] {acc['id']}: вход успешно подтверждён (id={u_final.get('id')})!")
-                await context.storage_state(path=str(get_session_file(acc["id"])))
-                return page, u_final
-        except Exception as e:
-            log_debug(f"[AUTH VERIFY WARN] {acc['id']}: {e}")
-
-    log_debug(f"[AUTH FAILED DIAG] {acc['id']}: sso_diag={sso_diag}")
-    if DEBUG_MODE and err_png:
-        try:
-            await asyncio.to_thread(
-                send_tg_photo_bytes,
-                err_png,
-                f"⚠️ <b>Скриншот экрана входа SSO ({acc['id']}):</b>\n"
-                f"📄 Диагностика: <code>{sso_diag[:260]}</code>",
-                False,
-            )
-        except Exception as e:
-            log_debug(f"[AUTH ERR PHOTO WARN] {e}")
-
-    return page, None
+        after = pi["endCursor"]
+    return nodes
 
 
 def extract_card_title(card_obj: dict) -> str:
     titles = card_obj.get("titles") or []
-    for t in titles:
-        if t.get("lang") in ("RU", "ru") and (t.get("content") or t.get("text")):
-            return (t.get("content") or t.get("text")).strip()
-    if titles:
-        return (titles[0].get("content") or titles[0].get("text") or "Карта").strip()
-    return card_obj.get("slug") or "Карта"
-
-
-async def fetch_all_user_cards_gql(page: Page, user_id: str, modifier_val: Optional[int] = None) -> list[dict]:
-    all_nodes = []
-    after_cursor = None
-    seen_cursors = set()
-
-    for _ in range(60):
-        vars_dict: dict[str, Any] = {"userId": user_id}
-        if modifier_val is not None:
-            vars_dict["modifier"] = {"include": [modifier_val]}
-        if after_cursor:
-            vars_dict["after"] = after_cursor
-
-        res = await gql_call(page, GQL_FETCH_USER_CARDS_FULL, vars_dict, "fetchUserCards")
-        uc = (res.get("data") or {}).get("userCards")
-        if not uc:
-            break
-        edges = uc.get("edges") or []
-        for edge in edges:
-            node = edge.get("node")
-            if node:
-                all_nodes.append(node)
-
-        pinfo = uc.get("pageInfo") or {}
-        end_cur = pinfo.get("endCursor")
-        if pinfo.get("hasNextPage") and end_cur and end_cur not in seen_cursors:
-            seen_cursors.add(end_cur)
-            after_cursor = end_cur
-        else:
-            break
-
-    return all_nodes
-
-
-# ==============================================================================
-# 6. СЦЕНАРИЙ 1: АКТИВАЦИЯ ПРОМОКОДА С ЖЕСТКОЙ ПРОВЕРКОЙ БАЛАНСА ДО И ПОСЛЕ
-# ==============================================================================
-
-async def run_promo_code_activation(promo_code: str) -> None:
-    global FARM_STOP_FLAG
-    FARM_STOP_FLAG = False
-    code_clean = (promo_code or "").strip().upper()
-    if not code_clean:
-        send_tg_message("⚠️ Промокод не указан. Нажмите «🎟 Ввести промокод» и отправьте код ответным сообщением.")
-        return
-
-    send_tg_message(
-        f"⏳ Запускаю 12 изолированных IP-туннелей, вхожу на 12 аккаунтов и активирую промокод <code>{code_clean}</code>...",
-        add_keyboard=False,
-    )
-
-    proxy_mgr = AccountProxyManager()
-    report_lines = [f"🎟 <b>Отчёт по активации промокода <code>{code_clean}</code>:</b>\n"]
-    success_count = 0
-
-    try:
-        async with async_playwright() as p:
-            browser = await launch_senkuro_browser(p)
-            for acc in FARM_ACCOUNTS:
-                proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
-                ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
-                log_debug(f"[BALANCE STEP] #{acc['idx']}/12 {acc['id']} -> IP: {ip_used}")
-                send_tg_message(f"⏳ <b>[{acc['idx']}/12] {acc['id']}</b> (IP: <code>{ip_used}</code>): проверяю вход и баланс...", add_keyboard=False)
-                context = await create_account_context(browser, acc, proxy_url)
-                try:
-                    page, user_obj = await ensure_logged_in(context, acc)
-                    if not user_obj:
-                        report_lines.append(f"❌ <b>{acc['id']}</b> (IP: <code>{ip_used}</code>): не удалось войти в аккаунт\n")
-                        continue
-
-                    before_pts = await get_fresh_points_balance(page, acc["id"])
-
-                    res = await gql_call(
-                        page,
-                        GQL_REDEEM_PROMO,
-                        {"input": {"code": code_clean}},
-                        "redeemRedemption",
-                    )
-                    errors = res.get("errors") or []
-                    payload = (res.get("data") or {}).get("redeemRedemption")
-
-                    if not payload and errors:
-                        try:
-                            await page.evaluate(
-                                """() => {
-                                    const btns = Array.from(document.querySelectorAll('button, a'));
-                                    const promoBtn = btns.find(b => (b.innerText || '').includes('Активировать промокод'));
-                                    if (promoBtn) promoBtn.click();
-                                }"""
-                            )
-                            await page.wait_for_timeout(1000)
-                            inp = page.locator("input[placeholder*='Введите код']").first
-                            if await inp.count() > 0:
-                                await inp.fill(code_clean)
-                                await page.wait_for_timeout(400)
-                                ok_btn = page.locator("button:has-text('Окей')").first
-                                if await ok_btn.count() > 0:
-                                    await ok_btn.click()
-                                    await page.wait_for_timeout(1500)
-                                    await page.mouse.click(10, 10)
-                        except Exception:
-                            pass
-
-                    await page.wait_for_timeout(1500)
-                    after_pts = await get_fresh_points_balance(page, acc["id"])
-                    diff_pts = after_pts - before_pts
-
-                    if diff_pts > 0:
-                        success_count += 1
-                        report_lines.append(
-                            f"✅ <b>{acc['id']}</b> (IP: <code>{ip_used}</code>) — <b>УСПЕШНО НАЧИСЛЕНО!</b>\n"
-                            f"   • Было монет: <code>{before_pts}</code> 🪙\n"
-                            f"   • Пришло с промокода: <b>+{diff_pts} сенкоинов</b>\n"
-                            f"   • 💰 <b>Финальный баланс: {after_pts} 🪙</b>\n"
-                        )
-                    elif payload and int(payload.get("points") or 0) > 0:
-                        pts_claimed = int(payload.get("points"))
-                        final_calc = max(after_pts, before_pts + pts_claimed)
-                        success_count += 1
-                        report_lines.append(
-                            f"✅ <b>{acc['id']}</b> (IP: <code>{ip_used}</code>) — <b>УСПЕШНО НАЧИСЛЕНО!</b>\n"
-                            f"   • Было монет: <code>{before_pts}</code> 🪙\n"
-                            f"   • Пришло с промокода: <b>+{pts_claimed} сенкоинов</b>\n"
-                            f"   • 💰 <b>Финальный баланс: {final_calc} 🪙</b>\n"
-                        )
-                    else:
-                        err_reason = errors[0].get("message", "Код уже был активирован или недействителен") if errors else "Баланс монет не увеличился"
-                        report_lines.append(
-                            f"⚠️ <b>{acc['id']}</b> (IP: <code>{ip_used}</code>) — <b>НЕ НАЧИСЛЕНО</b> ({err_reason})\n"
-                            f"   • Баланс не изменился: было <code>{before_pts}</code> 🪙 ➔ осталось <b>{after_pts} 🪙</b>\n"
-                        )
-
-                    await context.storage_state(path=str(get_session_file(acc["id"])))
-                finally:
-                    await context.close()
-                await asyncio.sleep(2.5)
-            await browser.close()
-    finally:
-        proxy_mgr.stop_all()
-
-    report_lines.insert(1, f"📊 Итог проверки: монеты реально увеличились на <b>{success_count} из 12</b> аккаунтов.\n")
-    send_tg_message("\n".join(report_lines), add_keyboard=True)
-
-
-# ==============================================================================
-# 7. СЦЕНАРИЙ 2: ПРОВЕРКА БАЛАНСА МОНЕТ (4 АККА) И КРУТКА ПАКОВ «ХАРДКОР»
-# ==============================================================================
-
-async def run_check_coins_balance() -> None:
-    global FARM_STOP_FLAG
-    FARM_STOP_FLAG = False
-    """Проверяет баланс сенкоинов на всех 8 фарм-аккаунтах и возвращает базовую панель кнопок."""
-    send_tg_message("🪙 Вхожу на 12 фарм-аккаунтов под своими IP и проверяю баланс сенкоинов...", add_keyboard=False)
-    proxy_mgr = AccountProxyManager()
-    lines = ["🪙 <b>Баланс сенкоинов на 12 фарм-аккаунтах:</b>\n"]
-    total_coins = 0
-    total_packs_possible = 0
-
-    try:
-        async with async_playwright() as p:
-            browser = await launch_senkuro_browser(p)
-            for acc in FARM_ACCOUNTS:
-                proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
-                ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
-                if FARM_STOP_FLAG:
-                    break
-                log_debug(f"[BALANCE STEP] #{acc['idx']}/12 {acc['id']} -> IP: {ip_used}")
-                send_tg_message(f"⏳ <b>[{acc['idx']}/12] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): вхожу в изолированный профиль Chrome и проверяю баланс...", add_keyboard=False)
-                context = await create_account_context(browser, acc, proxy_url)
-                try:
-                    page, user_obj = await ensure_logged_in(context, acc)
-                    if not user_obj:
-                        lines.append(f"❌ <b>{acc['id']}</b> (IP: <code>{ip_used}</code>): не удалось войти")
-                        continue
-                    pts = await get_fresh_points_balance(page, acc["id"])
-                    packs_avail = pts // HARDCORE_PACK_COST
-                    total_coins += pts
-                    total_packs_possible += packs_avail
-                    pack_str = f"✅ хватает на <b>{packs_avail}</b> пак(ов) Хардкор" if packs_avail > 0 else f"⏳ не хватает {HARDCORE_PACK_COST - pts} 🪙 до пака (нужно 480)"
-                    lines.append(f"👤 <b>{acc['id']}</b> (IP: <code>{ip_used}</code>): <b>{pts} 🪙</b> — {pack_str}")
-                    await context.storage_state(path=str(get_session_file(acc["id"])))
-                finally:
-                    await context.close()
-                await asyncio.sleep(2.5)
-            await browser.close()
-    finally:
-        proxy_mgr.stop_all()
-
-    lines.append(f"\n💰 <b>Всего монет на 12 аккаунтах:</b> {total_coins} 🪙 (доступно прокруток Хардкор: <b>{total_packs_possible}</b>)")
-    full_msg = "\n".join(lines)
-    send_tg_message(full_msg, add_keyboard=True)
-    if DEBUG_MODE:
-        upload_debug_log_to_github_noop("balance_check")
-        if "не удалось войти" in full_msg:
-            send_full_debug_log_to_user("Авто-лог диагностики входа (Баланс)")
-
-
-def choose_best_unlocked_card_index(result_cards: list[dict], has_premium: bool = False) -> tuple[int, dict]:
-    unlocked_limit = len(result_cards) if has_premium else min(2, len(result_cards))
-    candidates = []
-    for idx in range(unlocked_limit):
-        c = result_cards[idx]
-        rank_str = str(c.get("rank") or "F").upper()
-        score = RANK_PRIORITY.get(rank_str, 1)
-        anim_bonus = 1 if c.get("animated") else 0
-        candidates.append((score, anim_bonus, -idx, idx, c))
-
-    if not candidates:
-        return 0, (result_cards[0] if result_cards else {})
-
-    candidates.sort(reverse=True)
-    _, _, _, best_idx, best_card = candidates[0]
-    return best_idx, best_card
-
-
-async def roll_hardcore_packs_for_account(page: Page, acc: dict, user_obj: dict) -> list[str]:
-    logs: list[str] = []
-    user_id = await ensure_real_user_id(page, acc["id"], str(user_obj.get("id") or ""))
-    try:
-        await page.goto("https://senkuro.com/packs/for-hardcore-gamers", wait_until="domcontentloaded", timeout=35000)
-    except Exception:
-        pass
-    await asyncio.sleep(random.uniform(2.5, 4.0))
-
-    before_points = await get_fresh_points_balance(page, acc["id"])
-    has_premium = int(user_obj.get("subscriptionTier") or 0) > 0
-
-    pack_res = await gql_call(page, GQL_FETCH_PACK_AND_PENDING, {"slug": HARDCORE_PACK_SLUG}, "fetchPackAndPending")
-    data = pack_res.get("data") or {}
-    pack = data.get("cardPack")
-    if not pack:
-        logs.append("⚠️ Пак «Для хардкорщиков» не найден на сайте")
-        return logs
-
-    pack_id = pack["id"]
-    pack_cost = int(pack.get("points") or HARDCORE_PACK_COST)
-    pending_opens = list(data.get("viewerPendingCardPackOpens") or [])
-
-    chosen_cards_summary: list[str] = []
-
-    if pending_opens:
-        opens_input = []
-        for op in pending_opens:
-            rcards = op.get("resultCards") or []
-            if not rcards:
-                continue
-            best_idx, best_card = choose_best_unlocked_card_index(rcards, has_premium=has_premium)
-            opens_input.append(
-                {
-                    "openId": op["id"],
-                    "packId": (op.get("pack") or {}).get("id") or pack_id,
-                    "indexes": [best_idx],
-                }
-            )
-            r_badge = RANK_BADGE.get(str(best_card.get("rank", "F")).upper(), best_card.get("rank", "F"))
-            c_title = extract_card_title(best_card)
-            chosen_cards_summary.append(f"Забрал: <b>{r_badge} «{c_title}»</b> (из незавершенного открытия, слот #{best_idx + 1})")
-
-        if opens_input:
-            await asyncio.sleep(random.uniform(2.2, 3.6))
-            await gql_call(
-                page,
-                GQL_BULK_CHOOSE_PACK_OPEN,
-                {"input": {"opens": opens_input}},
-                "bulkChooseCardPackOpen",
-            )
-            await asyncio.sleep(random.uniform(2.0, 3.2))
-
-    rolls_available = before_points // pack_cost
-    if rolls_available <= 0 and not chosen_cards_summary:
-        logs.append(f"недостаточно монет для прокрутки (сейчас <b>{before_points} 🪙</b>, нужно <b>{pack_cost} 🪙</b>)")
-        return logs
-
-    for roll_num in range(1, rolls_available + 1):
-        if FARM_STOP_FLAG:
-            logs.append("🛑 Прокрутка остановлена пользователем")
-            break
-
-        # Человеческая пауза перед нажатием кнопки «Открыть пак за 480»
-        await asyncio.sleep(random.uniform(2.5, 4.2))
-        open_res = await gql_call(
-            page,
-            GQL_OPEN_CARD_PACK,
-            {
-                "input": {
-                    "packId": pack_id,
-                    "userId": user_id,
-                    "currency": "POINTS",
-                    "rolls": 1,
-                }
-            },
-            "openCardPack",
-        )
-        errs = open_res.get("errors") or []
-        opens_list = ((open_res.get("data") or {}).get("openCardPack") or {}).get("opens") or []
-        if not opens_list:
-            if errs:
-                logs.append(f"остановка на крутке #{roll_num}: {errs[0].get('message')}")
-            break
-
-        # Человеческая задержка (3.8–5.8 сек) на анимацию открытия пака и осмотр выпавших карт перед выбором!
-        await asyncio.sleep(random.uniform(3.8, 5.8))
-
-        choose_payload = []
-        for op in opens_list:
-            rcards = op.get("resultCards") or []
-            if not rcards:
-                continue
-            best_idx, best_card = choose_best_unlocked_card_index(rcards, has_premium=has_premium)
-            choose_payload.append(
-                {
-                    "openId": op["id"],
-                    "packId": pack_id,
-                    "indexes": [best_idx],
-                }
-            )
-            slot1_desc = f"1-я: {rcards[0].get('rank')} «{extract_card_title(rcards[0])}»" if len(rcards) > 0 else "-"
-            slot2_desc = f"2-я: {rcards[1].get('rank')} «{extract_card_title(rcards[1])}»" if len(rcards) > 1 else "-"
-            slot3_desc = f"3-я (🔒): {rcards[2].get('rank')}" if len(rcards) > 2 else ""
-
-            r_badge = RANK_BADGE.get(str(best_card.get("rank", "F")).upper(), best_card.get("rank", "F"))
-            c_title = extract_card_title(best_card)
-            chosen_cards_summary.append(
-                f"Крутка #{roll_num}: выпало [{slot1_desc} | {slot2_desc} | {slot3_desc}] ➔ "
-                f"✅ <b>Забрал: {r_badge} «{c_title}»</b> (слот #{best_idx + 1})"
-            )
-
-        if choose_payload:
-            await gql_call(
-                page,
-                GQL_BULK_CHOOSE_PACK_OPEN,
-                {"input": {"opens": choose_payload}},
-                "bulkChooseCardPackOpen",
-            )
-            # Пауза после выбора карты, как у живого человека
-            await asyncio.sleep(random.uniform(2.2, 3.8))
-
-    await page.wait_for_timeout(1200)
-    after_points = await get_fresh_points_balance(page, acc["id"])
-
-    if chosen_cards_summary:
-        logs.append(
-            f"было <code>{before_points}</code> 🪙 ➔ прокручено паков: <b>{len(chosen_cards_summary)}</b> ➔ "
-            f"💰 <b>Осталось монет: {after_points} 🪙</b>"
-        )
-        for item in chosen_cards_summary:
-            logs.append(f"   • {item}")
-    return logs
-
-
-async def run_all_packs_opening() -> None:
-    global FARM_STOP_FLAG
-    FARM_STOP_FLAG = False
-    send_tg_message(
-        "🎰 Открываю 12 изолированных профилей Chrome под своими IP и кручу паки «Хардкор» (480 🪙) с человеческими паузами...",
-        add_keyboard=False,
-    )
-    proxy_mgr = AccountProxyManager()
-    report_lines = ["🎴 <b>Статистика прокрутки паков «Для хардкорщиков» (480 🪙):</b>\n"]
-
-    try:
-        async with async_playwright() as p:
-            browser = await launch_senkuro_browser(p)
-            try:
-                for acc in FARM_ACCOUNTS:
-                    if FARM_STOP_FLAG:
-                        break
-                    proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
-                    ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
-                    log_debug(f"[PACKS STEP] #{acc['idx']}/12 {acc['id']} -> IP: {ip_used}")
-                    context = await create_account_context(browser, acc, proxy_url)
-                    try:
-                        page, user_obj = await ensure_logged_in(context, acc)
-                        if not user_obj:
-                            report_lines.append(f"❌ <b>{acc['id']}</b> (IP: <code>{ip_used}</code>): ошибка входа\n")
-                            continue
-                        send_tg_message(f"🎴 <b>[{acc['idx']}/12] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): кручу паки «Хардкор»...", add_keyboard=False)
-                        acc_logs = await roll_hardcore_packs_for_account(page, acc, user_obj)
-                        report_lines.append(f"👤 <b>{acc['id']}</b> (IP: <code>{ip_used}</code>): " + "\n".join(acc_logs) + "\n")
-                        await context.storage_state(path=str(get_session_file(acc["id"])))
-                    finally:
-                        ACTIVE_BROWSER_PAGES.pop(acc["id"], None)
-                        try:
-                            await context.close()
-                        except Exception:
-                            pass
-                    await asyncio.sleep(random.uniform(2.5, 4.0))
-            finally:
-                ACTIVE_BROWSER_PAGES.clear()
-            await browser.close()
-    finally:
-        proxy_mgr.stop_all()
-
-    send_tg_message("\n".join(report_lines), add_keyboard=True)
-
-
-# ==============================================================================
-# 8. СЦЕНАРИЙ 3: УМНАЯ ПЕРЕПЛАВКА (КУЗНЯ) + МЕЖАККАУНТНЫЙ ТРЕЙД + СБОР НА ОСНОВУ
-# ==============================================================================
-
-TRADE_RANDOM_MESSAGES = [
-    "gl hf",
-    "nice cards",
-    "thanks",
-    "for craft",
-    "gg wp",
-    "trade",
-    "ty bro",
-    "good luck",
-]
-
-
-def format_reset_at_human(reset_at_val: Any) -> str:
-    if not reset_at_val:
-        return "неизвестно"
-    try:
-        from datetime import datetime, timezone
-        s = str(reset_at_val).strip()
-        if s.isdigit():
-            ts = int(s)
-            if ts > 10_000_000_000:
-                ts = ts // 1000
-            diff_sec = max(0, int(ts - time.time()))
-        else:
-            s_iso = s.replace("Z", "+00:00")
-            dt = datetime.fromisoformat(s_iso)
-            diff_sec = max(0, int(dt.timestamp() - time.time()))
-        h = diff_sec // 3600
-        m = (diff_sec % 3600) // 60
-        if h > 0:
-            return f"через {h} ч. {m} мин."
-        return f"через {max(1, m)} мин."
-    except Exception:
-        return str(reset_at_val)[:19]
-
-
-async def accept_whitelisted_incoming_trades(page: Page, acc_slug: str, user_id: str) -> list[str]:
-    accepted_logs: list[str] = []
-    res = await gql_call(
-        page,
-        GQL_FETCH_CARD_TRADES,
-        {"userId": user_id, "status": "PENDING"},
-        "fetchCardTrades",
-    )
-    edges = ((res.get("data") or {}).get("cardTrades") or {}).get("edges") or []
-    for edge in edges:
-        if FARM_STOP_FLAG:
-            break
-        node = edge.get("node") or {}
-        if node.get("status") != "PENDING" or not node.get("viewerCanAccept"):
-            continue
-
-        trade_id = node.get("id")
-        source_user = node.get("source") or {}
-        source_slug = str(source_user.get("slug") or "").strip().lower()
-        req_items = node.get("request") or []
-        offer_items = node.get("offer") or []
-
-        if source_slug not in ALLOWED_TRADE_SLUGS:
-            log_debug(f"[SECURITY BLOCK] {acc_slug}: проигнорирован входящий трейд {trade_id} от ЧУЖОГО игрока '{source_slug}'!")
-            continue
-
-        if req_items and source_slug not in ALLOWED_TRADE_SLUGS:
-            continue
-
-        # Человеческая пауза перед принятием трейда
-        await asyncio.sleep(random.uniform(2.2, 3.6))
-        acc_res = await gql_call(
-            page,
-            GQL_ACCEPT_CARD_TRADE,
-            {"input": {"tradeId": trade_id}},
-            "acceptCardTrade",
-        )
-        ok = ((acc_res.get("data") or {}).get("acceptCardTrade") or {}).get("success")
-        if ok:
-            total_qty = sum(int(x.get("quantity") or 1) for x in offer_items)
-            log_debug(f"[FORGE TRADE ACCEPT OK] {acc_slug}: принят входящий трейд {trade_id} от {source_slug} ({total_qty} шт.)")
-            accepted_logs.append(f"принят трейд от <b>{source_slug}</b> ({total_qty} шт.)")
-        else:
-            errs = acc_res.get("errors") or []
-            err_msg = errs[0].get("message", "неизвестная ошибка") if errs else "success=False"
-            log_debug(f"[FORGE TRADE ACCEPT WARN] {acc_slug}: не удалось принять трейд {trade_id} от {source_slug}: {err_msg}")
-    return accepted_logs
-
-
-def expand_craftable_cards_by_rank(user_cards_nodes: list[dict]) -> dict[str, list[dict]]:
-    by_rank: dict[str, list[dict]] = defaultdict(list)
-    for node in user_cards_nodes:
-        if node.get("shard") or int(node.get("modifier") or 0) != 0:
-            continue
-        if node.get("locked"):
-            continue
-        card = node.get("card") or {}
-        if card.get("animated"):
-            continue
-        rank = str(card.get("rank") or "").upper()
-        if rank not in FORGE_UPGRADE_CHAIN:
-            continue
-        qty = int(node.get("quantity") or 1)
-        for _ in range(qty):
-            by_rank[rank].append(
-                {
-                    "cardId": card.get("id") or node.get("cardId"),
-                    "modifier": int(node.get("modifier") or 0),
-                    "rank": rank,
-                    "title": extract_card_title(card),
-                    "slug": card.get("slug") or "",
-                }
-            )
-    return by_rank
-
-
-def compress_card_units_for_gql(units: list[dict]) -> list[dict]:
-    counts: dict[tuple[str, int], int] = Counter()
-    for u in units:
-        counts[(str(u["cardId"]), int(u.get("modifier") or 0))] += 1
-    return [
-        {"cardId": cid, "modifier": mod, "quantity": qty}
-        for (cid, mod), qty in counts.items()
-    ]
-
-
-def format_text_only_inventory_summary(cards_nodes: list[dict], shards_nodes: list[dict]) -> str:
-    card_counts: Counter = Counter()
-    for n in cards_nodes:
-        if n.get("locked"):
-            continue
-        r = str((n.get("card") or {}).get("rank") or "?").upper()
-        card_counts[r] += int(n.get("quantity") or 1)
-
-    shard_counts: Counter = Counter()
-    for n in shards_nodes:
-        if n.get("locked"):
-            continue
-        r = str((n.get("card") or {}).get("rank") or "?").upper()
-        shard_counts[r] += int(n.get("quantity") or 1)
-
-    c_parts = [f"<b>{card_counts[r]}</b> {RANK_BADGE.get(r, r)}" for r in RANK_ORDER if card_counts.get(r, 0) > 0]
-    s_parts = [f"<b>{shard_counts[r]}</b> {RANK_BADGE.get(r, r)}" for r in RANK_ORDER if shard_counts.get(r, 0) > 0]
-
-    c_str = ", ".join(c_parts) if c_parts else "нет"
-    s_str = ", ".join(s_parts) if s_parts else "нет"
-    return f"Карты: {c_str} | Осколки: {s_str}"
-
-
-async def refresh_single_account_state(aid: str, st: dict, accept_trades: bool = True) -> None:
-    if FARM_STOP_FLAG:
-        return
-    page: Page = st["page"]
-    uid: str = st["user_id"]
-
-    if accept_trades:
-        acc_trades = await accept_whitelisted_incoming_trades(page, aid, uid)
-        if acc_trades:
-            st["logs"].extend(acc_trades)
-
-    slots_res = await gql_call(page, GQL_FETCH_FORGE_SLOTS, {"mode": "UPGRADE"}, "fetchForgeCardsSlots")
-    slots_obj = (slots_res.get("data") or {}).get("forgeCardsSlots") or {}
-    if st.get("forge_blocked"):
-        st["available_slots"] = 0
-    else:
-        st["available_slots"] = int(slots_obj.get("available") or 0)
-    st["used_slots"] = int(slots_obj.get("used") or 0)
-    st["reset_at"] = slots_obj.get("resetAt")
-
-    st["cards_nodes"] = await fetch_all_user_cards_gql(page, uid, modifier_val=0)
-    st["shards_nodes"] = await fetch_all_user_cards_gql(page, uid, modifier_val=1)
-    st["craftable_by_rank"] = expand_craftable_cards_by_rank(st["cards_nodes"])
-    c_total = sum(int(n.get("quantity") or 1) for n in st["cards_nodes"] if not n.get("locked"))
-    s_total = sum(int(n.get("quantity") or 1) for n in st["shards_nodes"] if not n.get("locked"))
-    ranks_debug = {r: len(v) for r, v in st["craftable_by_rank"].items() if v}
-    log_debug(f"[FORGE STATE] {aid}: слоты={st['available_slots']}/5, карт={c_total} (для крафта: {ranks_debug}), осколков={s_total}")
-
-
-async def refresh_farm_state(state_map: dict[str, dict], accept_trades: bool = True) -> None:
-    for aid, st in state_map.items():
-        if FARM_STOP_FLAG:
-            break
-        await refresh_single_account_state(aid, st, accept_trades=accept_trades)
-
-
-async def forge_local_triples_on_account(st: dict) -> int:
-    page: Page = st["page"]
-    aid: str = st["acc"]["id"]
-    forged_count = 0
-
-    while st["available_slots"] > 0 and not st.get("forge_blocked") and not FARM_STOP_FLAG:
-        did_forge_in_pass = False
-        for r in FORGE_UPGRADE_CHAIN:
-            pool = st["craftable_by_rank"].get(r, [])
-            if len(pool) >= 3 and st["available_slots"] > 0:
-                triple = pool[:3]
-                gql_cards = compress_card_units_for_gql(triple)
-                # Человеческая задержка (2.5–4.0 сек) на выбор 3 карт и переплавку в Кузне!
-                await asyncio.sleep(random.uniform(2.5, 4.0))
-                res = await gql_call(
-                    page,
-                    GQL_FORGE_CARDS,
-                    {"input": {"mode": "UPGRADE", "cards": gql_cards}},
-                    "forgeCards",
-                )
-                forge_data = (res.get("data") or {}).get("forgeCards")
-                if not forge_data:
-                    errs = res.get("errors") or []
-                    err_txt = errs[0].get("message", "ошибка кузни") if errs else "ошибка кузни"
-                    log_debug(f"[FORGE ERROR] {aid}: ошибка переплавки 3×{r} -> {err_txt} (блокирую слоты аккаунта на этот цикл)")
-                    st["logs"].append(f"⚠️ Ошибка переплавки 3×{r}: {err_txt}")
-                    st["available_slots"] = 0
-                    st["forge_blocked"] = True
-                    break
-
-                st["available_slots"] -= 1
-                st["used_slots"] += 1
-                forged_count += 1
-                did_forge_in_pass = True
-
-                new_cards = forge_data.get("newCards") or forge_data.get("addUserCards") or []
-                if new_cards:
-                    nc = (new_cards[0].get("card") or {})
-                    new_rank = str(nc.get("rank") or NEXT_FORGE_RANK[r]).upper()
-                    new_title = extract_card_title(nc)
-                    log_debug(f"[FORGE CRAFT OK] {aid}: 3×{r} -> {new_rank} «{new_title}» (осталось слотов: {st['available_slots']}/5)")
-                    st["logs"].append(f"⚒️ Переплавлено 3×{r} ➡️ <b>{RANK_BADGE.get(new_rank, new_rank)} «{new_title}»</b>")
-                else:
-                    nxt = NEXT_FORGE_RANK[r]
-                    log_debug(f"[FORGE CRAFT OK] {aid}: 3×{r} -> 1×{nxt} (осталось слотов: {st['available_slots']}/5)")
-                    st["logs"].append(f"⚒️ Переплавлено 3×{r} ➡️ <b>1×{nxt}</b>")
-                save_task_checkpoint("forge", "", stage=f"craft:{aid}:3x{r}", active=True)
-
-                await asyncio.sleep(random.uniform(1.5, 2.5))
-                st["cards_nodes"] = await fetch_all_user_cards_gql(page, st["user_id"], modifier_val=0)
-                st["craftable_by_rank"] = expand_craftable_cards_by_rank(st["cards_nodes"])
-                break
-
-        if not did_forge_in_pass:
-            break
-
-    return forged_count
-
-
-async def run_smart_forge_and_trade_pipeline() -> None:
-    global FARM_STOP_FLAG
-    FARM_STOP_FLAG = False
-    log_debug("[FORGE PIPELINE START] Запуск умной Кузницы (Переплавка 3 в 1) и межаккаунтного обмена на 12 аккаунтах...")
-    send_tg_message(
-        "⚒️ Запускаю умную Кузницу («Переплавка» 3 в 1) и межаккаунтный обмен на 12 аккаунтах с человеческими задержками...",
-        add_keyboard=False,
-    )
-
-    proxy_mgr = AccountProxyManager()
-    state_map: dict[str, dict] = {}
-    report_lines: list[str] = []
-    report_sent: bool = False
-
-    try:
-        async with async_playwright() as p:
-            browser = await launch_senkuro_browser(p)
-            contexts: list[BrowserContext] = []
-
-            try:
-                for acc in FARM_ACCOUNTS:
-                    if FARM_STOP_FLAG:
-                        break
-                    proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
-                    ip_used = proxy_mgr.active_ips.get(acc["acc_id"], "прямой")
-                    log_debug(f"[FORGE STEP] #{acc['idx']}/12 {acc['id']} -> IP: {ip_used}")
-                    send_tg_message(f"⚒️ <b>[{acc['idx']}/12] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): подключаю кузню и проверяю карты...", add_keyboard=False)
-                    ctx = await create_account_context(browser, acc, proxy_url)
-                    contexts.append(ctx)
-                    page, user_obj = await ensure_logged_in(ctx, acc)
-                    if not user_obj:
-                        log_debug(f"[FORGE AUTH WARN] Не удалось авторизоваться в {acc['id']}")
-                        continue
-                    real_acc_uid = await ensure_real_user_id(page, acc["id"], str(user_obj.get("id") or ""))
-                    state_map[acc["id"]] = {
-                        "acc": acc,
-                        "context": ctx,
-                        "page": page,
-                        "user_id": real_acc_uid,
-                        "ip": ip_used,
-                        "available_slots": 0,
-                        "used_slots": 0,
-                        "forge_blocked": False,
-                        "reset_at": None,
-                        "cards_nodes": [],
-                        "shards_nodes": [],
-                        "craftable_by_rank": defaultdict(list),
-                        "logs": [],
-                    }
-
-                if not state_map:
-                    send_tg_message("❌ Не удалось авторизоваться ни в одном из 12 фарм-аккаунтов.")
-                    report_sent = True
-                    return
-
-                await refresh_farm_state(state_map, accept_trades=True)
-
-                # Если на всех 12 аккаунтах слоты кузни = 0/5, сразу сообщаем точное время до сброса!
-                initial_free_slots = sum(st["available_slots"] for st in state_map.values())
-                log_debug(f"[FORGE SLOTS TOTAL] Суммарно свободных слотов кузни на 12 аккаунтах: {initial_free_slots}/60")
-                if initial_free_slots <= 0:
-                    reset_lines = ["⏳ <b>На всех 12 фарм-аккаунтах сейчас 0 из 5 доступных попыток переплавки в Кузне:</b>\n"]
-                    for aid, st in state_map.items():
-                        rst_str = format_reset_at_human(st.get("reset_at"))
-                        inv_str = format_text_only_inventory_summary(st["cards_nodes"], st["shards_nodes"])
-                        reset_lines.append(
-                            f"👤 <b>{aid}</b> (Слоты: 0/5) — сброс счётчика: <b>{rst_str}</b>\n"
-                            f"   📦 На аккаунте: {inv_str}\n"
-                        )
-                    reset_lines.append("💡 <i>Карты оставлены на аккаунтах до сброса попыток Кузни.</i>")
-                    send_tg_message("\n".join(reset_lines), add_keyboard=True)
-                    report_sent = True
-                    return
-
-                # 1. ПЕРВЫМ ДЕЛОМ проверяем основной аккаунт cesium254 и забираем оттуда ВСЮ мелочь младше A-ранга (F, D, C, B),
-                #    чтобы на основе оставались только A/S/R, а все F/D/C/B сразу участвовали в общем расчёте крафтов на ферме!
-                first_page = next(iter(state_map.values()))["page"]
-                main_res = await gql_call(first_page, GQL_FETCH_USER_BY_SLUG, {"slug": MAIN_ACCOUNT_SLUG}, "fetchUserBySlug")
-                main_user = (main_res.get("data") or {}).get("user")
-                main_uid = (main_user.get("id") if isinstance(main_user, dict) and main_user.get("id") else None) or KNOWN_USER_IDS.get(MAIN_ACCOUNT_SLUG)
-
-                if main_uid and not FARM_STOP_FLAG:
-                    main_cards_nodes = await fetch_all_user_cards_gql(first_page, main_uid, modifier_val=0)
-                    main_by_rank = expand_craftable_cards_by_rank(main_cards_nodes)
-                    borrow_units: list[dict] = []
-                    borrow_desc_parts: list[str] = []
-                    for low_r in ("F", "D", "C", "B"):
-                        m_pool = main_by_rank.get(low_r, [])
-                        if m_pool:
-                            take_m = m_pool[:50 - len(borrow_units)]
-                            if take_m:
-                                borrow_units.extend(take_m)
-                                borrow_desc_parts.append(f"{len(take_m)}×{RANK_BADGE.get(low_r, low_r)}")
-                    if borrow_units:
-                        def _count_unlocked_shards(st_obj: dict) -> int:
-                            return sum(int(n.get("quantity") or 1) for n in st_obj["shards_nodes"] if not n.get("locked") and int(n.get("quantity") or 0) > 0)
-
-                        def _count_unlocked_f_cards(st_obj: dict) -> int:
-                            return sum(
-                                int(n.get("quantity") or 1)
-                                for n in st_obj["cards_nodes"]
-                                if not n.get("locked") and int(n.get("quantity") or 0) > 0 and str((n.get("card") or {}).get("rank") or "").upper() == "F"
-                            )
-
-                        def _count_unlocked_any_cards(st_obj: dict) -> int:
-                            return sum(int(n.get("quantity") or 1) for n in st_obj["cards_nodes"] if not n.get("locked") and int(n.get("quantity") or 0) > 0)
-
-                        eligible_borrowers = [
-                            s for s in state_map.values()
-                            if s["available_slots"] > 0 and (_count_unlocked_shards(s) > 0 or _count_unlocked_any_cards(s) > 0)
-                        ]
-                        best_rec = (
-                            max(
-                                eligible_borrowers,
-                                key=lambda s: (
-                                    1 if _count_unlocked_shards(s) > 0 else 0,
-                                    _count_unlocked_shards(s),
-                                    s["available_slots"],
-                                    _count_unlocked_f_cards(s),
-                                ),
-                            )
-                            if eligible_borrowers
-                            else None
-                        )
-                        req_payload = compress_card_units_for_gql(borrow_units)
-
-                        rank_prio = {"F": 0, "D": 1, "C": 2, "B": 3, "A": 4, "S": 5, "R": 6}
-                        borrow_offer_payload = []
-                        borrow_offer_desc = ""
-
-                        unlocked_shards_for_borrow = []
-                        for s_node in (best_rec["shards_nodes"] if best_rec else []):
-                            if s_node.get("locked"):
-                                continue
-                            s_cid = (s_node.get("card") or {}).get("id") or s_node.get("cardId")
-                            s_qty = int(s_node.get("quantity") or 1)
-                            s_mod = int(s_node.get("modifier") or 1)
-                            s_rnk = str((s_node.get("card") or {}).get("rank") or "?").upper()
-                            if s_cid and s_qty > 0:
-                                unlocked_shards_for_borrow.append((rank_prio.get(s_rnk, 9), s_cid, s_mod, s_rnk))
-                        if unlocked_shards_for_borrow:
-                            unlocked_shards_for_borrow.sort(key=lambda x: x[0])
-                            _, b_cid, b_mod, b_rnk = unlocked_shards_for_borrow[0]
-                            borrow_offer_payload = [{"cardId": b_cid, "modifier": b_mod, "quantity": 1}]
-                            borrow_offer_desc = f"1 осколок [{b_rnk}]"
-                        else:
-                            unlocked_cards_for_borrow = []
-                            for c_node in (best_rec["cards_nodes"] if best_rec else []):
-                                if c_node.get("locked"):
-                                    continue
-                                c_cid = (c_node.get("card") or {}).get("id") or c_node.get("cardId")
-                                c_qty = int(c_node.get("quantity") or 1)
-                                c_mod = int(c_node.get("modifier") or 0)
-                                c_rnk = str((c_node.get("card") or {}).get("rank") or "?").upper()
-                                if c_cid and c_qty > 0:
-                                    unlocked_cards_for_borrow.append((rank_prio.get(c_rnk, 9), c_cid, c_mod, c_rnk))
-                            if unlocked_cards_for_borrow:
-                                unlocked_cards_for_borrow.sort(key=lambda x: x[0])
-                                _, b_cid, b_mod, b_rnk = unlocked_cards_for_borrow[0]
-                                borrow_offer_payload = [{"cardId": b_cid, "modifier": b_mod, "quantity": 1}]
-                                borrow_offer_desc = f"1 карту [{b_rnk}]"
-
-                        trade_created_obj = {}
-                        b_res = {}
-                        if best_rec and borrow_offer_payload:
-                            await asyncio.sleep(random.uniform(2.5, 4.0))
-                            b_res = await gql_call(
-                                best_rec["page"],
-                                GQL_SUGGEST_CARD_TRADE,
-                                {
-                                    "input": {
-                                        "userId": main_uid,
-                                        "offer": borrow_offer_payload,
-                                        "request": req_payload,
-                                        "description": [],
-                                    }
-                                },
-                                "suggestCardTrade",
-                            )
-                            trade_created_obj = (b_res.get("data") or {}).get("suggestCardTrade") or {}
-                        if trade_created_obj.get("success"):
-                            b_summary = ", ".join(borrow_desc_parts)
-                            log_debug(f"[FORGE BORROW SENT] {best_rec['acc']['id']} запросил с основы {MAIN_ACCOUNT_SLUG}: {b_summary} (взамен: {borrow_offer_desc})")
-                            offer_note = f" (взамен предложен <b>{borrow_offer_desc}</b>, чтобы кнопка «Принять обмен» была активна)" if borrow_offer_desc else ""
-                            send_tg_message(
-                                f"🤝 <b>Запрос карт B-ранга и ниже с основы <a href='{MAIN_ACCOUNT_URL}'>{MAIN_ACCOUNT_SLUG}</a>!</b>\n\n"
-                                f"Аккаунт <b>{best_rec['acc']['id']}</b> (свободно слотов кузни: {best_rec['available_slots']}/5) "
-                                f"запросил с вашей основы все карты младше A-ранга ({b_summary}){offer_note}.\n"
-                                "👉 <b>Пожалуйста, подтвердите входящий обмен на сайте (проверяю каждые 10 сек., жду до 2.5 минут)...</b>",
-                                add_keyboard=False,
-                            )
-                            prev_total_cards = sum(int(n.get("quantity") or 1) for n in best_rec["cards_nodes"])
-                            prev_card_ids = Counter(
-                                str((n.get("card") or {}).get("id") or n.get("cardId") or "")
-                                for n in best_rec["cards_nodes"]
-                            )
-                            borrow_confirmed = False
-                            for poll_idx in range(15):
-                                if FARM_STOP_FLAG:
-                                    break
-                                await asyncio.sleep(10.0)
-                                cur_nodes = await fetch_all_user_cards_gql(best_rec["page"], best_rec["user_id"], modifier_val=0)
-                                cur_total = sum(int(n.get("quantity") or 1) for n in cur_nodes)
-                                cur_card_ids = Counter(
-                                    str((n.get("card") or {}).get("id") or n.get("cardId") or "")
-                                    for n in cur_nodes
-                                )
-                                tr_chk = await gql_call(
-                                    best_rec["page"],
-                                    GQL_FETCH_CARD_TRADES,
-                                    {"userId": best_rec["user_id"], "status": "PENDING"},
-                                    "fetchCardTrades",
-                                )
-                                pend_edges = ((tr_chk.get("data") or {}).get("cardTrades") or {}).get("edges") or []
-                                still_pending_to_main = any(
-                                    str(((e.get("node") or {}).get("destination") or {}).get("slug") or "").lower() == MAIN_ACCOUNT_SLUG.lower()
-                                    or str(((e.get("node") or {}).get("target") or {}).get("slug") or "").lower() == MAIN_ACCOUNT_SLUG.lower()
-                                    or str(((e.get("node") or {}).get("recipient") or {}).get("slug") or "").lower() == MAIN_ACCOUNT_SLUG.lower()
-                                    for e in pend_edges
-                                )
-                                if cur_total > prev_total_cards or cur_card_ids != prev_card_ids or not still_pending_to_main:
-                                    if cur_total > prev_total_cards or cur_card_ids != prev_card_ids:
-                                        borrow_confirmed = True
-                                        log_debug(f"[FORGE BORROW CONFIRMED] {best_rec['acc']['id']}: получены карты с основы ({b_summary}) на проверке #{poll_idx+1}")
-                                        best_rec["logs"].append(f"📥 Получены карты с основы {MAIN_ACCOUNT_SLUG} ({b_summary})")
-                                        send_tg_message(
-                                            f"✅ <b>Обмен с основы подтверждён!</b> Карты ({b_summary}) получены на <b>{best_rec['acc']['id']}</b> — начинаю распределение и переплавку...",
-                                            add_keyboard=False,
-                                        )
-                                        break
-                                    elif not still_pending_to_main and poll_idx >= 1:
-                                        log_debug(f"[FORGE BORROW CLOSED] Трейд с основой больше не в статусе PENDING (проверка #{poll_idx+1}), продолжаю кузню.")
-                                        break
-                            if not borrow_confirmed and not FARM_STOP_FLAG:
-                                log_debug("[FORGE BORROW TIMEOUT/SKIP] Обмен с основы не подтверждён или отклонён — продолжаю переплавку текущих карт фермы.")
-                                send_tg_message(
-                                    "ℹ️ Перехожу к переплавке и распределению карт между 12 фарм-аккаунтами...",
-                                    add_keyboard=False,
-                                )
-                            await refresh_single_account_state(best_rec["acc"]["id"], best_rec, accept_trades=True)
-                        else:
-                            b_errs = b_res.get("errors") or []
-                            if b_errs and best_rec:
-                                log_debug(f"[FORGE BORROW ERROR] {b_errs[0].get('message')}")
-                                best_rec["logs"].append(f"⚠️ Не удалось запросить карты с основы: {b_errs[0].get('message')}")
-
-                # 2. Варим все локальные тройки, которые уже есть на каждом из 12 аккаунтов
-                for aid, st in state_map.items():
-                    if FARM_STOP_FLAG:
-                        break
-                    if any(len(pool) >= 3 for pool in st["craftable_by_rank"].values()) and st["available_slots"] > 0:
-                        forged_n = await forge_local_triples_on_account(st)
-                        if forged_n > 0:
-                            await refresh_single_account_state(aid, st, accept_trades=False)
-
-                # 3. Быстрый точечный межаккаунтный обмен и переплавка между 12 фарм-аккаунтами
-                #    (обновляем состояние ТОЛЬКО донора и получателя, а не все 12 аккаунтов на каждом шаге!)
-                failed_trade_pairs: set[tuple[str, str, str]] = set()
-                for step_num in range(1, 25):
-                    if FARM_STOP_FLAG:
-                        break
-                    total_free_slots = sum(st["available_slots"] for st in state_map.values() if not st.get("forge_blocked"))
-                    if total_free_slots <= 0:
-                        log_debug("[FORGE LOOP END] Свободных слотов кузни больше нет.")
-                        break
-
-                    target_rank = None
-                    for r in FORGE_UPGRADE_CHAIN:
-                        total_r = sum(len(st["craftable_by_rank"].get(r, [])) for st in state_map.values())
-                        if total_r >= 3:
-                            target_rank = r
-                            break
-
-                    if not target_rank:
-                        log_debug("[FORGE LOOP END] На всех 12 аккаунтах больше нет 3 одноранговых карт (F/D/C/B) для объединения.")
-                        break
-
-                    receiver_candidates = [
-                        st for st in state_map.values()
-                        if st["available_slots"] > 0 and not st.get("forge_blocked")
-                    ]
-                    if not receiver_candidates:
-                        break
-                    receiver_candidates.sort(
-                        key=lambda s: (len(s["craftable_by_rank"].get(target_rank, [])), s["available_slots"]),
-                        reverse=True,
-                    )
-                    receiver = receiver_candidates[0]
-                    rec_id = receiver["acc"]["id"]
-                    rec_uid = receiver["user_id"]
-
-                    have_on_receiver = len(receiver["craftable_by_rank"].get(target_rank, []))
-                    need_count = max(0, 3 - have_on_receiver)
-
-                    if need_count == 0:
-                        forged_n = await forge_local_triples_on_account(receiver)
-                        if forged_n > 0:
-                            await refresh_single_account_state(rec_id, receiver, accept_trades=False)
-                        else:
-                            receiver["forge_blocked"] = True
-                            receiver["available_slots"] = 0
-                        continue
-
-                    log_debug(f"[FORGE STEP #{step_num}] Собираю тройку ранга {target_rank} на {rec_id} (уже есть {have_on_receiver}/3, нужно ещё {need_count})")
-                    transferred_any = False
-                    touched_donors: list[str] = []
-                    for donor_id, donor in state_map.items():
-                        if donor_id == rec_id or need_count <= 0 or FARM_STOP_FLAG:
-                            continue
-                        if (donor_id, rec_id, target_rank) in failed_trade_pairs:
-                            continue
-                        donor_pool = donor["craftable_by_rank"].get(target_rank, [])
-                        if not donor_pool:
-                            continue
-
-                        take_units = donor_pool[:need_count]
-                        offer_payload = compress_card_units_for_gql(take_units)
-                        await asyncio.sleep(random.uniform(2.5, 4.0))
-                        tr_res = await gql_call(
-                            donor["page"],
-                            GQL_SUGGEST_CARD_TRADE,
-                            {
-                                "input": {
-                                    "userId": rec_uid,
-                                    "offer": offer_payload,
-                                    "request": [],
-                                    "description": [],
-                                }
-                            },
-                            "suggestCardTrade",
-                        )
-                        if ((tr_res.get("data") or {}).get("suggestCardTrade") or {}).get("success"):
-                            log_debug(f"[FORGE TRADE SENT] {donor_id} -> {rec_id}: отправлено {len(take_units)}×{target_rank}")
-                            donor["logs"].append(
-                                f"📤 Отправлен трейд ({len(take_units)}×{target_rank}) ➡️ <b>{rec_id}</b> для переплавки"
-                            )
-                            touched_donors.append(donor_id)
-                            await asyncio.sleep(random.uniform(2.0, 3.2))
-                            acc_logs = await accept_whitelisted_incoming_trades(receiver["page"], rec_id, rec_uid)
-                            if acc_logs:
-                                receiver["logs"].extend(acc_logs)
-                                need_count -= len(take_units)
-                                transferred_any = True
-                            else:
-                                log_debug(f"[FORGE TRADE ACCEPT RETRY] Повторная проверка входящего трейда на {rec_id} через 2.5 сек...")
-                                await asyncio.sleep(2.5)
-                                acc_logs2 = await accept_whitelisted_incoming_trades(receiver["page"], rec_id, rec_uid)
-                                if acc_logs2:
-                                    receiver["logs"].extend(acc_logs2)
-                                    need_count -= len(take_units)
-                                    transferred_any = True
-                                else:
-                                    failed_trade_pairs.add((donor_id, rec_id, target_rank))
-                        else:
-                            t_errs = tr_res.get("errors") or []
-                            err_m = t_errs[0].get("message", "ошибка") if t_errs else "success=False"
-                            log_debug(f"[FORGE TRADE ERROR] {donor_id} -> {rec_id}: {err_m}")
-                            failed_trade_pairs.add((donor_id, rec_id, target_rank))
-                            if t_errs:
-                                donor["logs"].append(f"⚠️ Ошибка отправки трейда на {rec_id}: {err_m}")
-
-                    # Точечно обновляем только доноров и получателя!
-                    for d_id in touched_donors:
-                        await refresh_single_account_state(d_id, state_map[d_id], accept_trades=False)
-                    await refresh_single_account_state(rec_id, receiver, accept_trades=True)
-
-                    if not transferred_any:
-                        log_debug(f"[FORGE STEP #{step_num} SKIP] Не удалось перекинуть карты ранга {target_rank} на {rec_id}, помечаю получателя недоступным.")
-                        receiver["forge_blocked"] = True
-                        receiver["available_slots"] = 0
-                        continue
-
-                    forged_after = await forge_local_triples_on_account(receiver)
-                    if forged_after > 0:
-                        await refresh_single_account_state(rec_id, receiver, accept_trades=False)
-
-                report_lines = ["⚒️ <b>Отчёт работы Кузницы (Переплавка):</b>\n"]
-                for aid, st in state_map.items():
-                    inv_str = format_text_only_inventory_summary(st["cards_nodes"], st["shards_nodes"])
-                    rst_info = f", сброс {format_reset_at_human(st.get('reset_at'))}" if st["available_slots"] < 5 and st.get("reset_at") else ""
-                    report_lines.append(
-                        f"👤 <b>{aid}</b> (IP: <code>{st['ip']}</code> | Слоты кузни: <b>{st['available_slots']}/5</b> свободно{rst_info}):"
-                    )
-                    if st["logs"]:
-                        for lg in st["logs"]:
-                            report_lines.append(f"   • {lg}")
-                    else:
-                        report_lines.append("   • Переплавок не требовалось")
-                    report_lines.append(f"   📦 Сейчас на аккаунте: {inv_str}\n")
-
-                # 4. Отправка готовых карт НА ОСНОВУ cesium254 по новым правилам:
-                #    - На основу отправляются ТОЛЬКО карты ранга A и выше (A, S, R)!
-                #    - Карты B, C, D, F остаются лежать на фарм-аккаунтах для следующих переплавок!
-                #    - Осколки отправляются на основу ТОЛЬКО попутно вместе с картой A/S/R (отдельно осколки не шлются, а копятся!).
-                if not main_uid:
-                    report_lines.append(f"⚠️ Не удалось получить ID основного аккаунта {MAIN_ACCOUNT_SLUG}.")
-                else:
-                    total_sent_cards: Counter = Counter()
-                    total_sent_shards: Counter = Counter()
-                    accounts_that_sent: list[str] = []
-
-                    # Проверяем, появилась ли хотя бы на одном из 4 фарм-аккаунтов карта ранга A и выше (A, S, R)
-                    has_any_high_rank_on_farm = any(
-                        not node.get("locked")
-                        and int(node.get("quantity") or 1) > 0
-                        and str((node.get("card") or {}).get("rank") or "").upper() in ("A", "S", "R")
-                        for st_chk in state_map.values()
-                        for node in st_chk["cards_nodes"]
-                    )
-
-                    if has_any_high_rank_on_farm and not FARM_STOP_FLAG:
-                        # Выбираем ОДИН случайный аккаунт-курьер среди тех, на которых есть карта A/S/R,
-                        # чтобы на основу cesium254 приходил ОДИН аккуратный трейд, а не 6-12 отдельных трейдов!
-                        high_holders = [
-                            aid_k for aid_k, st_v in state_map.items()
-                            if any(
-                                not nd.get("locked")
-                                and int(nd.get("quantity") or 1) > 0
-                                and str((nd.get("card") or {}).get("rank") or "").upper() in ("A", "S", "R")
-                                for nd in st_v["cards_nodes"]
-                            )
-                        ]
-                        courier_id = random.choice(high_holders)
-                        courier_st = state_map[courier_id]
-                        courier_uid = courier_st["user_id"]
-                        log_debug(f"[FORGE PAYOUT COURIER] Случайный курьер для единого трейда на основу: {courier_id} (из {high_holders})")
-
-                        def _collect_payout_items(st_obj: dict) -> tuple[list[dict], Counter, Counter]:
-                            offers_out: list[dict] = []
-                            c_cnt: Counter = Counter()
-                            s_cnt: Counter = Counter()
-                            for nd in st_obj["cards_nodes"]:
-                                if nd.get("locked"):
-                                    continue
-                                cid = (nd.get("card") or {}).get("id") or nd.get("cardId")
-                                qty = int(nd.get("quantity") or 1)
-                                mod = int(nd.get("modifier") or 0)
-                                rank = str((nd.get("card") or {}).get("rank") or "?").upper()
-                                if cid and qty > 0 and rank in ("A", "S", "R"):
-                                    offers_out.append({"cardId": cid, "modifier": mod, "quantity": qty})
-                                    c_cnt[rank] += qty
-
-                            unlocked_sh = []
-                            for nd in st_obj["shards_nodes"]:
-                                if nd.get("locked"):
-                                    continue
-                                cid = (nd.get("card") or {}).get("id") or nd.get("cardId")
-                                qty = int(nd.get("quantity") or 1)
-                                mod = int(nd.get("modifier") or 1)
-                                rank = str((nd.get("card") or {}).get("rank") or "?").upper()
-                                if cid and qty > 0:
-                                    unlocked_sh.append({"cid": cid, "qty": qty, "mod": mod, "rank": rank})
-                            rank_prio_sh = {"F": 0, "D": 1, "C": 2, "B": 3, "A": 4, "S": 5, "R": 6}
-                            unlocked_sh.sort(key=lambda x: rank_prio_sh.get(x["rank"], 9))
-                            reserved_one = False
-                            for sh_it in unlocked_sh:
-                                send_q = sh_it["qty"]
-                                if not reserved_one:
-                                    send_q -= 1
-                                    reserved_one = True
-                                if send_q > 0:
-                                    offers_out.append({"cardId": sh_it["cid"], "modifier": sh_it["mod"], "quantity": send_q})
-                                    s_cnt[sh_it["rank"]] += send_q
-                            return offers_out, c_cnt, s_cnt
-
-                        # 4.1. Остальные аккаунты скидывают свои A/S/R и лишние осколки (оставляя 1 про запас) прямо на выбранного курьера
-                        fallback_direct_ids: list[str] = []
-                        consolidated_any = False
-                        for aid, st in state_map.items():
-                            if aid == courier_id or FARM_STOP_FLAG:
-                                continue
-                            donor_offers, _, _ = _collect_payout_items(st)
-                            if not donor_offers:
-                                continue
-                            sent_to_courier = False
-                            for i in range(0, len(donor_offers), 50):
-                                chunk = donor_offers[i : i + 50]
-                                await asyncio.sleep(random.uniform(2.5, 4.0))
-                                c_res = await gql_call(
-                                    st["page"],
-                                    GQL_SUGGEST_CARD_TRADE,
-                                    {
-                                        "input": {
-                                            "userId": courier_uid,
-                                            "offer": chunk,
-                                            "request": [],
-                                            "description": [],
-                                        }
-                                    },
-                                    "suggestCardTrade",
-                                )
-                                if ((c_res.get("data") or {}).get("suggestCardTrade") or {}).get("success"):
-                                    sent_to_courier = True
-                            if sent_to_courier:
-                                consolidated_any = True
-                                log_debug(f"[FORGE CONSOLIDATE] {aid} -> {courier_id}: передано {len(donor_offers)} поз. для общего трейда")
-                                await asyncio.sleep(random.uniform(1.8, 3.0))
-                                await accept_whitelisted_incoming_trades(courier_st["page"], courier_id, courier_uid)
-                            else:
-                                fallback_direct_ids.append(aid)
-
-                        if consolidated_any:
-                            await asyncio.sleep(1.5)
-                            await accept_whitelisted_incoming_trades(courier_st["page"], courier_id, courier_uid)
-                            await refresh_single_account_state(courier_id, courier_st, accept_trades=False)
-
-                        # 4.2. Курьер отправляет ОДИН единый трейд на основу cesium254 (плюс резерв, если донор не смог передать курьеру)
-                        for send_aid in [courier_id] + fallback_direct_ids:
-                            if FARM_STOP_FLAG:
-                                break
-                            st_s = state_map[send_aid]
-                            all_offer_entries, acc_cards_cnt, acc_shards_cnt = _collect_payout_items(st_s)
-                            if not all_offer_entries:
-                                continue
-                            sent_ok_any = False
-                            for i in range(0, len(all_offer_entries), 50):
-                                chunk = all_offer_entries[i : i + 50]
-                                await asyncio.sleep(random.uniform(3.0, 4.8))
-                                s_res = await gql_call(
-                                    st_s["page"],
-                                    GQL_SUGGEST_CARD_TRADE,
-                                    {
-                                        "input": {
-                                            "userId": main_uid,
-                                            "offer": chunk,
-                                            "request": [],
-                                            "description": [],
-                                        }
-                                    },
-                                    "suggestCardTrade",
-                                )
-                                if ((s_res.get("data") or {}).get("suggestCardTrade") or {}).get("success"):
-                                    sent_ok_any = True
-                            if sent_ok_any:
-                                accounts_that_sent.append(send_aid)
-                                for r_k, q_v in acc_cards_cnt.items():
-                                    total_sent_cards[r_k] += q_v
-                                for r_k, q_v in acc_shards_cnt.items():
-                                    total_sent_shards[r_k] += q_v
-
-                    if accounts_that_sent:
-                        c_summary = ", ".join(
-                            f"<b>{total_sent_cards[r]}</b> {RANK_BADGE.get(r, r)}"
-                            for r in RANK_ORDER
-                            if total_sent_cards.get(r, 0) > 0
-                        ) or "нет"
-                        s_summary = ", ".join(
-                            f"<b>{total_sent_shards[r]}</b> {RANK_BADGE.get(r, r)}"
-                            for r in RANK_ORDER
-                            if total_sent_shards.get(r, 0) > 0
-                        ) or "нет"
-                        report_lines.append(
-                            f"🎁 <b>Отправлены трейды (ранг A и выше + попутные осколки) на основу <a href='{MAIN_ACCOUNT_URL}'>{MAIN_ACCOUNT_SLUG}</a> (от: {', '.join(accounts_that_sent)}):</b>\n"
-                            f"🃏 <b>Карты ({sum(total_sent_cards.values())} шт.):</b> {c_summary}\n"
-                            f"🧩 <b>Попутные осколки ({sum(total_sent_shards.values())} шт.):</b> {s_summary}"
-                        )
-                    else:
-                        report_lines.append(
-                            "ℹ️ <b>Карт ранга A и выше сейчас нет</b> — все карты B/C/D/F и осколки оставлены на фарм-аккаунтах для накопления и следующих переплавок."
-                        )
-
-                for aid, st in state_map.items():
-                    await st["context"].storage_state(path=str(get_session_file(aid)))
-            finally:
-                ACTIVE_BROWSER_PAGES.clear()
-                for ctx in contexts:
-                    try:
-                        await ctx.close()
-                    except Exception:
-                        pass
-            await browser.close()
-    except Exception as e_forge:
-        log_debug(f"[FORGE FATAL ERROR] {e_forge}")
-        report_lines.append(f"\n⚠️ <b>Кузня прервана из-за ошибки:</b> <code>{str(e_forge)[:300]}</code>")
-    finally:
-        proxy_mgr.stop_all()
-        if not report_sent:
-            if not report_lines:
-                report_lines = ["⚒️ <b>Отчёт работы Кузницы (Переплавка):</b>\n"]
-                for aid, st in state_map.items():
-                    inv_str = format_text_only_inventory_summary(st["cards_nodes"], st["shards_nodes"])
-                    report_lines.append(f"👤 <b>{aid}</b> (Слоты: <b>{st['available_slots']}/5</b>): {inv_str}")
-            log_debug("[FORGE PIPELINE DONE] Отправляю итоговый отчёт Кузницы в Telegram.")
-            send_tg_message("\n".join(report_lines), add_keyboard=True)
-
-
-# ==============================================================================
-# 8.5. СЦЕНАРИЙ 3.5: РУЧНОЙ ТРЕЙД ВЫБРАННЫХ КАРТ С ФЕРМЫ НА ОСНОВУ (БЕЗ КУЗНИ)
-# ==============================================================================
-
-WAITING_FOR_TRADE_INPUT: bool = False
-
-RANK_TOKEN_MAP: dict[str, str] = {
-    "r": "R", "р": "R",
-    "s": "S", "ы": "S", "сс": "S",
-    "a": "A", "а": "A",
-    "b": "B", "в": "B", "б": "B",
-    "c": "C", "с": "C", "ц": "C",
-    "d": "D", "д": "D",
-    "f": "F", "ф": "F",
-}
-
-
-def parse_custom_trade_spec(raw_spec: str) -> Optional[dict]:
-    """
-    Разбирает команду ручного трейда с индивидуальной привязкой рангов к каждому аккаунту!
-    Поддерживаемые форматы (через пробел, запятую или слитно):
-      - '1B 2C 4D 5C' или '1 B, 2 C, 4 D, 5 C' -> с #1 ранг B, с #2 ранг C, с #4 ранг D, с #5 ранг C
-      - '1 B C, 3 B, 5 C D, 6 D' -> с #1 ранги B и C, с #3 ранг B, с #5 ранги C и D, с #6 ранг D
-      - '1 B' -> с аккаунта #1 ранг B
-      - '1 B C' -> с аккаунта #1 ранги B и C
-      - '1 4 B' или '1-4 B' -> с аккаунтов #1 и #4 ранг B
-      - 'все B' (или просто 'B') -> со всех 12 аккаунтов ранг B
-      - '5 все' -> с аккаунта #5 все незакреплённые карты всех рангов (F, D, C, B, A, S, R)
-    """
-    s = (raw_spec or "").strip()
-    if not s:
-        return None
-    if s.lower().startswith("/trade"):
-        s = s[6:].strip()
-    if not s:
-        return None
-
-    # Проверяем команду отправки выгодных карт для банка: "банк", "банк 1.5", "выгодные", "профит", "bank 1.6"
-    s_low = s.lower().strip()
-    m_bank = re.match(r"^(?:банк|bank|выгодные|выгода|профит|profit)(?:\s+([0-9]+(?:[.,][0-9]+)?))?$", s_low)
-    if m_bank:
-        min_net = DEFAULT_BANK_MIN_NET_PRICE
-        if m_bank.group(1):
-            try:
-                min_net = max(0.5, float(m_bank.group(1).replace(",", ".")))
-            except Exception:
-                min_net = DEFAULT_BANK_MIN_NET_PRICE
-        return {"mode": "bank", "min_net": round(min_net, 2)}
-
-    # Заменяем запятые, точки с запятой, слэши и плюсы на пробелы
-    norm = re.sub(r"[,;/+|]+", " ", s_low).strip()
-    raw_words = [w for w in norm.split() if w]
-    if not raw_words:
-        return None
-
-    # Предварительно разбиваем слитные токены вроде "1b", "6bc", "2вс" на ["1", "b"], ["6", "b", "c"]
-    expanded_tokens: list[str] = []
-    for w in raw_words:
-        m_combo = re.match(r"^((?:1[0-2]|[1-9])(?:-(?:1[0-2]|[1-9]))?)([rрsыaаbвбcсцdдfф]+)$", w)
-        if m_combo:
-            expanded_tokens.append(m_combo.group(1))
-            for ch in m_combo.group(2):
-                expanded_tokens.append(ch)
-            continue
-        # Если написано несколько букв рангов слитно (например "bc" или "вс" или "bcd")
-        if len(w) in (2, 3, 4) and w not in ("все", "всё", "all", "акк", "оск") and all(ch in RANK_TOKEN_MAP for ch in w):
-            for ch in w:
-                expanded_tokens.append(ch)
-            continue
-        expanded_tokens.append(w)
-
-    slug_to_idx = {acc["id"].lower(): int(acc["idx"]) for acc in FARM_ACCOUNTS}
-    acc_to_ranks: dict[int, list[str]] = {}
-    current_accs: list[int] = []
-    current_accs_have_ranks: bool = False
-
-    def _add_ranks_to_current_accs(ranks_list: list[str]) -> None:
-        nonlocal current_accs, current_accs_have_ranks
-        if not current_accs:
-            current_accs = [int(a["idx"]) for a in FARM_ACCOUNTS]
-        current_accs_have_ranks = True
-        for a_idx in current_accs:
-            if a_idx not in acc_to_ranks:
-                acc_to_ranks[a_idx] = []
-            for r_code in ranks_list:
-                if r_code not in acc_to_ranks[a_idx]:
-                    acc_to_ranks[a_idx].append(r_code)
-
-    def _push_account_idxs(new_idxs: list[int]) -> None:
-        nonlocal current_accs, current_accs_have_ranks
-        if current_accs_have_ranks:
-            current_accs = []
-            current_accs_have_ranks = False
-        for idx_val in new_idxs:
-            if idx_val not in current_accs:
-                current_accs.append(idx_val)
-
-    for i_tok, tok in enumerate(expanded_tokens):
-        if tok == "с" and i_tok == 0 and len(expanded_tokens) > 1 and (
-            expanded_tokens[1].isdigit() or re.match(r"^(?:1[0-2]|[1-9])-(?:1[0-2]|[1-9])$", expanded_tokens[1]) or expanded_tokens[1] in ("все", "всё", "all")
-        ):
-            continue
-        if tok in ("карты", "карта", "ранг", "ранга", "рангов", "акк", "аккаунт", "аккаунты", "на", "основу", "трейд", "обмен", "и"):
-            continue
-
-        if tok in ("все", "всё", "all", "*"):
-            if not current_accs or current_accs_have_ranks:
-                _push_account_idxs([int(a["idx"]) for a in FARM_ACCOUNTS])
-            else:
-                _add_ranks_to_current_accs(["R", "S", "A", "B", "C", "D", "F"])
-            continue
-
-        if tok in slug_to_idx:
-            _push_account_idxs([slug_to_idx[tok]])
-            continue
-
-        m_range = re.match(r"^(1[0-2]|[1-9])-(1[0-2]|[1-9])$", tok)
-        if m_range:
-            a_i, b_i = int(m_range.group(1)), int(m_range.group(2))
-            _push_account_idxs(list(range(min(a_i, b_i), max(a_i, b_i) + 1)))
-            continue
-
-        if tok.isdigit() and 1 <= int(tok) <= 12:
-            _push_account_idxs([int(tok)])
-            continue
-
-        if tok in RANK_TOKEN_MAP:
-            _add_ranks_to_current_accs([RANK_TOKEN_MAP[tok]])
-            continue
-
-        # Любой неизвестный токен означает, что это не команда трейда (например, обычный промокод)
-        return None
-
-    # Если остались выбранные аккаунты без указания ранга в конце (например, пользователь написал просто некорректную строку без рангов)
-    if not acc_to_ranks or not current_accs_have_ranks:
-        return None
-
-    return {"plan": acc_to_ranks}
-
-
-def get_trade_prompt_message() -> str:
-    acc_hint = ", ".join(f"<b>#{a['idx']}</b> ({a['id']})" for a in FARM_ACCOUNTS)
-    return (
-        "🤝 <b>Отправка нужных карт с фермы на основу (БЕЗ Кузни):</b>\n\n"
-        "Напишите в чат, <b>с каких аккаунтов (1–12)</b> и <b>какие ранги (F, D, C, B, A, S)</b> отправить вам на основу <b>cesium254</b> "
-        "(можно указывать как один аккаунт, так и сразу несколько разных аккаунтов с разными рангами!):\n\n"
-        "• <code>1 B</code> — отправить ранг <b>B</b> с аккаунта <b>#1</b>\n"
-        "• <code>1 B C</code> — отправить ранги <b>B и C</b> с аккаунта <b>#1</b>\n"
-        "• <code>1B 2C 4D 5C</code> (или <code>1 B, 3 B, 5 C, 6 D</code>) — отправить с <b>#1</b> ранг B, с <b>#2</b> ранг C, с <b>#4</b> ранг D, с <b>#5</b> ранг C\n"
-        "• <code>1 4 B</code> (или <code>1-4 B</code>) — отправить ранг <b>B</b> с аккаунтов <b>#1 и #4</b>\n"
-        "• <code>все B</code> (или просто <code>B</code>) — собрать все карты ранга <b>B</b> со всех 12 аккаунтов\n"
-        "• <code>5 все</code> — отправить все незакреплённые карты с аккаунта <b>#5</b>\n"
-        "• <code>банк</code> (или <code>банк 1.6</code>) — 🏦 проверить базу <b>SenkuTools</b>, собрать все выгодные карты (по умолчанию <b>≥1.50</b> чистыми) и отправить <b>одним трейдом</b> на основу!\n\n"
-        f"📋 <b>Аккаунты:</b> {acc_hint}\n"
-        "<i>(Писать можно слитно, через пробел или через запятую, на английской или русской раскладке: F/Ф, D/Д, C/С/Ц, B/В/Б, A/А, S)</i>"
-    )
-
-
-async def run_bank_profitable_trade(min_net_price: float = DEFAULT_BANK_MIN_NET_PRICE) -> None:
-    st_info = await asyncio.to_thread(ensure_senkutools_price_db, True)
-    st_line = format_senkutools_status_line(st_info)
-    if not SENKUTOOLS_PRICE_DB:
-        send_tg_message(f"{st_line}\n\n⚠️ Не удалось загрузить базу цен SenkuTools — отмена поиска выгодных карт.", add_keyboard=True)
-        return
-
-    send_tg_message(
-        f"{st_line}\n\n🏦 <b>Ищу выгодные карты для банка (чистыми ≥ {min_net_price:.2f}) на всех 12 фарм-аккаунтах...</b>\n"
-        "Все найденные карты соберу на один случайный аккаунт и отправлю на основу <b>одним трейдом</b>!",
-        add_keyboard=False,
-    )
-
-    proxy_mgr = AccountProxyManager()
-    found_map: dict[str, dict] = {}
-    contexts: list[BrowserContext] = []
-
-    try:
-        async with async_playwright() as p:
-            browser = await launch_senkuro_browser(p)
-            main_uid: Optional[str] = KNOWN_USER_IDS.get(MAIN_ACCOUNT_SLUG)
-            try:
-                for acc in FARM_ACCOUNTS:
-                    if FARM_STOP_FLAG:
-                        break
-                    aid = acc["id"]
-                    proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
-                    ctx = await create_account_context(browser, acc, proxy_url)
-                    contexts.append(ctx)
-                    page, user_obj = await ensure_logged_in(ctx, acc)
-                    if not user_obj or not user_obj.get("id"):
-                        continue
-                    uid = str(user_obj["id"])
-                    c_nodes = await fetch_all_user_cards_gql(page, uid, modifier_val=0)
-                    prof_offers: list[dict] = []
-                    prof_descs: list[str] = []
-                    for nd in c_nodes:
-                        if nd.get("locked"):
-                            continue
-                        card_obj = nd.get("card") or {}
-                        c_slug = str(card_obj.get("slug") or "")
-                        net_p = get_card_bank_net_price(c_slug)
-                        if net_p is not None and net_p >= min_net_price:
-                            cid = card_obj.get("id") or nd.get("cardId")
-                            qty = int(nd.get("quantity") or 1)
-                            mod = int(nd.get("modifier") or 0)
-                            rnk = str(card_obj.get("rank") or "?").upper()
-                            ttl = extract_card_title(card_obj)
-                            if cid and qty > 0:
-                                prof_offers.append({"cardId": cid, "modifier": mod, "quantity": qty})
-                                prof_descs.append(f"{RANK_BADGE.get(rnk, rnk)} «{ttl}» (<b>{net_p:.2f}</b>)")
-                    if prof_offers:
-                        found_map[aid] = {
-                            "acc": acc,
-                            "page": page,
-                            "context": ctx,
-                            "user_id": uid,
-                            "offers": prof_offers,
-                            "descs": prof_descs,
-                        }
-                    else:
-                        try:
-                            await ctx.storage_state(path=str(get_session_file(aid)))
-                            await ctx.close()
-                        except Exception:
-                            pass
-
-                if not found_map:
-                    send_tg_message(
-                        f"{st_line}\n\nℹ️ <b>Выгодных карт для банка (≥ {min_net_price:.2f} чистыми) на 12 фарм-аккаунтах сейчас нет.</b>",
-                        add_keyboard=True,
-                    )
-                    return
-
-                # Выбираем ОДИН случайный аккаунт-курьер из тех, где нашлись выгодные карты
-                courier_id = random.choice(list(found_map.keys()))
-                courier = found_map[courier_id]
-                courier_uid = courier["user_id"]
-                all_descs: list[str] = []
-                for aid_k, f_st in found_map.items():
-                    for d_s in f_st["descs"]:
-                        all_descs.append(f"• {d_s} <i>({aid_k})</i>")
-
-                # Перекидываем с остальных аккаунтов на курьера, чтобы на основу пришёл ОДИН трейд!
-                fallback_ids: list[str] = []
-                for aid_k, f_st in found_map.items():
-                    if aid_k == courier_id or FARM_STOP_FLAG:
-                        continue
-                    await asyncio.sleep(random.uniform(2.5, 4.0))
-                    t_res = await gql_call(
-                        f_st["page"],
-                        GQL_SUGGEST_CARD_TRADE,
-                        {"input": {"userId": courier_uid, "offer": f_st["offers"][:50], "request": [], "description": []}},
-                        "suggestCardTrade",
-                    )
-                    if ((t_res.get("data") or {}).get("suggestCardTrade") or {}).get("success"):
-                        await asyncio.sleep(random.uniform(2.0, 3.0))
-                        await accept_whitelisted_incoming_trades(courier["page"], courier_id, courier_uid)
-                    else:
-                        fallback_ids.append(aid_k)
-
-                if len(found_map) > 1:
-                    await asyncio.sleep(1.5)
-                    await accept_whitelisted_incoming_trades(courier["page"], courier_id, courier_uid)
-
-                sent_from: list[str] = []
-                total_sent_qty = 0
-                for s_aid in [courier_id] + fallback_ids:
-                    s_st = found_map[s_aid]
-                    cur_nodes = await fetch_all_user_cards_gql(s_st["page"], s_st["user_id"], modifier_val=0)
-                    send_offers = []
-                    for nd in cur_nodes:
-                        if nd.get("locked"):
-                            continue
-                        card_obj = nd.get("card") or {}
-                        net_p = get_card_bank_net_price(str(card_obj.get("slug") or ""))
-                        if net_p is not None and net_p >= min_net_price:
-                            cid = card_obj.get("id") or nd.get("cardId")
-                            qty = int(nd.get("quantity") or 1)
-                            mod = int(nd.get("modifier") or 0)
-                            if cid and qty > 0:
-                                send_offers.append({"cardId": cid, "modifier": mod, "quantity": qty})
-                                total_sent_qty += qty
-                    if send_offers and main_uid:
-                        await asyncio.sleep(random.uniform(2.5, 4.0))
-                        m_res = await gql_call(
-                            s_st["page"],
-                            GQL_SUGGEST_CARD_TRADE,
-                            {"input": {"userId": main_uid, "offer": send_offers[:50], "request": [], "description": []}},
-                            "suggestCardTrade",
-                        )
-                        if ((m_res.get("data") or {}).get("suggestCardTrade") or {}).get("success"):
-                            sent_from.append(s_aid)
-
-                for aid_k, f_st in found_map.items():
-                    try:
-                        await f_st["context"].storage_state(path=str(get_session_file(aid_k)))
-                    except Exception:
-                        pass
-
-                if sent_from:
-                    send_tg_message(
-                        f"{st_line}\n\n"
-                        f"💎 <b>Отправлен единый трейд выгодных карт (≥ {min_net_price:.2f} чистыми) на основу <a href='{MAIN_ACCOUNT_URL}'>{MAIN_ACCOUNT_SLUG}</a> от <b>{', '.join(sent_from)}</b> ({total_sent_qty} шт.):</b>\n\n"
-                        + "\n".join(all_descs),
-                        add_keyboard=True,
-                    )
-                else:
-                    send_tg_message(f"{st_line}\n\n⚠️ Карты найдены, но не удалось отправить трейд на основу.", add_keyboard=True)
-            finally:
-                for ctx in contexts:
-                    try:
-                        await ctx.close()
-                    except Exception:
-                        pass
-            await browser.close()
-    finally:
-        proxy_mgr.stop_all()
-
-
-async def run_custom_trade_command(spec_str: str) -> None:
-    parsed = parse_custom_trade_spec(spec_str)
-    if parsed and parsed.get("mode") == "bank":
-        await run_bank_profitable_trade(float(parsed.get("min_net") or DEFAULT_BANK_MIN_NET_PRICE))
-        return
-    if not parsed or not parsed.get("plan"):
-        send_tg_message(
-            "⚠️ <b>Не удалось распознать аккаунты и ранги для трейда.</b>\n\n" + get_trade_prompt_message(),
-            add_keyboard=True,
-        )
-        return
-
-    plan: dict[int, list[str]] = parsed["plan"]
-    selected_accounts = [a for a in FARM_ACCOUNTS if int(a["idx"]) in plan]
-
-    plan_summary_parts = []
-    for acc in selected_accounts:
-        idx_v = int(acc["idx"])
-        r_badges = "+".join(RANK_BADGE.get(r, r) for r in plan[idx_v])
-        plan_summary_parts.append(f"<b>#{idx_v} ({acc['id']})</b> ➡️ {r_badges}")
-
-    send_tg_message(
-        f"🤝 <b>Запускаю отправку карт на основу <a href='{MAIN_ACCOUNT_URL}'>{MAIN_ACCOUNT_SLUG}</a> (без Кузни):</b>\n"
-        + "\n".join(f"• {p_str}" for p_str in plan_summary_parts),
-        add_keyboard=True,
-    )
-
-    proxy_mgr = AccountProxyManager()
-    report_lines = [
-        f"🤝 <b>Отчёт отправки карт на основу <a href='{MAIN_ACCOUNT_URL}'>{MAIN_ACCOUNT_SLUG}</a>:</b>\n",
-    ]
-    total_sent_cards: Counter = Counter()
-
-    try:
-        async with async_playwright() as p:
-            browser = await launch_senkuro_browser(p)
-            main_uid: Optional[str] = KNOWN_USER_IDS.get(MAIN_ACCOUNT_SLUG)
-
-            for acc in selected_accounts:
-                if FARM_STOP_FLAG:
-                    break
-                aid = acc["id"]
-                idx_v = int(acc["idx"])
-                acc_target_ranks = plan.get(idx_v, [])
-                if not acc_target_ranks:
-                    continue
-
-                proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
-                ctx = await create_account_context(browser, acc, proxy_url)
-                try:
-                    page, user_obj = await ensure_logged_in(ctx, acc)
-                    if not user_obj or not user_obj.get("id"):
-                        report_lines.append(f"❌ <b>#{idx_v} {aid}</b>: не удалось авторизоваться")
-                        continue
-                    uid = str(user_obj["id"])
-
-                    if not main_uid:
-                        m_res = await gql_call(page, GQL_FETCH_USER_BY_SLUG, {"slug": MAIN_ACCOUNT_SLUG}, "fetchUserBySlug")
-                        m_usr = (m_res.get("data") or {}).get("user")
-                        if isinstance(m_usr, dict) and m_usr.get("id"):
-                            main_uid = str(m_usr["id"])
-
-                    if not main_uid:
-                        report_lines.append(f"❌ <b>#{idx_v} {aid}</b>: не удалось получить ID основного аккаунта {MAIN_ACCOUNT_SLUG}")
-                        continue
-
-                    offer_entries = []
-                    acc_c_cnt: Counter = Counter()
-                    c_nodes = await fetch_all_user_cards_gql(page, uid, modifier_val=0)
-                    for node in c_nodes:
-                        if node.get("locked"):
-                            continue
-                        cid = (node.get("card") or {}).get("id") or node.get("cardId")
-                        qty = int(node.get("quantity") or 1)
-                        mod = int(node.get("modifier") or 0)
-                        rnk = str((node.get("card") or {}).get("rank") or "?").upper()
-                        if cid and qty > 0 and rnk in acc_target_ranks:
-                            offer_entries.append({"cardId": cid, "modifier": mod, "quantity": qty})
-                            acc_c_cnt[rnk] += qty
-
-                    if offer_entries:
-                        sent_ok = False
-                        last_err = ""
-                        for i in range(0, len(offer_entries), 50):
-                            chunk = offer_entries[i : i + 50]
-                            await asyncio.sleep(random.uniform(2.5, 4.2))
-                            s_res = await gql_call(
-                                page,
-                                GQL_SUGGEST_CARD_TRADE,
-                                {
-                                    "input": {
-                                        "userId": main_uid,
-                                        "offer": chunk,
-                                        "request": [],
-                                        "description": [],
-                                    }
-                                },
-                                "suggestCardTrade",
-                            )
-                            if ((s_res.get("data") or {}).get("suggestCardTrade") or {}).get("success"):
-                                sent_ok = True
-                            else:
-                                errs = s_res.get("errors") or []
-                                if errs:
-                                    last_err = str(errs[0].get("message") or "")
-                        if sent_ok:
-                            for r_k, q_v in acc_c_cnt.items():
-                                total_sent_cards[r_k] += q_v
-                            c_desc = ", ".join(f"<b>{acc_c_cnt[r]}</b>×{RANK_BADGE.get(r, r)}" for r in RANK_ORDER if acc_c_cnt.get(r))
-                            report_lines.append(f"🎁 <b>#{idx_v} {aid}</b> ➡️ отправлено на основу: {c_desc}")
-                        else:
-                            report_lines.append(f"⚠️ <b>#{idx_v} {aid}</b>: ошибка отправки трейда ({last_err or 'ошибка API'})")
-                    else:
-                        req_r_str = ", ".join(acc_target_ranks)
-                        report_lines.append(f"ℹ️ <b>#{idx_v} {aid}</b>: нет незакреплённых карт ранга {req_r_str}")
-
-                    await ctx.storage_state(path=str(get_session_file(aid)))
-                finally:
-                    ACTIVE_BROWSER_PAGES.pop(aid, None)
-                    try:
-                        await ctx.close()
-                    except Exception:
-                        pass
-            await browser.close()
-    finally:
-        proxy_mgr.stop_all()
-
-    report_lines.append("")
-    if sum(total_sent_cards.values()) > 0:
-        c_sum = ", ".join(f"<b>{total_sent_cards[r]}</b> {RANK_BADGE.get(r, r)}" for r in RANK_ORDER if total_sent_cards.get(r))
-        report_lines.append(
-            f"✅ <b>Итого отправлено на основу <a href='{MAIN_ACCOUNT_URL}'>{MAIN_ACCOUNT_SLUG}</a>:</b> "
-            f"<b>{sum(total_sent_cards.values())}</b> карт ({c_sum}) — можете сразу принимать их на основе!"
-        )
-    else:
-        report_lines.append("ℹ️ <b>Ни одной карты выбранных рангов для отправки не найдено.</b>")
-
-    send_tg_message("\n".join(report_lines), add_keyboard=True)
-
-
-# ==============================================================================
-# 9. СЦЕНАРИЙ 4: ПОЛНЫЙ БОЕВОЙ 8-ЧАСОВОЙ ФАРМ МАНГИ И КАРТ НА GITHUB ACTIONS
-#    (БЕЗ KAGGLE — ПОЛНЫЙ ДВИЖОК v6.5: Xvfb + WebWorker + Audio + Сбор Карт)
-# ==============================================================================
-
-FULL_FARM_USERSCRIPT_V9 = r"""
-(() => {
-    if (window.__senkuroSuiteV9Loaded) return;
-    window.__senkuroSuiteV9Loaded = true;
-
-    const TAB_ID = 'tab_' + Math.random().toString(36).slice(2, 9) + '_' + Date.now();
-
-    // 1. АНТИ-СОН И ИМИТАЦИЯ АКТИВНОЙ ВКЛАДКИ (requestAnimationFrame + WebLocks + AudioContext)
-    try {
-        const hiddenDesc = { get: () => false, configurable: true };
-        const visDesc = { get: () => 'visible', configurable: true };
-        Object.defineProperty(document, 'hidden', hiddenDesc);
-        Object.defineProperty(document, 'visibilityState', visDesc);
-        Object.defineProperty(document, 'webkitHidden', hiddenDesc);
-        if (window.Document && window.Document.prototype) {
-            Object.defineProperty(window.Document.prototype, 'hidden', hiddenDesc);
-            Object.defineProperty(window.Document.prototype, 'visibilityState', visDesc);
-            window.Document.prototype.hasFocus = () => true;
-        }
-        document.hasFocus = () => true;
-
-        const stopEvt = (e) => { e.stopImmediatePropagation(); e.stopPropagation(); };
-        ['visibilitychange', 'webkitvisibilitychange', 'blur', 'focusout', 'freeze', 'pagehide'].forEach(evtName => {
-            window.addEventListener(evtName, stopEvt, true);
-            document.addEventListener(evtName, stopEvt, true);
-        });
-
-        if (window.requestAnimationFrame) {
-            const origRAF = window.requestAnimationFrame.bind(window);
-            window.requestAnimationFrame = function(callback) {
-                let executed = false;
-                const rafId = origRAF((ts) => {
-                    if (!executed) { executed = true; callback(ts); }
-                });
-                window.setTimeout(() => {
-                    if (!executed) {
-                        executed = true;
-                        try { callback(window.performance ? window.performance.now() : Date.now()); } catch (e) {}
-                    }
-                }, 30);
-                return rafId;
-            };
-        }
-    } catch (e) {}
-
-    let webLockHeld = false;
-    let silentAudioStarted = false;
-    function ensureKeepAlive() {
-        if (!webLockHeld && navigator.locks && navigator.locks.request) {
-            webLockHeld = true;
-            navigator.locks.request('senkuro_keep_alive_' + TAB_ID, () => new Promise(() => {})).catch(() => {});
-        }
-        if (!silentAudioStarted) {
-            try {
-                const AudioCtx = window.AudioContext || window.webkitAudioContext;
-                if (AudioCtx) {
-                    const ctx = new AudioCtx();
-                    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-                    const osc = ctx.createOscillator();
-                    const gain = ctx.createGain();
-                    gain.gain.value = 0.00001;
-                    osc.connect(gain);
-                    gain.connect(ctx.destination);
-                    osc.start();
-                    silentAudioStarted = true;
-                }
-            } catch (e) {}
-        }
-    }
-
-    function isElementVisible(el) {
-        if (!el || !el.isConnected) return false;
-        try {
-            const style = window.getComputedStyle(el);
-            if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity) === 0) return false;
-            const rect = el.getBoundingClientRect();
-            return rect.width > 0 && rect.height > 0;
-        } catch (e) { return true; }
-    }
-
-    function triggerClick(el) {
-        if (!el) return;
-        try { if (typeof el.click === 'function') { el.click(); return; } } catch (e) {}
-        try { el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); } catch (e) {}
-    }
-
-    function findVisibleContinueModal() {
-        const directNodes = document.querySelectorAll('.modal-drop__info, [class*="modal-drop__info"]');
-        for (const node of directNodes) {
-            if (isElementVisible(node)) return node;
-        }
-        for (const el of document.querySelectorAll('div, button, span')) {
-            if (el.children.length > 2) continue;
-            if (el.textContent && el.textContent.includes('Нажми, чтобы продолжить') && isElementVisible(el)) {
-                return el;
-            }
-        }
-        return null;
-    }
-
-    function findVisibleCardDrop() {
-        const drops = document.querySelectorAll('.cards-drop, [class*="cards-drop"], img[alt="card-drop"], img[src*="card-back"]');
-        for (const el of drops) {
-            if (isElementVisible(el)) return el;
-        }
-        return null;
-    }
-
-    function getAutoscrollButton() {
-        const path = document.querySelector('svg path[d^="M380-337"]');
-        return path ? (path.closest('button') || path.parentElement) : null;
-    }
-
-    function runFarmTick() {
-        ensureKeepAlive();
-        const path = window.location.pathname;
-        if (path.includes('/auth/')) return;
-        const bodyTxt = document.body ? (document.body.innerText || '') : '';
-        if (bodyTxt.includes('Приготовьтесь к приключениям')) return;
-
-        // ЭТАП 0: Авто-закрытие таблички 18+ («Подтверди возраст» -> «Больше не спрашивать» + «Мне есть 18»)
-        if (bodyTxt.includes('Подтверди возраст') || bodyTxt.includes('Мне есть 18')) {
-            const ageBtn = Array.from(document.querySelectorAll('button, [role="button"]')).find(el => {
-                const t = (el.innerText || el.textContent || '').trim();
-                return (t.includes('Мне есть 18') || t.includes('Мне исполнилось 18')) && isElementVisible(el);
-            });
-            if (ageBtn) {
-                const dontAsk = Array.from(document.querySelectorAll('label, span, div')).find(el => {
-                    const t = (el.innerText || el.textContent || '').trim();
-                    return t === 'Больше не спрашивать' && isElementVisible(el);
-                });
-                if (dontAsk && !window.__senkuroAgeDontAskClicked) {
-                    window.__senkuroAgeDontAskClicked = true;
-                    const prevBox = dontAsk.previousElementSibling;
-                    if (prevBox && isElementVisible(prevBox)) {
-                        triggerClick(prevBox);
-                    } else {
-                        triggerClick(dontAsk);
-                    }
-                    setTimeout(() => triggerClick(ageBtn), 180);
-                    return;
-                }
-                triggerClick(ageBtn);
-                return;
-            }
-        }
-
-        // ЭТАП 2 СБОРА КАРТЫ: закрываем полноэкранную модалку полученной карты
-        const continueDrop = findVisibleContinueModal();
-        if (continueDrop) {
-            triggerClick(continueDrop);
-            return;
-        }
-
-        // ЭТАП 1 СБОРА КАРТЫ: открываем выпавшую рубашку карты справа снизу
-        const cardDrop = findVisibleCardDrop();
-        if (cardDrop) {
-            triggerClick(cardDrop);
-            if (cardDrop.parentElement && cardDrop.parentElement !== document.body) {
-                triggerClick(cardDrop.parentElement);
-            }
-            setTimeout(() => {
-                const modalNow = findVisibleContinueModal();
-                if (modalNow) triggerClick(modalNow);
-            }, 650);
-            return;
-        }
-
-        // ЭТАП 3: В читалке (/chapters/) держим включенной автопрокрутку + проверяем конец манги
-        if (path.includes('/chapters/')) {
-            const slugM = path.match(/\/manga\/([^/]+)/);
-            const curSlug = slugM ? slugM[1] : '';
-            if (curSlug && sessionStorage.getItem('senkuro_active_slug') !== curSlug) {
-                sessionStorage.setItem('senkuro_active_slug', curSlug);
-                sessionStorage.setItem('senkuro_slug_start_ts', String(Date.now()));
-            }
-
-            const atBottom = (window.innerHeight + window.scrollY) >= (document.documentElement.scrollHeight - 220);
-            if (atBottom) {
-                const goToTitleBtn = Array.from(document.querySelectorAll('a, button')).find(el => {
-                    const t = (el.innerText || el.textContent || '').trim();
-                    return t.includes('Перейти к тайтлу') || t.includes('К тайтлу');
-                });
-                const nextChapBtn = Array.from(document.querySelectorAll('a, button')).find(el => {
-                    const t = (el.innerText || el.textContent || '').trim();
-                    return t.includes('Следующая глава') || t.includes('След. глава');
-                });
-                if (goToTitleBtn && !nextChapBtn && isElementVisible(goToTitleBtn)) {
-                    if (curSlug) {
-                        try {
-                            const cdMap = JSON.parse(localStorage.getItem('senkuro_cooldown_mangas_v4') || '{}');
-                            cdMap[curSlug] = Date.now() + 12 * 3600 * 1000;
-                            localStorage.setItem('senkuro_cooldown_mangas_v4', JSON.stringify(cdMap));
-                        } catch (e) {}
-                    }
-                    sessionStorage.setItem('senkuro_return_to_bookmarks', '1');
-                    triggerClick(goToTitleBtn);
-                    return;
-                }
-            }
-
-            const autoscrollBtn = getAutoscrollButton();
-            if (autoscrollBtn) {
-                const isActive = autoscrollBtn.classList.contains('button--accent') ||
-                                 autoscrollBtn.classList.contains('active') ||
-                                 autoscrollBtn.getAttribute('aria-pressed') === 'true';
-                if (!isActive) triggerClick(autoscrollBtn);
-            } else {
-                window.scrollBy({ top: 180, behavior: 'smooth' });
-            }
-            return;
-        }
-
-        // ЭТАП 4: На странице описания тайтла (/manga/...)
-        if (path.startsWith('/manga/') && !path.includes('/chapters/')) {
-            if (sessionStorage.getItem('senkuro_return_to_bookmarks') === '1') {
-                sessionStorage.removeItem('senkuro_return_to_bookmarks');
-                const savedBmUrl = localStorage.getItem('senkuro_my_bookmarks_url');
-                if (savedBmUrl) {
-                    window.location.href = savedBmUrl;
-                    return;
-                }
-            }
-            const startOrContinueBtn = Array.from(document.querySelectorAll('button.button--accent, a.button--accent, a[href*="/chapters/"]')).find(btn => {
-                const txt = (btn.innerText || btn.textContent || '').trim();
-                return txt.includes('Продолжить') || txt === 'Читать' || txt.startsWith('Читать') || txt.includes('Начать');
-            });
-            if (startOrContinueBtn) {
-                triggerClick(startOrContinueBtn);
-            }
-            return;
-        }
-
-        // ЭТАП 5: В закладках (/users/.../bookmarks) прокручиваем вниз и берем самую нижнюю мангу
-        if (path.startsWith('/users/') && path.includes('/bookmarks')) {
-            try { localStorage.setItem('senkuro_my_bookmarks_url', window.location.href); } catch (e) {}
-            const step = parseInt(sessionStorage.getItem('senkuro_bm_scroll_step') || '0', 10);
-            const prevH = parseInt(sessionStorage.getItem('senkuro_bm_prev_h') || '0', 10);
-            const curH = document.documentElement.scrollHeight || 0;
-            const sameHCount = parseInt(sessionStorage.getItem('senkuro_bm_same_h') || '0', 10);
-            if (step < 4 || (step < 15 && (curH > prevH + 50 || sameHCount < 1))) {
-                sessionStorage.setItem('senkuro_bm_scroll_step', String(step + 1));
-                sessionStorage.setItem('senkuro_bm_prev_h', String(curH));
-                sessionStorage.setItem('senkuro_bm_same_h', curH <= prevH + 50 ? String(sameHCount + 1) : '0');
-                window.scrollTo({ top: Math.max(0, curH - 350), behavior: 'smooth' });
-                return;
-            }
-            sessionStorage.setItem('senkuro_bm_scroll_step', '0');
-            sessionStorage.setItem('senkuro_bm_prev_h', '0');
-            sessionStorage.setItem('senkuro_bm_same_h', '0');
-
-            const nowTs = Date.now();
-            let cdMap = {};
-            try {
-                cdMap = JSON.parse(localStorage.getItem('senkuro_cooldown_mangas_v4') || '{}');
-                Object.keys(cdMap).forEach(k => { if (cdMap[k] <= nowTs) delete cdMap[k]; });
-                localStorage.setItem('senkuro_cooldown_mangas_v4', JSON.stringify(cdMap));
-            } catch (e) {}
-
-            const allMangaLinks = Array.from(document.querySelectorAll('a[href*="/manga/"]')).filter(a => {
-                if (a.closest('footer')) return false;
-                const href = a.getAttribute('href') || '';
-                if (!href.startsWith('/manga/') && !href.includes('senkuro.com/manga/')) return false;
-                if (href.includes('/chapters/')) return false;
-                const rect = a.getBoundingClientRect();
-                return rect.width > 30 && rect.height > 30;
-            });
-
-            const uniqueLinks = [];
-            const seenSlugs = new Set();
-            for (const a of allMangaLinks) {
-                const m = (a.getAttribute('href') || '').match(/\/manga\/([^/?#]+)/);
-                if (m && !seenSlugs.has(m[1])) {
-                    seenSlugs.add(m[1]);
-                    uniqueLinks.push({ slug: m[1], el: a, href: a.href });
-                }
-            }
-
-            const candidates = uniqueLinks.filter(item => !cdMap[item.slug]);
-            if (uniqueLinks.length > 0 && candidates.length === 0) {
-                localStorage.setItem('senkuro_cooldown_mangas_v4', '{}');
-            }
-            const chosen = candidates.length > 0 ? candidates[candidates.length - 1] : (uniqueLinks.length > 0 ? uniqueLinks[uniqueLinks.length - 1] : null);
-            if (chosen) {
-                try {
-                    cdMap[chosen.slug] = Date.now() + 12 * 3600 * 1000;
-                    localStorage.setItem('senkuro_cooldown_mangas_v4', JSON.stringify(cdMap));
-                } catch (e) {}
-                triggerClick(chosen.el);
-                setTimeout(() => {
-                    if (window.location.pathname.includes('/bookmarks')) window.location.href = chosen.href;
-                }, 1200);
-            }
-        }
-    }
-
-    try {
-        const blob = new Blob(['setInterval(() => postMessage("tick"), 2000);'], { type: 'application/javascript' });
-        const worker = new Worker(URL.createObjectURL(blob));
-        worker.onmessage = () => runFarmTick();
-    } catch (e) {
-        setInterval(runFarmTick, 2000);
-    }
-})();
-"""
-
-
-def format_farm_status_message(status_obj: dict) -> str:
-    elapsed_min = int(status_obj.get("elapsed_minutes") or 0)
-    total_hours = float(status_obj.get("target_hours") or 8.0)
-    reading_cnt = int(status_obj.get("reading_count") or 0)
-    unique_ips = int(status_obj.get("unique_ips") or 0)
-    updated_str = status_obj.get("updated_at", "")
-
-    hh = elapsed_min // 60
-    mm = elapsed_min % 60
-    lines = [
-        "📊 <b>Статус 8-часового фарма манги:</b>",
-        f"⏱ <b>Отработано:</b> {hh} ч {mm} мин из {total_hours:g} ч",
-        f"📖 <b>Читают главы сейчас:</b> <b>{reading_cnt}/12</b> аккаунтов | 🌐 <b>Уникальных IP:</b> <b>{unique_ips}/12</b>\n",
-    ]
-    for acc_info in status_obj.get("accounts", []):
-        is_rd = acc_info.get("is_reading", False)
-        icon = "🟢" if is_rd else "🟡"
-        st_label = "ЧИТАЕТ ГЛАВУ" if is_rd else "Навигация / В закладках"
-        lines.append(
-            f"{icon} <b>#{acc_info['idx']} {acc_info['id']}</b> (IP: <code>{acc_info['ip']}</code>)\n"
-            f"   └ {st_label}: <i>{acc_info.get('title', 'Загрузка...')}</i>"
-        )
-    if updated_str:
-        lines.append(f"\n🕒 Обновлено: <code>{updated_str}</code>")
-    return "\n".join(lines)
-
-
-async def run_check_farm_status() -> None:
-    st = fetch_latest_farm_status()
-    if st and st.get("active"):
-        send_tg_message(format_farm_status_message(st), add_keyboard=True)
-    else:
-        send_tg_message(
-            "⚪ <b>Сейчас 8-часовой фарм манги не активен</b> (или уже завершил 8-часовой таймер).\n\n"
-            "Нажмите кнопку <b>«▶️ Запустить фарм (8 ч)»</b> ниже, чтобы запустить чтение манги на всех 12 аккаунтах!",
-            add_keyboard=True,
-        )
-
-
-async def run_farm_segment(part_mode: str = "farm_part1") -> None:
-    """
-    Выполняет 8-часовой фарм манги на GitHub Actions в 2 бесшовных этапа по 4 часа
-    (farm_part1: часы 0..4 -> farm_part2: часы 4..8) в рамках одного запуска воркфлоу!
-    - При старте farm_part1 отправляет сообщение о начале работы в Telegram.
-    - Каждые 45 сек публикует живую сводку для кнопки «📊 Проверить статус фарма».
-    - По окончании farm_part2 (ровно через 8 часов, без 5-минутного спама!) отправляет
-      итоговое сообщение в Telegram с базовой панелью кнопок.
-    """
-    is_part1 = part_mode in ("farm_part1", "farm")
-    is_part2 = part_mode == "farm_part2"
-    segment_hours = 4.0
-    base_elapsed_minutes = 0 if is_part1 else 240
-
-    if is_part1:
-        send_tg_message(
-            "🚀 <b>Запускаю 8-часовой фарм манги на всех 12 аккаунтах!</b>\n"
-            "Поднимаю виртуальный экран, 8 уникальных IP, вхожу в аккаунты, выбираю мангу снизу закладок и пришлю сводку через ~45 сек...",
-            add_keyboard=False,
-        )
-
-    proxy_mgr = AccountProxyManager()
-    farm_sessions = []
-    start_ts = time.time()
-
-    # Если доступен виртуальный экран Xvfb (DISPLAY), запускаем полноценный браузер headless=False (как в Kaggle v6.5)
-    has_display = bool(os.environ.get("DISPLAY"))
-
-    try:
-        async with async_playwright() as p:
-            browser = await launch_senkuro_browser(p)
-            for acc in FARM_ACCOUNTS:
-                proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
-                ip_used = proxy_mgr.active_ips.get(acc["acc_id"], acc["pinned_ip"])
-                ctx = await create_account_context(browser, acc, proxy_url)
-                await ctx.add_init_script(FULL_FARM_USERSCRIPT_V9)
-                page, user_obj = await ensure_logged_in(ctx, acc)
-                await page.goto(acc["bookmarks_url"], wait_until="domcontentloaded", timeout=40000)
-                await page.evaluate(FULL_FARM_USERSCRIPT_V9)
-                farm_sessions.append(
-                    {
-                        "acc": acc,
-                        "context": ctx,
-                        "page": page,
-                        "ip": ip_used,
-                    }
-                )
-
-            # Ждем до 60 сек, пока все 8 аккаунтов откроют чтение главы (/chapters/)
-            for _ in range(12):
-                await asyncio.sleep(5)
-                for s in farm_sessions:
-                    try:
-                        await s["page"].evaluate(FULL_FARM_USERSCRIPT_V9)
-                    except Exception:
-                        pass
-                if sum(1 for s in farm_sessions if "/chapters/" in s["page"].url) == len(FARM_ACCOUNTS):
-                    break
-
-            def collect_snapshot(active_flag: bool = True) -> dict:
-                elapsed_m = base_elapsed_minutes + int((time.time() - start_ts) // 60)
-                acc_list = []
-                rd_cnt = 0
-                ips_set = set()
-                for s in farm_sessions:
-                    pg: Page = s["page"]
-                    u = pg.url
-                    is_rd = "/chapters/" in u
-                    if is_rd:
-                        rd_cnt += 1
-                    if s["ip"]:
-                        ips_set.add(s["ip"])
-                    acc_list.append(
-                        {
-                            "idx": s["acc"]["idx"],
-                            "id": s["acc"]["id"],
-                            "ip": s["ip"],
-                            "url": u,
-                            "is_reading": is_rd,
-                            "title": "",
-                        }
-                    )
-                return {
-                    "active": active_flag,
-                    "elapsed_minutes": elapsed_m,
-                    "target_hours": 8.0,
-                    "reading_count": rd_cnt,
-                    "unique_ips": len(ips_set),
-                    "updated_at": time.strftime("%H:%M:%S"),
-                    "accounts": acc_list,
-                }
-
-            async def enrich_titles(snap: dict) -> dict:
-                for idx_s, s in enumerate(farm_sessions):
-                    try:
-                        t = (await s["page"].title()).replace(" - Senkuro", "").strip()
-                    except Exception:
-                        t = s["page"].url
-                    snap["accounts"][idx_s]["title"] = t[:48]
-                return snap
-
-            initial_snap = await enrich_titles(collect_snapshot(True))
-            publish_live_farm_status(initial_snap)
-
-            if is_part1:
-                send_tg_message(
-                    "✅ <b>8-часовой фарм манги успешно запущен!</b>\n\n" + format_farm_status_message(initial_snap),
-                    add_keyboard=True,
-                )
-
-            end_ts = start_ts + segment_hours * 3600.0
-            last_sync_ts = time.time()
-            last_save_ts = time.time()
-
-            stopped_by_user = False
-            farm_seen_cmds: set[str] = set()
-            farm_cmd_Poll_ts = int(time.time())
-
-            while time.time() < end_ts:
-                await asyncio.sleep(6)
-                for s in farm_sessions:
-                    try:
-                        await s["page"].evaluate(FULL_FARM_USERSCRIPT_V9)
-                    except Exception:
-                        pass
-
-                # Мгновенная проверка команд из Telegram прямо во время фарма!
-                new_cmds = poll_instant_commands(farm_cmd_Poll_ts - 2, farm_seen_cmds)
-                farm_cmd_Poll_ts = int(time.time())
-                for c_item in new_cmds:
-                    c_act = str(c_item.get("action") or "").strip().lower()
-                    c_promo = str(c_item.get("promo_code") or "").strip()
-                    if c_act == "stop":
-                        stopped_by_user = True
-                        break
-                    elif c_act == "check":
-                        await run_check_all_5_accounts()
-                    elif c_act == "balance":
-                        await run_check_coins_balance()
-                    elif c_act == "promo" and c_promo:
-                        await run_promo_code_activation(c_promo)
-                    elif c_act == "packs":
-                        await run_all_packs_opening()
-                    elif c_act == "forge":
-                        await run_smart_forge_and_trade_pipeline()
-                    elif c_act == "all":
-                        await run_all_packs_opening()
-                        await run_smart_forge_and_trade_pipeline()
-
-                if stopped_by_user:
-                    print("[FARM STOP] Получен мгновенный сигнал остановки из очереди! Сохраняем сессии и выходим...")
-                    stopped_snap = await enrich_titles(collect_snapshot(False))
-                    publish_live_farm_status(stopped_snap)
-                    break
-
-                now = time.time()
-                if now - last_sync_ts >= 25:
-                    last_sync_ts = now
-                    if check_remote_stop_signal(int(start_ts)):
-                        print("[FARM STOP] Получен сигнал остановки из Telegram! Сохраняем сессии и выходим...")
-                        stopped_by_user = True
-                        stopped_snap = await enrich_titles(collect_snapshot(False))
-                        publish_live_farm_status(stopped_snap)
-                        break
-                    snap = await enrich_titles(collect_snapshot(True))
-                    publish_live_farm_status(snap)
-
-                if now - last_save_ts >= 600:
-                    last_save_ts = now
-                    for s in farm_sessions:
-                        try:
-                            await s["context"].storage_state(path=str(get_session_file(s["acc"]["id"])))
-                        except Exception:
-                            pass
-
-            for s in farm_sessions:
-                try:
-                    await s["context"].storage_state(path=str(get_session_file(s["acc"]["id"])))
-                except Exception:
-                    pass
-
-            if is_part2:
-                final_snap = await enrich_titles(collect_snapshot(False))
-                publish_live_farm_status(final_snap)
-                send_tg_message(
-                    "🏁 <b>8 часов фарма манги полностью завершены!</b>\n"
-                    "Все 12 аккаунтов остановлены, прогресс чтения и сессии сохранены.\n\n"
-                    + format_farm_status_message(final_snap),
-                    add_keyboard=True,
-                )
-
-            if is_part1 and not stopped_by_user:
-                gh_out = os.environ.get("GITHUB_OUTPUT", "")
-                if gh_out:
-                    try:
-                        with open(gh_out, "a", encoding="utf-8") as f_out:
-                            f_out.write("continue_farm=true\n")
-                    except Exception:
-                        pass
-
-            for s in farm_sessions:
-                await s["context"].close()
-            await browser.close()
-    finally:
-        proxy_mgr.stop_all()
-
-
-# ==============================================================================
-# 10. СЦЕНАРИЙ 5: КЛАССИЧЕСКИЙ ЧЕКЕР КАРТ И ОСКОЛКОВ ПО ВСЕМ 5 АККАУНТАМ (С ФОТО)
-# ==============================================================================
-
-CACHED_FETCH_USER_CARDS_TEMPLATE: dict[str, Any] = {}
-
-
-def parse_graphql_edges(edges: list[dict]) -> list[dict]:
-    parsed = []
-    for edge in edges:
-        node = edge.get("node") or edge
-        if not isinstance(node, dict):
-            continue
-        card = node.get("card") or {}
-        qty = int(node.get("quantity") or 1)
-        rank = str(card.get("rank") or "?").upper()
-        slug = card.get("slug") or ""
-        url = f"https://senkuro.com/cards/{slug}" if slug else "https://senkuro.com"
-
-        name = extract_card_title(card)
-        image_obj = card.get("image") or {}
-        preview_url = (image_obj.get("preview") or {}).get("url") or (image_obj.get("original") or {}).get("url") or ""
-
-        for _ in range(max(1, qty)):
-            parsed.append(
-                {
-                    "slug": slug,
-                    "url": url,
-                    "name": name,
-                    "rank": rank if rank in RANK_ORDER else "?",
-                    "img": preview_url,
-                }
-            )
-
-    rank_idx = {r: i for i, r in enumerate(RANK_ORDER)}
-    parsed.sort(key=lambda x: (rank_idx.get(x["rank"], 9), x["name"]))
-    return parsed
-
-
-def extract_rank_dom(slug: str, style_attr: str, text_content: str) -> str:
-    if style_attr:
-        m = re.search(r"#rank-([RSABCDF])", style_attr, re.IGNORECASE)
-        if m:
-            return m.group(1).upper()
-    if slug:
-        m = re.search(r"-([rsabcdf])$", slug.strip("/"), re.IGNORECASE)
-        if m:
-            return m.group(1).upper()
-    if text_content:
-        for r in ["R", "S", "A", "B", "C", "D", "F"]:
-            if re.search(rf"\b{r}\b", text_content):
-                return r
-    return "?"
-
-
-async def extract_items_from_dom(page: Page) -> list[dict]:
-    """Надёжное резервное извлечение карточек прямо из DOM страницы (как в оригинальном чекере)."""
-    raw_items = await page.evaluate(
-        """() => {
-        const results = [];
-        let elements = Array.from(document.querySelectorAll('.card-collect-preview'));
-        if (elements.length === 0) {
-            elements = Array.from(document.querySelectorAll('a.card-collect, a[href*="/cards/"]'));
-        }
-        elements.forEach(el => {
-            const linkEl = el.tagName === 'A' ? el : el.querySelector('a.card-collect, a[href*="/cards/"]');
-            const href = linkEl ? (linkEl.getAttribute('href') || '') : '';
-            if (!href || !href.includes('/cards/')) return;
-            const style = linkEl ? (linkEl.getAttribute('style') || '') : '';
-            const imgEl = el.querySelector('img.card-collect__img, img');
-            const name = imgEl ? (imgEl.getAttribute('alt') || '').trim() : '';
-            const img = imgEl ? (imgEl.getAttribute('src') || '').trim() : '';
-            const infoEl = el.querySelector('.card-collect-preview__info, .card-collect-preview__title');
-            const titleText = infoEl ? infoEl.innerText.trim() : (el.innerText || '').trim();
-            results.push({ href, style, name: name || 'Карта', img, titleText });
-        });
-        return results;
-    }"""
-    )
-    parsed = []
-    for item in raw_items or []:
-        href = item["href"]
-        full_url = f"https://senkuro.com{href}" if href.startswith("/") else href
-        rank = extract_rank_dom(href, item["style"], item["titleText"])
-        parsed.append({"slug": href, "url": full_url, "name": item["name"], "rank": rank, "img": item["img"]})
-    rank_idx = {r: i for i, r in enumerate(RANK_ORDER)}
-    parsed.sort(key=lambda x: (rank_idx.get(x["rank"], 9), x["name"]))
-    return parsed
-
-
-async def fetch_all_pages_via_graphql(page: Page, captured_req: dict, modifier_val: int, override_user_id: Optional[str] = None) -> list[dict]:
-    raw_edges = await page.evaluate(
-        """async ({ reqInfo, modifierVal, overrideUserId }) => {
-        const allEdges = [];
-        let afterCursor = null;
-        const seenCursors = new Set();
-
-        const headers = {};
-        for (const [k, v] of Object.entries(reqInfo.headers || {})) {
-            const lk = k.toLowerCase();
-            if (lk === 'content-type' || lk === 'accept' || lk.startsWith('app-') || lk === 'authorization') {
-                headers[k] = v;
-            }
-        }
-        headers['Content-Type'] = 'application/json';
-
-        for (let pageNum = 0; pageNum < 50; pageNum++) {
-            const bodyObj = JSON.parse(JSON.stringify(reqInfo.postData));
-            bodyObj.variables = bodyObj.variables || {};
-            if (overrideUserId) {
-                bodyObj.variables.userId = overrideUserId;
-            }
-            bodyObj.variables.modifier = { include: [modifierVal] };
-            if (afterCursor) {
-                bodyObj.variables.after = afterCursor;
-            } else {
-                delete bodyObj.variables.after;
-            }
-
-            const resp = await fetch(reqInfo.url, {
-                method: 'POST',
-                headers: headers,
-                body: JSON.stringify(bodyObj)
-            });
-            if (!resp.ok) break;
-            const json = await resp.json();
-            const userCards = json?.data?.userCards;
-            if (!userCards) break;
-
-            const edges = userCards.edges || [];
-            allEdges.push(...edges);
-
-            const pageInfo = userCards.pageInfo || {};
-            if (pageInfo.hasNextPage && pageInfo.endCursor && !seenCursors.has(pageInfo.endCursor)) {
-                seenCursors.add(pageInfo.endCursor);
-                afterCursor = pageInfo.endCursor;
-            } else {
-                break;
-            }
-        }
-        return allEdges;
-    }""",
-        {"reqInfo": captured_req, "modifierVal": modifier_val, "overrideUserId": override_user_id},
-    )
-    return parse_graphql_edges(raw_edges or [])
-
-
-async def scrape_account_cards_public(browser, account: dict, proxy_mgr: Optional[AccountProxyManager] = None) -> dict:
-    """
-    Проверяет карты и осколки аккаунта через туннель Opera VPN + сохранённую сессию + гарантированный KNOWN_USER_IDS,
-    чтобы проверка НИКОГДА не блокировалась по IP датацентра и не теряла UID!
-    """
-    acc_slug = account["id"]
-    farm_acc = next((a for a in FARM_ACCOUNTS if a["id"] == acc_slug), FARM_ACCOUNTS[0])
-    proxy_url = None
-    if proxy_mgr is not None:
-        proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, farm_acc)
-
-    context = await create_account_context(browser, farm_acc, proxy_url)
-    page = await context.new_page()
-    ACTIVE_BROWSER_PAGES[f"check_{acc_slug}"] = page
-    log_debug(f"[CHECK 13] Проверка {account['label']} -> {account['url']} (proxy={proxy_url or 'direct'})")
-    captured_req: dict[str, Any] = {}
-    intercepted_user_id: list[str] = []
-
-    def on_request(request):
-        if "graphql" in request.url and request.method == "POST":
-            try:
-                post_json = request.post_data_json
-                items = post_json if isinstance(post_json, list) else [post_json]
-                for item in items:
-                    if isinstance(item, dict) and item.get("operationName") == "fetchUserCards":
-                        if not captured_req:
-                            captured_req["url"] = request.url
-                            captured_req["headers"] = request.headers
-                            captured_req["postData"] = item
-                            CACHED_FETCH_USER_CARDS_TEMPLATE.update(captured_req)
-                            uid_v = (item.get("variables") or {}).get("userId")
-                            if uid_v:
-                                intercepted_user_id.append(str(uid_v))
-            except Exception:
-                pass
-
-    page.on("request", on_request)
-
-    try:
-        try:
-            await page.goto(account["url"], wait_until="domcontentloaded", timeout=35000)
-            await page.wait_for_timeout(1200)
-        except Exception as nav_e:
-            log_debug(f"[CHECK 13 GOTO WARN] {acc_slug}: {nav_e}")
-
-        # Способ 1 (Гарантированный UID из KNOWN_USER_IDS + прямой GraphQL с 3-уровневой защитой от Failed to fetch)
-        uid = KNOWN_USER_IDS.get(acc_slug)
-        if not uid:
-            u_res = await gql_call(page, GQL_FETCH_USER_BY_SLUG, {"slug": acc_slug}, "fetchUserBySlug")
-            uid = ((u_res.get("data") or {}).get("user") or {}).get("id") or (intercepted_user_id[0] if intercepted_user_id else None)
-        log_debug(f"[CHECK 13 UID] {acc_slug}: uid={uid}")
-
-        if uid:
-            # Проверяем первую страницу карт через gql_call, чтобы убедиться, что GraphQL-ответ реально получен без ошибок
-            probe_res = await gql_call(page, GQL_FETCH_USER_CARDS_FULL, {"userId": uid, "modifier": {"include": [0]}}, "fetchUserCards")
-            gql_ok = isinstance((probe_res.get("data") or {}).get("userCards"), dict) and not probe_res.get("errors")
-            if gql_ok:
-                c_nodes = await fetch_all_user_cards_gql(page, uid, modifier_val=0)
-                s_nodes = await fetch_all_user_cards_gql(page, uid, modifier_val=1)
-                cards = parse_graphql_edges(c_nodes)
-                shards = parse_graphql_edges(s_nodes)
-                await _enrich_and_prefetch_card_images_in_browser(page, cards)
-                log_debug(f"[CHECK 13 DIRECT GQL] {acc_slug}: карт={len(cards)}, осколков={len(shards)}")
-                return {"cards": cards, "shards": shards, "error": None}
-
-        # Способ 2: перехваченный запрос fetchUserCards от самой страницы
-        for _ in range(8):
-            if captured_req:
-                break
-            await page.wait_for_timeout(400)
-
-        if captured_req:
-            cards = await fetch_all_pages_via_graphql(page, captured_req, modifier_val=0, override_user_id=uid)
-            shards = await fetch_all_pages_via_graphql(page, captured_req, modifier_val=1, override_user_id=uid)
-            log_debug(f"[CHECK 13 GQL CAPTURED] {acc_slug}: карт={len(cards)}, осколков={len(shards)}")
-            if cards or shards:
-                await _enrich_and_prefetch_card_images_in_browser(page, cards)
-                return {"cards": cards, "shards": shards, "error": None}
-
-        # Способ 3: считывание из DOM
-        await page.wait_for_timeout(2000)
-        cards = await extract_items_from_dom(page)
-        shards = []
-        shard_tab = page.locator("text=/Осколки/i").first
-        if await shard_tab.count() > 0:
-            await shard_tab.click()
-            await page.wait_for_timeout(1800)
-            shards = await extract_items_from_dom(page)
-        log_debug(f"[CHECK 13 DOM FALLBACK] {acc_slug}: карт={len(cards)}, осколков={len(shards)}")
-        return {"cards": cards, "shards": shards, "error": None}
-    except Exception as e:
-        log_debug(f"[CHECK 13 ERROR] {acc_slug}: {e}")
-        return {"cards": [], "shards": [], "error": str(e)}
-    finally:
-        ACTIVE_BROWSER_PAGES.pop(f"check_{acc_slug}", None)
-        try:
-            await page.close()
-        except Exception:
-            pass
-        try:
-            await context.close()
-        except Exception:
-            pass
-
-
-def format_rank_breakdown(items: list[dict]) -> str:
-    if not items:
-        return "нет"
-    counts = Counter(x["rank"] for x in items)
-    parts = []
-    for r in RANK_ORDER:
-        cnt = counts.get(r, 0)
-        if cnt > 0:
-            badge = RANK_BADGE.get(r, r)
-            parts.append(f"<b>{cnt}</b> {badge}")
-    return "  |  ".join(parts)
-
-
-def build_account_message(account: dict, current: dict) -> tuple[str, list[str]]:
-    cards = current["cards"]
-    shards = current["shards"]
-    cards_summary = format_rank_breakdown(cards)
-    shards_summary = format_rank_breakdown(shards)
-    prof_parts = []
-    for c_it in cards:
-        np = c_it.get("bank_net_price")
-        if np is None:
-            np = get_card_bank_net_price(str(c_it.get("slug") or ""))
-        if np is not None and np >= DEFAULT_BANK_MIN_NET_PRICE:
-            prof_parts.append(f"{RANK_BADGE.get(c_it.get('rank', '?'), c_it.get('rank', '?'))} <b>{np:.2f}</b>")
-    lines = [
-        f"👤 <b><a href=\"{account['url']}\">{account['label']}</a></b>",
-        "",
-        f"🃏 <b>Карты ({len(cards)}):</b> {cards_summary}",
-        f"🧩 <b>Осколки ({len(shards)}):</b> {shards_summary}",
-    ]
-    if prof_parts:
-        lines.append(f"💎 <b>В банк (≥{DEFAULT_BANK_MIN_NET_PRICE:.2f}):</b> " + ", ".join(prof_parts))
-    card_photos = [c["img"] for c in cards if c.get("img", "").startswith("http")]
-    return "\n".join(lines), card_photos
-
-
-PREFETCHED_CARD_IMAGES: dict[str, bytes] = {}
-CARD_META_BY_URL: dict[str, dict[str, str]] = {}
-
-
-def _draw_bank_price_badge_on_image(rgb_im, net_price: Optional[float]):
-    if net_price is None:
-        return rgb_im
-    try:
-        from PIL import Image, ImageDraw, ImageFont
-        base = rgb_im.convert("RGBA")
-        w, h = base.size
-        font_sz = max(18, min(46, int(w * 0.085)))
-        font = None
-        for f_path in (
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
-        ):
-            if Path(f_path).exists():
-                try:
-                    font = ImageFont.truetype(f_path, font_sz)
-                    break
-                except Exception:
-                    pass
-        if font is None:
-            font = ImageFont.load_default()
-
-        label = f"{net_price:.2f}"
-        overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
-        dr = ImageDraw.Draw(overlay)
-        bbox = dr.textbbox((0, 0), label, font=font)
-        tw = bbox[2] - bbox[0]
-        th = bbox[3] - bbox[1]
-        pad_x = max(10, int(font_sz * 0.45))
-        pad_y = max(6, int(font_sz * 0.28))
-        margin = max(10, int(w * 0.035))
-
-        box_w = tw + pad_x * 2
-        box_h = th + pad_y * 2
-        x1 = max(4, w - margin - box_w)
-        y1 = max(4, h - margin - box_h)
-        x2 = w - margin
-        y2 = h - margin
-
-        # Цветовая индикация как в SenkuTools:
-        # >= 2.00 чистыми — яркий акцент; >= 1.50 чистыми — зелёный (выгодно для банка!); < 1.50 — спокойный тёмный
-        if net_price >= 2.00:
-            bg_col = (220, 50, 75, 230)
-            border_col = (255, 215, 90, 255)
-            txt_col = (255, 255, 255, 255)
-        elif net_price >= DEFAULT_BANK_MIN_NET_PRICE:
-            bg_col = (26, 155, 72, 230)
-            border_col = (145, 255, 175, 255)
-            txt_col = (255, 255, 255, 255)
-        else:
-            bg_col = (20, 22, 30, 210)
-            border_col = (130, 138, 155, 200)
-            txt_col = (230, 235, 245, 255)
-
-        radius = max(8, int(box_h * 0.28))
-        dr.rounded_rectangle([x1, y1, x2, y2], radius=radius, fill=bg_col, outline=border_col, width=max(2, int(w * 0.005)))
-        tx = x1 + pad_x - bbox[0]
-        ty = y1 + pad_y - bbox[1]
-        dr.text((tx, ty), label, font=font, fill=txt_col)
-        return Image.alpha_composite(base, overlay).convert("RGB")
-    except Exception:
-        return rgb_im
-
-
-def _convert_raw_image_to_jpeg(raw_bytes: bytes, net_price: Optional[float] = None) -> Optional[bytes]:
+    for lang in ("RU", "EN"):
+        for t in titles:
+            if str(t.get("lang") or "").upper() == lang and t.get("content"):
+                return str(t["content"]).strip()
+    if titles and titles[0].get("content"):
+        return str(titles[0]["content"]).strip()
+    return str(card_obj.get("slug") or "Карта")
+
+
+def render_card_with_price_badge(raw_bytes: bytes, net_price: Optional[float]) -> Optional[bytes]:
     if not raw_bytes or len(raw_bytes) < 64:
         return None
-    import io
     try:
-        from PIL import Image
+        from PIL import Image, ImageDraw, ImageFont
         with Image.open(io.BytesIO(raw_bytes)) as im:
             if getattr(im, "is_animated", False):
                 im.seek(0)
             rgb = im.convert("RGB")
-            if rgb.width > 2000 or rgb.height > 2000:
-                rgb.thumbnail((2000, 2000), Image.Resampling.LANCZOS)
+            if rgb.width > 1600 or rgb.height > 1600:
+                rgb.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
             if net_price is not None:
-                rgb = _draw_bank_price_badge_on_image(rgb, net_price)
+                base = rgb.convert("RGBA")
+                w, h = base.size
+                font_sz = max(18, min(44, int(w * 0.085)))
+                font = None
+                for fp in (
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+                ):
+                    if Path(fp).exists():
+                        try:
+                            font = ImageFont.truetype(fp, font_sz)
+                            break
+                        except Exception:
+                            pass
+                if font is None:
+                    font = ImageFont.load_default()
+                label = f"{net_price:.2f}"
+                ov = Image.new("RGBA", base.size, (0, 0, 0, 0))
+                dr = ImageDraw.Draw(ov)
+                bb = dr.textbbox((0, 0), label, font=font)
+                tw, th = bb[2] - bb[0], bb[3] - bb[1]
+                px, py = max(10, int(font_sz * 0.45)), max(6, int(font_sz * 0.28))
+                mg = max(10, int(w * 0.035))
+                x1, y1 = max(4, w - mg - tw - px * 2), max(4, h - mg - th - py * 2)
+                x2, y2 = w - mg, h - mg
+                if net_price >= 2.00:
+                    bg, brd = (220, 50, 75, 230), (255, 215, 90, 255)
+                elif net_price >= MIN_BANK_PROFIT_NET:
+                    bg, brd = (26, 155, 72, 230), (145, 255, 175, 255)
+                else:
+                    bg, brd = (20, 22, 30, 210), (130, 138, 155, 200)
+                dr.rounded_rectangle([x1, y1, x2, y2], radius=max(8, int((y2 - y1) * 0.28)), fill=bg, outline=brd, width=max(2, int(w * 0.005)))
+                dr.text((x1 + px - bb[0], y1 + py - bb[1]), label, font=font, fill=(255, 255, 255, 255))
+                rgb = Image.alpha_composite(base, ov).convert("RGB")
             out = io.BytesIO()
-            rgb.save(out, format="JPEG", quality=96, subsampling=0)
+            rgb.save(out, format="JPEG", quality=94, subsampling=0)
             return out.getvalue()
     except Exception:
         return None
 
 
-def _render_fallback_card_tile_jpeg(url: str) -> Optional[bytes]:
-    """Если CDN Senkuro заблокировал конкретный файл карты (403/404), рисует аккуратную карточку с рангом и названием."""
-    import io
-    try:
-        from PIL import Image, ImageDraw
-        meta = CARD_META_BY_URL.get(url) or {}
-        rank_s = meta.get("rank") or "?"
-        name_s = meta.get("name") or "Карта Senkuro"
-        border_colors = {
-            "R": (120, 220, 255),
-            "S": (240, 70, 85),
-            "A": (245, 195, 55),
-            "B": (175, 95, 245),
-            "C": (75, 155, 250),
-            "D": (75, 210, 120),
-            "F": (180, 185, 195),
+async def launch_browser(pw):
+    exe = "/usr/bin/google-chrome-stable" if Path("/usr/bin/google-chrome-stable").exists() else None
+    kwargs: dict[str, Any] = {
+        "headless": True,
+        "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
+    }
+    if exe:
+        kwargs["executable_path"] = exe
+    return await pw.chromium.launch(**kwargs)
+
+
+# ==============================================================================
+# 7. СЦЕНАРИЙ 1: МОИ КАРТЫ (CESIUM254) + ОПРЕДЕЛЕНИЕ РАНГОВ РАСХОДНИКОВ
+# ==============================================================================
+
+async def inspect_main_account(page: Page) -> dict[str, Any]:
+    cards_nodes = await fetch_public_user_cards(page, MAIN_ACCOUNT_UID, modifier_val=0)
+    shards_nodes = await fetch_public_user_cards(page, MAIN_ACCOUNT_UID, modifier_val=1)
+
+    cards_info = []
+    fodder_by_rank: Counter = Counter()
+    profitable_cards = []
+
+    for nd in cards_nodes:
+        c = nd.get("card") or {}
+        slug = str(c.get("slug") or "")
+        rank = str(c.get("rank") or "?").upper()
+        qty = int(nd.get("quantity") or 1)
+        locked = bool(nd.get("locked"))
+        name = extract_card_title(c)
+        img_url = str(((c.get("image") or {}).get("original") or {}).get("url") or "")
+        net_p = get_net_price(slug)
+        item = {
+            "slug": slug,
+            "rank": rank,
+            "qty": qty,
+            "locked": locked,
+            "name": name,
+            "img": img_url,
+            "net_price": net_p,
         }
-        b_col = border_colors.get(rank_s, (140, 145, 160))
-        im = Image.new("RGB", (420, 600), (24, 25, 32))
-        dr = ImageDraw.Draw(im)
-        dr.rectangle([6, 6, 413, 593], outline=b_col, width=6)
-        dr.rectangle([22, 22, 110, 68], fill=b_col)
-        dr.text((40, 38), f"RANK {rank_s}", fill=(15, 15, 20))
-        dr.text((36, 260), name_s[:32], fill=(240, 240, 245))
-        if len(name_s) > 32:
-            dr.text((36, 290), name_s[32:64], fill=(200, 200, 210))
-        out = io.BytesIO()
-        im.save(out, format="JPEG", quality=88)
-        return out.getvalue()
-    except Exception:
-        return None
+        cards_info.append(item)
+        if not locked:
+            if net_p is not None and net_p >= MIN_BANK_PROFIT_NET:
+                profitable_cards.append(item)
+            elif rank in SEARCHABLE_RANKS:
+                fodder_by_rank[rank] += qty
+
+    return {
+        "cards": cards_info,
+        "shards_count": sum(int(n.get("quantity") or 1) for n in shards_nodes),
+        "fodder_by_rank": fodder_by_rank,
+        "profitable": profitable_cards,
+    }
 
 
-async def _enrich_and_prefetch_card_images_in_browser(page: Page, cards: list[dict]) -> None:
-    """
-    Пока открыт реальный Google Chrome под уникальным IP Opera VPN на странице /users/{slug}/cards:
-    1) Подтягивает публичные shiro.senkuro.org ссылки из DOM страницы (если они отрендерены).
-    2) Скачивает картинки карт прямо через браузерный контекст Chrome + Opera VPN (обходя 403 Forbidden от Cloudflare на mirai.senkuro.org!).
-    """
-    if not cards:
-        return
-    import base64
+async def run_check_my_cards() -> None:
+    st_info = await asyncio.to_thread(ensure_senkutools_db, True)
+    proxy_pool = LightweightProxyPool()
     try:
-        dom_map = await page.evaluate(
+        proxies = await asyncio.to_thread(proxy_pool.start_pool, 1)
+        proxy_cfg = {"server": proxies[0]} if proxies else None
+        async with async_playwright() as pw:
+            browser = await launch_browser(pw)
+            ctx = await browser.new_context(proxy=proxy_cfg, viewport={"width": 1280, "height": 800})
+            page = await ctx.new_page()
+            try:
+                data = await inspect_main_account(page)
+                cards = data["cards"]
+                fodder = data["fodder_by_rank"]
+                prof = data["profitable"]
+
+                # Скачиваем фото карточек и рисуем бейджи чистой цены банка
+                photo_bytes_list: list[bytes] = []
+                for c in cards[:20]:
+                    if not c["img"]:
+                        continue
+                    try:
+                        r = await page.context.request.get(
+                            c["img"],
+                            headers={"Referer": "https://senkuro.com/", "Origin": "https://senkuro.com"},
+                            timeout=10000,
+                        )
+                        if r.ok:
+                            jpg = render_card_with_price_badge(await r.body(), c["net_price"])
+                            if jpg:
+                                photo_bytes_list.append(jpg)
+                    except Exception:
+                        pass
+
+                cnt_all = Counter()
+                for c in cards:
+                    cnt_all[c["rank"]] += c["qty"]
+                rank_str = " | ".join(f"<b>{cnt_all[r]}</b> {RANK_BADGE.get(r, r)}" for r in RANK_ORDER if cnt_all.get(r)) or "нет"
+                fodder_str = ", ".join(f"{RANK_BADGE.get(r, r)} ×<b>{fodder[r]}</b>" for r in SEARCHABLE_RANKS if fodder.get(r)) or "нет свободных дешёвых карт"
+
+                lines = [
+                    format_st_header(st_info),
+                    "",
+                    f"👤 <b><a href='{MAIN_CARDS_URL}'>{MAIN_ACCOUNT_SLUG}</a></b>",
+                    f"🃏 <b>Карты ({sum(cnt_all.values())}):</b> {rank_str}",
+                    f"🧩 <b>Осколки:</b> {data['shards_count']} шт.",
+                    f"🔄 <b>Свободные расходники под обмен 1-в-1:</b> {fodder_str}",
+                ]
+                if prof:
+                    lines.append("")
+                    lines.append(f"💎 <b>Выгодно сдать в банк (≥ {MIN_BANK_PROFIT_NET:.2f} чистыми):</b>")
+                    for p_it in prof:
+                        lines.append(f"  • {RANK_BADGE.get(p_it['rank'], p_it['rank'])} «{p_it['name']}» — <b>{p_it['net_price']:.2f}</b>")
+
+                caption = "\n".join(lines)
+                if photo_bytes_list:
+                    for i in range(0, len(photo_bytes_list), 10):
+                        chunk = photo_bytes_list[i : i + 10]
+                        send_tg_media_album(chunk, caption=caption if i == 0 else "")
+                        if i + 10 < len(photo_bytes_list):
+                            await asyncio.sleep(1.0)
+                    send_tg_message("👇 Нажмите <b>«🎯 Найти обмены»</b> — бот сам подберёт цели без гильдии под ваши ранги расходников!", add_keyboard=True)
+                else:
+                    send_tg_message(caption, add_keyboard=True)
+            finally:
+                await ctx.close()
+                await browser.close()
+    finally:
+        proxy_pool.stop_all()
+
+
+# ==============================================================================
+# 8. СЦЕНАРИЙ 2 И 3: СКАНЕР ЦЕЛЕЙ (БЕЗ ГИЛЬДИИ + НЕ ЗАКРЕПЛЕНЫ) И НАКОПЛЕНИЕ БАЗЫ
+# ==============================================================================
+
+async def check_owner_profile_and_card(
+    page: Page,
+    owner_slug: str,
+    card_slug: str,
+    db: dict[str, Any],
+) -> tuple[bool, Optional[str]]:
+    """
+    Проверяет одного публичного владельца карты:
+    1) Заходит на https://senkuro.com/users/{owner_slug} — проверяет, состоит ли он в гильдии (ссылка /guilds/).
+       Если в гильдии -> добавляет в guild_blacklist и возвращает (False, 'in_guild').
+    2) Проверяет через публичный GraphQL, есть ли у него эта карта и locked == False.
+    """
+    low_slug = owner_slug.strip().lower()
+    if not low_slug or low_slug == MAIN_ACCOUNT_SLUG.lower():
+        return False, "self"
+    if low_slug in db["guild_blacklist"]:
+        return False, "blacklisted"
+
+    try:
+        await page.goto(f"https://senkuro.com/users/{owner_slug}", wait_until="domcontentloaded", timeout=22000)
+        await asyncio.sleep(random.uniform(0.9, 1.5))
+        guild_info = await page.evaluate(
             """() => {
-                const map = {};
-                document.querySelectorAll('a[href*="/cards/"]').forEach(a => {
-                    const href = a.getAttribute('href') || '';
-                    const m = href.match(/\/cards\/([^/?#]+)/);
-                    const img = a.querySelector('img') || (a.parentElement ? a.parentElement.querySelector('img') : null);
-                    if (m && img && img.src && img.src.startsWith('http')) {
-                        map[m[1]] = img.src;
-                    }
-                });
-                return map;
+                const gLink = document.querySelector('a[href*="/guilds/"], a[href*="/guild/"]');
+                if (gLink) return (gLink.textContent || gLink.getAttribute('href') || 'guild').trim().slice(0, 50);
+                return '';
             }"""
         )
-        if isinstance(dom_map, dict):
-            for c in cards:
-                c_slug = str(c.get("slug") or "").strip("/").split("/")[-1]
-                if c_slug and dom_map.get(c_slug):
-                    c["shiro_img"] = str(dom_map[c_slug])
-    except Exception:
-        pass
+        if guild_info:
+            db["guild_blacklist"][low_slug] = {"guild": str(guild_info), "ts": time.time()}
+            log_debug(f"[SCAN SKIP GUILD] {owner_slug} состоит в гильдии ({guild_info}) -> в чёрный список.")
+            return False, "in_guild"
+    except Exception as e:
+        log_debug(f"[SCAN PROFILE WARN] {owner_slug}: {e}")
+        return False, "profile_err"
 
-    for c in cards:
-        u_orig = str(c.get("img") or "")
-        u_shiro = str(c.get("shiro_img") or "")
-        c_net_p = get_card_bank_net_price(str(c.get("slug") or ""))
-        if c_net_p is not None:
-            c["bank_net_price"] = c_net_p
-        meta_obj = {"rank": str(c.get("rank") or "?"), "name": str(c.get("name") or "Карта"), "net_price": c_net_p}
-        if u_orig:
-            CARD_META_BY_URL[u_orig] = meta_obj
-        if u_shiro:
-            CARD_META_BY_URL[u_shiro] = meta_obj
+    # Получаем UID и проверяем, что нужная карта не закреплена (locked == False)
+    u_res = await gql_public_call(page, GQL_FETCH_USER_BY_SLUG, {"slug": owner_slug}, "fetchUserBySlug")
+    uid = ((u_res.get("data") or {}).get("user") or {}).get("id")
+    if not uid:
+        return False, "no_uid"
 
-        target_key = u_orig or u_shiro
-        if not target_key or target_key in PREFETCHED_CARD_IMAGES:
+    u_cards = await fetch_public_user_cards(page, str(uid), modifier_val=0, max_pages=6)
+    target_clean = card_slug.strip().lower()
+    for nd in u_cards:
+        c_s = str((nd.get("card") or {}).get("slug") or "").strip().lower()
+        if c_s == target_clean:
+            if bool(nd.get("locked")):
+                return False, "locked"
+            if int(nd.get("quantity") or 0) > 0:
+                return True, "ok"
+    return False, "not_found"
+
+
+async def scan_cards_batch_into_db(
+    target_ranks: list[str],
+    max_cards_to_scan: int = 10,
+    stop_when_found: int = 8,
+) -> dict[str, int]:
+    """
+    Вежливо сканирует публичные страницы дорогих карт (net >= 1.60) выбранных рангов через пул Opera VPN,
+    отсеивает владельцев в гильдиях и с закреплённой картой (locked=True) и сохраняет чистые цели в trade_targets_db.json.
+    """
+    db = load_trade_db()
+    now = time.time()
+    ranks_set = {r.upper() for r in target_ranks if r.upper() in SEARCHABLE_RANKS}
+    if not ranks_set:
+        ranks_set = {"F", "D", "C", "B"}
+
+    # Выбираем дорогие карты нужных рангов, которые не сканировались последние 48 часов
+    candidates: list[tuple[str, dict[str, Any], float]] = []
+    for c_slug, c_info in SENKUTOOLS_DB.items():
+        if not isinstance(c_info, dict):
             continue
+        r = str(c_info.get("rank") or "").upper()
+        if r not in ranks_set:
+            continue
+        net_p = round(float(c_info.get("price") or 0) * BANK_COMMISSION_MULT, 2)
+        if net_p < MIN_TARGET_NET_PRICE:
+            continue
+        last_sc = float(db["scanned_cards"].get(c_slug) or 0)
+        if now - last_sc < 48 * 3600:
+            continue
+        candidates.append((c_slug, c_info, net_p))
 
-        for cand_url in ([u_orig, u_shiro] if (u_orig and u_shiro) else ([u_orig] if u_orig else [u_shiro])):
-            if not cand_url:
-                continue
-            # Способ А: Через сетевой стек Chrome контекста (идёт через Opera VPN прокси этого аккаунта!)
-            try:
-                resp = await page.context.request.get(
-                    cand_url,
-                    headers={
-                        "Referer": "https://senkuro.com/",
-                        "Origin": "https://senkuro.com",
-                        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-                    },
-                    timeout=10000,
-                )
-                if resp.ok:
-                    body_b = await resp.body()
-                    jpg_b = _convert_raw_image_to_jpeg(body_b, net_price=c_net_p)
-                    if jpg_b:
-                        PREFETCHED_CARD_IMAGES[target_key] = jpg_b
-                        if u_shiro:
-                            PREFETCHED_CARD_IMAGES[u_shiro] = jpg_b
-                        break
-            except Exception:
-                pass
+    random.shuffle(candidates)
+    # Приоритет более дорогим картам с лёгким рандомом
+    candidates.sort(key=lambda x: (x[2] + random.uniform(-0.15, 0.15)), reverse=True)
+    batch = candidates[:max_cards_to_scan]
 
-            # Способ Б: Внутри страницы Chrome через fetch() -> base64
-            try:
-                b64_str = await page.evaluate(
-                    """async (imgUrl) => {
-                        try {
-                            const r = await fetch(imgUrl, { credentials: 'omit' });
-                            if (!r.ok) return '';
-                            const blob = await r.blob();
-                            return await new Promise((resolve) => {
-                                const reader = new FileReader();
-                                reader.onloadend = () => {
-                                    const res = String(reader.result || '');
-                                    const idx = res.indexOf(',');
-                                    resolve(idx >= 0 ? res.slice(idx + 1) : '');
-                                };
-                                reader.onerror = () => resolve('');
-                                reader.readAsDataURL(blob);
-                            });
-                        } catch (e) {
-                            return '';
-                        }
-                    }""",
-                    cand_url,
-                )
-                if b64_str:
-                    jpg_b = _convert_raw_image_to_jpeg(base64.b64decode(b64_str), net_price=c_net_p)
-                    if jpg_b:
-                        PREFETCHED_CARD_IMAGES[target_key] = jpg_b
-                        if u_shiro:
-                            PREFETCHED_CARD_IMAGES[u_shiro] = jpg_b
-                        break
-            except Exception:
-                pass
+    stats = {"cards_scanned": 0, "owners_checked": 0, "new_targets": 0, "guild_skipped": 0, "locked_skipped": 0}
+    if not batch:
+        return stats
 
-
-def _download_and_normalize_card_photo(url: str) -> Optional[bytes]:
-    """
-    Многоуровневое получение картинки карты (100% защита от HTTP 403 Forbidden на mirai.senkuro.org):
-    1) Из предзагруженного кэша реального браузера Chrome под Opera VPN (PREFETCHED_CARD_IMAGES).
-    2) Через открытые локальные туннели Opera VPN (порты 25341..25352), а не с заблокированного IP GitHub Actions!
-    3) Через публичный прокси картинок shiro.senkuro.org (base64 URL).
-    4) Если файл на самом сервере Senkuro битый — генерирует аккуратную карточку с рангом и названием.
-    """
-    if url in PREFETCHED_CARD_IMAGES:
-        return PREFETCHED_CARD_IMAGES[url]
-
-    import base64
-    candidate_urls = [url]
-    if "mirai.senkuro.org" in url:
-        b64_u = base64.urlsafe_b64encode(url.encode("utf-8")).decode("ascii").rstrip("=")
-        candidate_urls.append(f"https://shiro.senkuro.org/insecure/rs:fit:1000:1500/{b64_u}.webp")
-
-    # Собираем все активные туннели Opera VPN (25341..25352), чтобы качать с европейских/американских IP, а не с IP датацентра GitHub!
-    open_ports = [25340 + i for i in range(1, 13) if is_local_port_open(25340 + i)]
-    openers = []
-    for p_num in open_ports[:4]:
-        ph = urllib.request.ProxyHandler({"http": f"http://127.0.0.1:{p_num}", "https": f"http://127.0.0.1:{p_num}"})
-        openers.append((f"vpn:{p_num}", urllib.request.build_opener(ph)))
-    openers.append(("direct", urllib.request.build_opener()))
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-        "Referer": "https://senkuro.com/",
-        "Origin": "https://senkuro.com",
-        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-        "Sec-Fetch-Dest": "image",
-        "Sec-Fetch-Mode": "no-cors",
-        "Sec-Fetch-Site": "cross-site",
-    }
-
-    for cand_u in candidate_urls:
-        for op_label, opener in openers:
-            try:
-                req = urllib.request.Request(cand_u, headers=headers)
-                with opener.open(req, timeout=10) as resp:
-                    raw_bytes = resp.read()
-                jpg_b = _convert_raw_image_to_jpeg(raw_bytes, net_price=(CARD_META_BY_URL.get(url) or {}).get('net_price'))
-                if jpg_b:
-                    PREFETCHED_CARD_IMAGES[url] = jpg_b
-                    return jpg_b
-            except Exception as e:
-                if op_label == "direct":
-                    log_debug(f"[CARD IMG DL WARN] Не удалось скачать {cand_u} ({op_label}): {e}")
-                continue
-
-    return _render_fallback_card_tile_jpeg(url)
-
-
-def _send_media_chunk_binary_fallback(chunk_urls: list[str], caption: str = "") -> bool:
-    """Резервная отправка альбома карт бинарными файлами (multipart), если Telegram не смог скачать URL с CDN Senkuro."""
-    from concurrent.futures import ThreadPoolExecutor
-    files_to_send: list[tuple[str, bytes]] = []
-    with ThreadPoolExecutor(max_workers=min(5, max(1, len(chunk_urls)))) as pool:
-        results = list(pool.map(_download_and_normalize_card_photo, chunk_urls))
-    for idx, img_bytes in enumerate(results):
-        if img_bytes:
-            files_to_send.append((f"photo_{idx}", img_bytes))
-
-    if not files_to_send:
-        return False
-
-    if len(files_to_send) == 1:
-        extra = {"chat_id": str(TELEGRAM_CHAT_ID)}
-        if caption:
-            extra["caption"] = caption
-            extra["parse_mode"] = "HTML"
-        res = send_tg_multipart("sendPhoto", "photo", "card_0.jpg", files_to_send[0][1], "image/jpeg", extra)
-        return bool(res.get("ok"))
-
-    boundary = f"----SenkuroMediaGroup{int(time.time() * 1000)}"
-    media_manifest = []
-    for idx, (field_name, _) in enumerate(files_to_send):
-        item: dict[str, Any] = {"type": "photo", "media": f"attach://{field_name}"}
-        if idx == 0 and caption:
-            item["caption"] = caption
-            item["parse_mode"] = "HTML"
-        media_manifest.append(item)
-
-    body = bytearray()
-    for k, v in (("chat_id", str(TELEGRAM_CHAT_ID)), ("media", json.dumps(media_manifest, ensure_ascii=False))):
-        body.extend(f"--{boundary}\r\n".encode("utf-8"))
-        body.extend(f'Content-Disposition: form-data; name="{k}"\r\n\r\n'.encode("utf-8"))
-        body.extend(f"{v}\r\n".encode("utf-8"))
-
-    for idx, (field_name, img_bytes) in enumerate(files_to_send):
-        body.extend(f"--{boundary}\r\n".encode("utf-8"))
-        body.extend(f'Content-Disposition: form-data; name="{field_name}"; filename="card_{idx}.jpg"\r\n'.encode("utf-8"))
-        body.extend(b"Content-Type: image/jpeg\r\n\r\n")
-        body.extend(img_bytes)
-        body.extend(b"\r\n")
-    body.extend(f"--{boundary}--\r\n".encode("utf-8"))
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMediaGroup"
-    for attempt in range(1, 4):
-        req = urllib.request.Request(
-            url,
-            data=bytes(body),
-            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=45) as resp:
-                res_data = json.loads(resp.read().decode("utf-8"))
-                if res_data.get("ok"):
-                    log_debug(f"[CHECK 5 ALBUM FALLBACK OK] Отправлено {len(files_to_send)} фото через прямую загрузку")
-                    return True
-        except urllib.error.HTTPError as e:
-            err_body = e.read().decode("utf-8", errors="ignore")
-            if e.code == 429 and attempt < 3:
-                retry_after = 5
-                try:
-                    retry_after = int((json.loads(err_body).get("parameters") or {}).get("retry_after") or 5)
-                except Exception:
-                    pass
-                time.sleep(max(2, min(retry_after + 1, 35)))
-                continue
-            log_debug(f"[CHECK 5 ALBUM FALLBACK ERR] ({e.code}): {err_body}")
-            break
-        except Exception as e:
-            log_debug(f"[CHECK 5 ALBUM FALLBACK ERR] {e}")
-            break
-    return False
-
-
-def _send_single_photo_chunk(chunk: list[str], caption: str = "") -> bool:
-    # Если картинки уже предзагружены реальным Chrome через Opera VPN в кэш PREFETCHED_CARD_IMAGES —
-    # сразу отправляем готовый JPEG за 0.3 сек (без ошибок 400 WEBPAGE_CURL_FAILED и 403 Forbidden)!
-    if all(u in PREFETCHED_CARD_IMAGES for u in chunk):
-        if _send_media_chunk_binary_fallback(chunk, caption=caption):
-            return True
-
-    if len(chunk) == 1:
-        payload: dict[str, Any] = {"chat_id": TELEGRAM_CHAT_ID, "photo": chunk[0]}
-        if caption:
-            payload["caption"] = caption
-            payload["parse_mode"] = "HTML"
-        res = tg_request("sendPhoto", payload)
-        if res.get("ok"):
-            return True
-        log_debug(f"[CHECK 5 PHOTO FALLBACK] Прямой URL не прошёл, отправляю фото через VPN-загрузчик...")
-        return _send_media_chunk_binary_fallback(chunk, caption=caption)
-    else:
-        media = []
-        for idx, url in enumerate(chunk):
-            item: dict[str, Any] = {"type": "photo", "media": url}
-            if idx == 0 and caption:
-                item["caption"] = caption
-                item["parse_mode"] = "HTML"
-            media.append(item)
-        res = tg_request("sendMediaGroup", {"chat_id": TELEGRAM_CHAT_ID, "media": media})
-        if res.get("ok"):
-            return True
-        log_debug(f"[CHECK 5 ALBUM FALLBACK] sendMediaGroup по URL не прошёл ({res.get('error', '')[:120]}), отправляю {len(chunk)} фото через VPN-загрузчик...")
-        return _send_media_chunk_binary_fallback(chunk, caption=caption)
-
-
-def send_account_report(text: str, photo_urls: list[str], add_reply_button: bool = False) -> None:
-    chunks = [photo_urls[i : i + 10] for i in range(0, len(photo_urls), 10)]
-
-    if chunks and not add_reply_button and len(chunks) == 1:
-        if _send_single_photo_chunk(chunks[0], caption=text):
-            return
-    elif chunks:
-        for c_idx, chunk in enumerate(chunks):
-            _send_single_photo_chunk(chunk, caption="")
-            if c_idx < len(chunks) - 1:
-                time.sleep(1.5)
-
-    msg_payload: dict[str, Any] = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True,
-    }
-    if add_reply_button:
-        msg_payload["reply_markup"] = get_main_inline_keyboard()
-    tg_request("sendMessage", msg_payload)
-
-
-async def run_check_all_5_accounts() -> None:
-    log_debug("[TASK START] Запуск проверки всех 13 аккаунтов (через Opera VPN + сохранённые сессии + KNOWN_USER_IDS)...")
-    PREFETCHED_CARD_IMAGES.clear()
-    st_info = await asyncio.to_thread(ensure_senkutools_price_db, True)
-    send_tg_message(format_senkutools_status_line(st_info), add_keyboard=False)
-    proxy_mgr = AccountProxyManager()
+    proxy_pool = LightweightProxyPool()
     try:
-        async with async_playwright() as p:
-            browser = await launch_senkuro_browser(p)
-            for idx, acc in enumerate(ALL_CHECK_ACCOUNTS):
-                if FARM_STOP_FLAG:
-                    break
-                acc_data = await scrape_account_cards_public(browser, acc, proxy_mgr)
-                is_last = idx == len(ALL_CHECK_ACCOUNTS) - 1
-                if acc_data["error"]:
-                    err_msg = f"⚠️ <b><a href=\"{acc['url']}\">{acc['label']}</a></b>: ошибка загрузки ({acc_data['error']})"
-                    send_account_report(err_msg, [], add_reply_button=is_last)
-                    continue
-                text, card_photos = build_account_message(acc, acc_data)
-                send_account_report(text, card_photos, add_reply_button=is_last)
-                await asyncio.sleep(1.5)
-            await browser.close()
+        proxies = await asyncio.to_thread(proxy_pool.start_pool, 3)
+        async with async_playwright() as pw:
+            browser = await launch_browser(pw)
+            contexts: list[BrowserContext] = []
+            pages: list[Page] = []
+            try:
+                for i in range(max(1, len(proxies))):
+                    p_cfg = {"server": proxies[i]} if i < len(proxies) else None
+                    ctx = await browser.new_context(proxy=p_cfg, viewport={"width": 1280, "height": 800})
+                    contexts.append(ctx)
+                    pages.append(await ctx.new_page())
+
+                for idx_c, (c_slug, c_info, net_p) in enumerate(batch):
+                    if STOP_FLAG or stats["new_targets"] >= stop_when_found:
+                        break
+                    pg = pages[idx_c % len(pages)]
+                    db["scanned_cards"][c_slug] = time.time()
+                    stats["cards_scanned"] += 1
+                    try:
+                        await pg.goto(f"https://senkuro.com/cards/{c_slug}", wait_until="domcontentloaded", timeout=25000)
+                        await asyncio.sleep(random.uniform(1.5, 2.4))
+                        owner_slugs = await pg.evaluate(
+                            """() => {
+                                const out = [];
+                                const seen = new Set();
+                                document.querySelectorAll('a[href*="/users/"]').forEach(a => {
+                                    const href = a.getAttribute('href') || '';
+                                    const m = href.match(/\\/users\\/([^/?#]+)/);
+                                    if (m && m[1] && !seen.has(m[1].toLowerCase())) {
+                                        seen.add(m[1].toLowerCase());
+                                        out.push(m[1]);
+                                    }
+                                });
+                                return out.slice(0, 12);
+                            }"""
+                        )
+                    except Exception as nav_e:
+                        log_debug(f"[CARD PAGE WARN] {c_slug}: {nav_e}")
+                        continue
+
+                    for o_slug in (owner_slugs or []):
+                        if STOP_FLAG or stats["new_targets"] >= stop_when_found:
+                            break
+                        key = f"{o_slug.lower()}|{c_slug.lower()}"
+                        if key in db["targets"] or o_slug.lower() in db["guild_blacklist"]:
+                            continue
+                        stats["owners_checked"] += 1
+                        ok, reason = await check_owner_profile_and_card(pg, o_slug, c_slug, db)
+                        if ok:
+                            db["targets"][key] = {
+                                "user_slug": o_slug,
+                                "card_slug": c_slug,
+                                "card_name": str(c_info.get("name") or c_slug),
+                                "rank": str(c_info.get("rank") or "?").upper(),
+                                "net_price": net_p,
+                                "raw_price": float(c_info.get("price") or 0),
+                                "verified_at": time.time(),
+                            }
+                            stats["new_targets"] += 1
+                            log_debug(f"[TARGET FOUND] {o_slug} (без гильдии) владеет {c_info.get('rank')} «{c_info.get('name')}» ({net_p:.2f} чистыми)")
+                        elif reason == "in_guild":
+                            stats["guild_skipped"] += 1
+                        elif reason == "locked":
+                            stats["locked_skipped"] += 1
+                        await asyncio.sleep(random.uniform(0.7, 1.3))
+                    save_trade_db(db)
+            finally:
+                for ctx in contexts:
+                    try:
+                        await ctx.close()
+                    except Exception:
+                        pass
+                await browser.close()
     finally:
-        proxy_mgr.stop_all()
-    if DEBUG_MODE:
-        upload_debug_log_to_github_noop("check_9_accounts")
+        proxy_pool.stop_all()
+        save_trade_db(db)
+    return stats
 
+
+async def run_find_trades_for_my_ranks() -> None:
+    st_info = await asyncio.to_thread(ensure_senkutools_db, True)
+    send_tg_message(
+        f"{format_st_header(st_info)}\n\n"
+        f"🎯 Проверяю свободные дешёвые карты на <b>{MAIN_ACCOUNT_SLUG}</b> и подбираю цели без гильдии...",
+        add_keyboard=False,
+    )
+
+    # 1. Определяем, какие ранги расходников реально есть на cesium254 прямо сейчас!
+    proxy_pool = LightweightProxyPool()
+    fodder_ranks: list[str] = []
+    fodder_counter: Counter = Counter()
+    try:
+        proxies = await asyncio.to_thread(proxy_pool.start_pool, 1)
+        p_cfg = {"server": proxies[0]} if proxies else None
+        async with async_playwright() as pw:
+            browser = await launch_browser(pw)
+            ctx = await browser.new_context(proxy=p_cfg)
+            page = await ctx.new_page()
+            try:
+                my_data = await inspect_main_account(page)
+                fodder_counter = my_data["fodder_by_rank"]
+                fodder_ranks = [r for r in SEARCHABLE_RANKS if fodder_counter.get(r, 0) > 0]
+            finally:
+                await ctx.close()
+                await browser.close()
+    finally:
+        proxy_pool.stop_all()
+
+    if not fodder_ranks:
+        send_tg_message(
+            f"ℹ️ На <b>{MAIN_ACCOUNT_SLUG}</b> сейчас нет свободных дешёвых карт (F/D/C/B/A) для обмена 1-в-1.",
+            add_keyboard=True,
+        )
+        return
+
+    # 2. Ищем свежие непросмотренные цели в локальной базе под эти ранги
+    db = load_trade_db()
+    now = time.time()
+
+    def _pick_ready(cur_db: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+        out = []
+        for k, t in cur_db.get("targets", {}).items():
+            if t.get("rank") not in fodder_ranks:
+                continue
+            if now - float(t.get("verified_at") or 0) > TARGET_TTL_SECONDS:
+                continue
+            if k in cur_db.get("shown_users", {}):
+                continue
+            out.append((k, t))
+        out.sort(key=lambda x: float(x[1].get("net_price") or 0), reverse=True)
+        return out
+
+    ready = _pick_ready(db)
+    scan_stats = None
+    if len(ready) < 6 and not STOP_FLAG:
+        scan_stats = await scan_cards_batch_into_db(fodder_ranks, max_cards_to_scan=12, stop_when_found=8 - len(ready))
+        db = load_trade_db()
+        ready = _pick_ready(db)
+
+    fodder_desc = ", ".join(f"{RANK_BADGE.get(r, r)} ×<b>{fodder_counter[r]}</b>" for r in fodder_ranks)
+    if not ready:
+        extra = ""
+        if scan_stats:
+            extra = f"\n<i>(Проверено карт: {scan_stats['cards_scanned']}, владельцев: {scan_stats['owners_checked']}, отсеяно в гильдиях: {scan_stats['guild_skipped']}, закреплённых: {scan_stats['locked_skipped']})</i>"
+        send_tg_message(
+            f"🎯 <b>Твои расходники:</b> {fodder_desc}\n\n"
+            f"ℹ️ Свежих целей без гильдии с незакреплённой дорогой картой пока не нашлось.{extra}\n"
+            "Нажми <b>«🔄 Пополнить базу»</b>, чтобы просканировать ещё партию карт.",
+            add_keyboard=True,
+        )
+        return
+
+    # Группируем по ОДНОМУ случайному рангу (и в приоритете — по ОДНОЙ конкретной карте),
+    # чтобы не смешивать в кучу F, D и C за один раз!
+    ranks_with_targets = list({t.get("rank") for _, t in ready if t.get("rank")})
+    chosen_rank = random.choice(ranks_with_targets)
+    rank_items = [(k, t) for k, t in ready if t.get("rank") == chosen_rank]
+    random.shuffle(rank_items)
+
+    # Если есть несколько владельцев одной и той же карты — показываем их вместе (до 8 шт.), иначе до 8 случайных целей этого же ранга
+    by_card: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    for k, t in rank_items:
+        by_card.setdefault(t["card_slug"], []).append((k, t))
+    best_card_slug = random.choice(list(by_card.keys()))
+    if len(by_card[best_card_slug]) >= 2:
+        chosen = by_card[best_card_slug][:8]
+        single_card_mode = True
+    else:
+        chosen = rank_items[:8]
+        single_card_mode = False
+
+    for k, _ in chosen:
+        db["shown_users"][k] = time.time()
+    save_trade_db(db)
+
+    r_badge = RANK_BADGE.get(chosen_rank, chosen_rank)
+    if single_card_mode:
+        t0 = chosen[0][1]
+        c_url = f"https://senkuro.com/cards/{t0['card_slug']}"
+        lines = [
+            f"🎯 <b>Карта ранга {r_badge}:</b> <a href='{c_url}'>{t0['card_name']}</a>",
+            f"💎 <b>Чистыми в банке:</b> <b>{t0['net_price']:.2f}</b> (банк {t0['raw_price']:g})",
+            f"<i>Владельцы без гильдии с незакреплённой картой ({len(chosen)} чел.):</i>\n",
+        ]
+        for idx, (_, t) in enumerate(chosen, start=1):
+            u_url = f"https://senkuro.com/users/{t['user_slug']}/cards"
+            lines.append(f"{idx}. 👤 <a href='{u_url}'>{t['user_slug']}</a>")
+    else:
+        lines = [
+            f"🎯 <b>Случайные цели строго ранга {r_badge} (твоих расходников: {fodder_counter[chosen_rank]} шт.):</b>",
+            "<i>(Все игроки проверены: без гильдии + карта не закреплена + цена банка ≥ 2.00)</i>\n",
+        ]
+        for idx, (_, t) in enumerate(chosen, start=1):
+            u_url = f"https://senkuro.com/users/{t['user_slug']}/cards"
+            c_url = f"https://senkuro.com/cards/{t['card_slug']}"
+            lines.append(
+                f"{idx}. <a href='{c_url}'>{t['card_name']}</a> — <b>{t['net_price']:.2f}</b> чистыми (банк {t['raw_price']:g})\n"
+                f"   👤 <a href='{u_url}'>{t['user_slug']}</a>"
+            )
+
+    inline_more = {"inline_keyboard": [[{"text": "🎲 Ещё цели", "callback_data": "find_trades"}]]}
+    send_tg_message("\n".join(lines), add_keyboard=False, inline_markup=inline_more)
+
+
+async def run_refill_database(max_cards: int = 20, silent: bool = False) -> None:
+    st_info = await asyncio.to_thread(ensure_senkutools_db, True)
+    if not silent:
+        send_tg_message(
+            f"{format_st_header(st_info)}\n\n"
+            f"🔄 Пополняю базу целей (сканирую до {max_cards} дорогих карт F/D/C/B/A, отсеиваю гильдии и закреплённые)...",
+            add_keyboard=False,
+        )
+    stats = await scan_cards_batch_into_db(["F", "D", "C", "B", "A"], max_cards_to_scan=max_cards, stop_when_found=15)
+    db = load_trade_db()
+    if not silent:
+        send_tg_message(
+            f"✅ <b>База пополнена!</b>\n"
+            f"• Проверено карт: <b>{stats['cards_scanned']}</b>\n"
+            f"• Проверено владельцев: <b>{stats['owners_checked']}</b>\n"
+            f"• Новых чистых целей (без гильдии): <b>+{stats['new_targets']}</b>\n"
+            f"• Отсеяно (в гильдиях / закреплены): <b>{stats['guild_skipped']}</b> / <b>{stats['locked_skipped']}</b>\n\n"
+            f"📦 <b>Всего сейчас в базе:</b> {len(db['targets'])} свежих целей | {len(db['guild_blacklist'])} в чёрном списке гильдий",
+            add_keyboard=True,
+        )
+
+
+def send_db_status() -> None:
+    st_info = ensure_senkutools_db(force_check=False)
+    db = load_trade_db()
+    by_rank = Counter(t.get("rank", "?") for t in db.get("targets", {}).values())
+    r_str = " | ".join(f"{RANK_BADGE.get(r, r)} <b>{by_rank[r]}</b>" for r in SEARCHABLE_RANKS if by_rank.get(r)) or "пока пусто"
+    unshown = sum(1 for k in db.get("targets", {}) if k not in db.get("shown_users", {}))
+    send_tg_message(
+        f"{format_st_header(st_info)}\n\n"
+        f"📊 <b>Статус локальной базы целей (обновление раз в 72 ч):</b>\n"
+        f"• Свежих целей без гильдии: <b>{len(db['targets'])}</b> (новых к показу: <b>{unshown}</b>)\n"
+        f"• По рангам: {r_str}\n"
+        f"• В чёрном списке гильдий: <b>{len(db['guild_blacklist'])}</b> игроков\n"
+        f"• Просканировано дорогих карт за 48 ч: <b>{len(db['scanned_cards'])}</b>",
+        add_keyboard=True,
+    )
 
 
 # ==============================================================================
-# 11. ПРЯМОЙ ДВИЖОК TELEGRAM LONG POLLING (v43.0 — БЕЗ CLOUDFLARE WORKER!)
+# 9. ПРЯМОЙ TELEGRAM LONG POLLING (DAEMON)
 # ==============================================================================
 
-CURRENT_FARM_STATUS: dict[str, Any] = {"active": False, "accounts": []}
-FARM_STOP_FLAG: bool = False
-GLOBAL_DEADLINE_TS: float = 0.0
-ACTIVE_FARM_TASK: Optional[asyncio.Task] = None
-ACTIVE_JOB_TASK: Optional[asyncio.Task] = None
-ACTIVE_JOB_NAME: str = ""
-QUEUED_TASK_KEYS: set[str] = set()
-PENDING_TASKS: Optional[asyncio.Queue] = None
-
-
-async def enqueue_task_safely(task_queue: asyncio.Queue, act_code: str, param_str: str = "") -> bool:
-    """Добавляет задачу в очередь БЕЗ дубликатов и сразу сообщает, если сервер сейчас занят другой задачей."""
-    global ACTIVE_JOB_NAME, QUEUED_TASK_KEYS
-    key = f"{act_code}:{param_str.strip().lower()}"
-    if key in QUEUED_TASK_KEYS or (ACTIVE_JOB_NAME == key and ACTIVE_JOB_TASK and not ACTIVE_JOB_TASK.done()):
-        send_tg_message(
-            f"ℹ️ Задача <code>{act_code} {param_str}</code> <b>уже выполняется или стоит в очереди</b> — повторный дубликат пропущен!",
-            add_keyboard=True,
-        )
-        return False
-    if ACTIVE_JOB_TASK and not ACTIVE_JOB_TASK.done():
-        send_tg_message(
-            f"⏳ Сейчас ещё завершается предыдущая задача (<code>{ACTIVE_JOB_NAME or 'работа с аккаунтами'}</code>).\n"
-            f"Ваша новая команда <code>{act_code} {param_str}</code> поставлена следующей в очередь (или нажмите <b>«🛑 СТОП»</b>, чтобы отменить текущую задачу мгновенно)!",
-            add_keyboard=True,
-        )
-    QUEUED_TASK_KEYS.add(key)
-    await task_queue.put((act_code, param_str))
-    return True
-
-TG_OFFSET_FILE = Path("/tmp/tg_offset.txt")
-EARLY_QUEUE_FILE = Path("/tmp/senkuro_early_queue.jsonl")
-FARM_RESUME_FILE = SESSIONS_DIR / "farm_resume.json"
-
-
-def read_saved_tg_offset() -> int:
+def read_tg_offset() -> int:
     vals = [0]
-    for candidate in (TG_OFFSET_FILE, SESSIONS_DIR / "tg_offset.txt"):
+    for p in (TG_OFFSET_FILE, SESSIONS_DIR / "tg_offset.txt"):
         try:
-            if candidate.exists():
-                vals.append(int(candidate.read_text(encoding="utf-8").strip()))
+            if p.exists():
+                vals.append(int(p.read_text(encoding="utf-8").strip()))
         except Exception:
             pass
     return max(vals)
 
 
-def write_saved_tg_offset(offset_val: int) -> None:
-    for candidate in (TG_OFFSET_FILE, SESSIONS_DIR / "tg_offset.txt"):
+def write_tg_offset(val: int) -> None:
+    for p in (TG_OFFSET_FILE, SESSIONS_DIR / "tg_offset.txt"):
         try:
-            candidate.write_text(str(offset_val), encoding="utf-8")
+            p.write_text(str(val), encoding="utf-8")
         except Exception:
             pass
 
 
-def fetch_tg_updates_sync(offset_val: int, timeout_sec: int = 4) -> list[dict]:
+def fetch_tg_updates(offset: int, timeout_s: int = 4) -> list[dict]:
     if not TELEGRAM_BOT_TOKEN:
         time.sleep(2)
         return []
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={offset_val}&timeout={timeout_sec}"
-    req = urllib.request.Request(url, headers={"User-Agent": "SenkuroDirectBot/24.0"})
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={offset}&timeout={timeout_s}"
     try:
-        with urllib.request.urlopen(req, timeout=timeout_sec + 6) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            if data.get("ok") and isinstance(data.get("result"), list):
-                return data["result"]
-            if not data.get("ok") and data.get("error_code") == 409:
-                # Если вдруг старый вебхук был установлен, сбрасываем его
+        with urllib.request.urlopen(urllib.request.Request(url), timeout=timeout_s + 5) as resp:
+            d = json.loads(resp.read().decode("utf-8"))
+            if d.get("ok") and isinstance(d.get("result"), list):
+                return d["result"]
+            if d.get("error_code") == 409:
                 tg_request("deleteWebhook", {"drop_pending_updates": False})
-    except urllib.error.HTTPError as e:
-        if e.code == 409:
-            tg_request("deleteWebhook", {"drop_pending_updates": False})
-        time.sleep(1)
     except Exception:
         time.sleep(1)
     return []
 
 
-async def run_background_8h_farm(base_elapsed_minutes: int = 0, segment_hours: float = 4.0) -> None:
-    global CURRENT_FARM_STATUS, FARM_STOP_FLAG
-    FARM_STOP_FLAG = False
-
-    if base_elapsed_minutes == 0:
-        send_tg_message(
-            "🚀 <b>Запускаю 8-часовой фарм манги на всех 12 аккаунтах!</b>\n"
-            "Поднимаю виртуальный экран, 8 уникальных IP, вхожу в аккаунты, выбираю мангу снизу закладок и пришлю сводку через ~40 сек...",
-            add_keyboard=True,
-        )
-    else:
-        rem_m = max(1, 480 - base_elapsed_minutes)
-        send_tg_message(
-            f"🔄 <b>Переподключение этапа 8-часового фарма манги:</b> уже отработано <b>{base_elapsed_minutes // 60} ч {base_elapsed_minutes % 60} мин</b> из 8 ч (осталось <b>{rem_m // 60} ч {rem_m % 60} мин</b>)!",
-            add_keyboard=True,
-        )
-
-    proxy_mgr = AccountProxyManager()
-    farm_sessions = []
-    start_ts = time.time()
-    has_display = bool(os.environ.get("DISPLAY"))
-
-    try:
-        async with async_playwright() as p:
-            browser = await launch_senkuro_browser(p)
-            for acc in FARM_ACCOUNTS:
-                if FARM_STOP_FLAG:
-                    break
-                try:
-                    proxy_url = await asyncio.to_thread(proxy_mgr.start_account_proxy, acc)
-                    ip_used = proxy_mgr.active_ips.get(acc["acc_id"], acc["pinned_ip"])
-                    log_debug(f"[FARM STEP] #{acc['idx']}/12 {acc['id']} -> IP: {ip_used}")
-                    send_tg_message(
-                        f"⏳ <b>[Фарм {acc['idx']}/12] {acc['id']}</b> (IP: <code>{ip_used}</code> ✅): вхожу в профиль, открываю закладки и листаю в самый низ...",
-                        add_keyboard=False,
-                    )
-                    ctx = await create_account_context(browser, acc, proxy_url)
-                    await ctx.add_init_script(FULL_FARM_USERSCRIPT_V9)
-                    page, user_obj = await ensure_logged_in(ctx, acc)
-                    nav_ok = False
-                    for nav_try, wait_mode in enumerate(("domcontentloaded", "commit"), start=1):
-                        try:
-                            await page.goto(acc["bookmarks_url"], wait_until=wait_mode, timeout=45000)
-                            nav_ok = True
-                            break
-                        except Exception as nav_err:
-                            log_debug(f"[FARM BOOKMARKS RETRY #{nav_try}] {acc['id']}: {nav_err}")
-                            await asyncio.sleep(2.0)
-                    if not nav_ok:
-                        log_debug(f"[FARM BOOKMARKS WARN] {acc['id']}: закладки грузились долго, продолжаю с текущей вкладкой.")
-                    try:
-                        await page.evaluate(FULL_FARM_USERSCRIPT_V9)
-                    except Exception:
-                        pass
-                    farm_sessions.append(
-                        {
-                            "acc": acc,
-                            "context": ctx,
-                            "page": page,
-                            "ip": ip_used,
-                        }
-                    )
-                except Exception as acc_err:
-                    log_debug(f"[FARM ACC SKIP WARN] #{acc['idx']} {acc['id']}: ошибка запуска ({acc_err}) — продолжаю фарм остальных аккаунтов!")
-                    continue
-
-            for _ in range(12):
-                if FARM_STOP_FLAG:
-                    break
-                await asyncio.sleep(5)
-                for s in farm_sessions:
-                    try:
-                        await s["page"].evaluate(FULL_FARM_USERSCRIPT_V9)
-                    except Exception:
-                        pass
-                if sum(1 for s in farm_sessions if "/chapters/" in s["page"].url) == len(FARM_ACCOUNTS):
-                    break
-
-            def collect_snapshot(active_flag: bool = True) -> dict:
-                elapsed_m = base_elapsed_minutes + int((time.time() - start_ts) // 60)
-                acc_list = []
-                rd_cnt = 0
-                ips_set = set()
-                for s in farm_sessions:
-                    pg: Page = s["page"]
-                    u = pg.url
-                    is_rd = "/chapters/" in u
-                    if is_rd:
-                        rd_cnt += 1
-                    if s["ip"]:
-                        ips_set.add(s["ip"])
-                    acc_list.append(
-                        {
-                            "idx": s["acc"]["idx"],
-                            "id": s["acc"]["id"],
-                            "ip": s["ip"],
-                            "url": u,
-                            "is_reading": is_rd,
-                            "title": "",
-                        }
-                    )
-                return {
-                    "active": active_flag,
-                    "elapsed_minutes": elapsed_m,
-                    "target_hours": 8.0,
-                    "reading_count": rd_cnt,
-                    "unique_ips": len(ips_set),
-                    "updated_at": time.strftime("%H:%M:%S"),
-                    "accounts": acc_list,
-                }
-
-            async def enrich_titles(snap: dict) -> dict:
-                for idx_s, s in enumerate(farm_sessions):
-                    try:
-                        t = (await s["page"].title()).replace(" - Senkuro", "").strip()
-                    except Exception:
-                        t = s["page"].url
-                    snap["accounts"][idx_s]["title"] = t[:48]
-                return snap
-
-            if not FARM_STOP_FLAG and farm_sessions:
-                initial_snap = await enrich_titles(collect_snapshot(True))
-                CURRENT_FARM_STATUS = initial_snap
-                publish_live_farm_status(initial_snap)
-                # Сразу сохраняем файл резюме фарма на диск, чтобы при любом переходе между этапами прогресс не терялся!
-                try:
-                    FARM_RESUME_FILE.write_text(
-                        json.dumps({"active": True, "elapsed_minutes": max(1, initial_snap["elapsed_minutes"]), "saved_at": time.time(), "run_id": os.environ.get("GITHUB_RUN_ID", "")}),
-                        encoding="utf-8",
-                    )
-                except Exception:
-                    pass
-                if base_elapsed_minutes == 0:
-                    send_tg_message(
-                        "✅ <b>8-часовой фарм манги успешно запущен!</b>\n\n" + format_farm_status_message(initial_snap),
-                        add_keyboard=True,
-                    )
-                else:
-                    log_debug(f"[FARM RESUME OK] Этап 8-часового фарма продолжен с {base_elapsed_minutes}-й минуты!")
-
-            job_limit_ts = (GLOBAL_DEADLINE_TS - 45.0) if GLOBAL_DEADLINE_TS > time.time() + 120 else (start_ts + segment_hours * 3600.0)
-            end_ts = min(start_ts + segment_hours * 3600.0, job_limit_ts)
-            last_sync_ts = time.time()
-            last_save_ts = time.time()
-
-            while time.time() < end_ts and not FARM_STOP_FLAG:
-                await asyncio.sleep(5)
-                if FARM_STOP_FLAG:
-                    break
-                for s in farm_sessions:
-                    try:
-                        await s["page"].evaluate(FULL_FARM_USERSCRIPT_V9)
-                    except Exception:
-                        pass
-
-                now = time.time()
-                if now - last_sync_ts >= 20:
-                    last_sync_ts = now
-                    snap = await enrich_titles(collect_snapshot(True))
-                    CURRENT_FARM_STATUS = snap
-                    publish_live_farm_status(snap)
-                    try:
-                        FARM_RESUME_FILE.write_text(
-                            json.dumps({"active": True, "elapsed_minutes": max(1, snap["elapsed_minutes"]), "saved_at": time.time(), "run_id": os.environ.get("GITHUB_RUN_ID", "")}),
-                            encoding="utf-8",
-                        )
-                    except Exception:
-                        pass
-                    if snap["elapsed_minutes"] >= 480:
-                        # Полные 8 часов (480 минут) отработаны!
-                        break
-
-                if now - last_save_ts >= 300:
-                    last_save_ts = now
-                    for s in farm_sessions:
-                        try:
-                            await s["context"].storage_state(path=str(get_session_file(s["acc"]["id"])))
-                        except Exception:
-                            pass
-
-            for s in farm_sessions:
-                try:
-                    await s["context"].storage_state(path=str(get_session_file(s["acc"]["id"])))
-                except Exception:
-                    pass
-
-            final_elapsed = base_elapsed_minutes + int((time.time() - start_ts) // 60)
-            final_snap = await enrich_titles(collect_snapshot(False))
-            CURRENT_FARM_STATUS = final_snap
-            publish_live_farm_status(final_snap)
-
-            if FARM_STOP_FLAG:
-                try:
-                    FARM_RESUME_FILE.write_text(json.dumps({"active": False, "stopped": True, "elapsed_minutes": 0, "saved_at": 0}), encoding="utf-8")
-                except Exception:
-                    pass
-            elif final_elapsed >= 475:
-                try:
-                    FARM_RESUME_FILE.write_text(json.dumps({"active": False, "stopped": True, "elapsed_minutes": 0, "saved_at": 0}), encoding="utf-8")
-                except Exception:
-                    pass
-                log_debug(f"[FARM COMPLETE] 8 часов фарма ({final_elapsed} мин) полностью отработаны!")
-                send_tg_message(
-                    "🏁 <b>8 часов фарма манги полностью завершены!</b>\n"
-                    "Все 12 аккаунтов остановлены, прогресс чтения и сессии сохранены.\n\n"
-                    + format_farm_status_message(final_snap),
-                    add_keyboard=True,
-                )
-            else:
-                # Сохраняем точное количество отработанных минут для бесшовного продолжения в следующем этапе воркфлоу!
-                saved_min = max(1, final_elapsed)
-                log_debug(f"[FARM HANDOFF] Этап завершён на {saved_min}/480 мин — сохраняю farm_resume.json для следующего этапа!")
-                FARM_RESUME_FILE.write_text(
-                    json.dumps({"active": True, "elapsed_minutes": saved_min, "saved_at": time.time(), "run_id": os.environ.get("GITHUB_RUN_ID", "")}),
-                    encoding="utf-8",
-                )
-
-            for s in farm_sessions:
-                await s["context"].close()
-            await browser.close()
-    except asyncio.CancelledError:
-        CURRENT_FARM_STATUS = {"active": False, "accounts": []}
-        if FARM_STOP_FLAG:
-            try:
-                FARM_RESUME_FILE.write_text(json.dumps({"active": False, "stopped": True, "elapsed_minutes": 0, "saved_at": 0}), encoding="utf-8")
-            except Exception:
-                pass
-        else:
-            # Отмена из-за завершения 4-часового джоба GitHub Actions — сохраняем точный прогресс для следующего джоба!
-            saved_min = max(1, base_elapsed_minutes + int((time.time() - start_ts) // 60))
-            log_debug(f"[FARM CANCEL HANDOFF] Джоб завершается на {saved_min}/480 мин — сохраняю farm_resume.json!")
-            try:
-                FARM_RESUME_FILE.write_text(
-                    json.dumps({"active": True, "elapsed_minutes": saved_min, "saved_at": time.time(), "run_id": os.environ.get("GITHUB_RUN_ID", "")}),
-                    encoding="utf-8",
-                )
-            except Exception:
-                pass
-    except Exception as e:
-        log_debug(f"[FARM FATAL ERROR] {e}")
-        send_tg_message(f"⚠️ Ошибка при запуске фарма: <code>{str(e).replace('<', '&lt;').replace('>', '&gt;')[:400]}</code>", add_keyboard=True)
-    finally:
-        ACTIVE_BROWSER_PAGES.clear()
-        proxy_mgr.stop_all()
+async def execute_action(act: str) -> None:
+    global STOP_FLAG
+    STOP_FLAG = False
+    if act == "my_cards":
+        await run_check_my_cards()
+    elif act == "find_trades":
+        await run_find_trades_for_my_ranks()
+    elif act == "refill_db":
+        await run_refill_database(max_cards=20, silent=False)
+    elif act == "db_status":
+        await asyncio.to_thread(send_db_status)
+    elif act == "log":
+        await asyncio.to_thread(send_debug_log)
 
 
-async def execute_single_action(action: str, promo_code: str = "") -> None:
-    global ACTIVE_FARM_TASK, FARM_STOP_FLAG
-    FARM_STOP_FLAG = False
-    if action == "menu":
-        send_tg_message(
-            "✅ <b>Единый комбайн Senkuro v43.0 готов к работе (Прямая связь с GitHub)!</b>\n\n"
-            "Выберите любую задачу кнопкой ниже (или просто отправьте промокод одним словом в чат):",
-            add_keyboard=True,
-        )
-    elif action == "promo":
-        await run_promo_code_activation(promo_code)
-    elif action == "balance":
-        await run_check_coins_balance()
-    elif action == "packs":
-        await run_all_packs_opening()
-    elif action == "forge":
-        await run_smart_forge_and_trade_pipeline()
-    elif action == "trade":
-        await run_custom_trade_command(promo_code)
-    elif action in ("farm", "farm_part1"):
-        if ACTIVE_FARM_TASK and not ACTIVE_FARM_TASK.done():
-            send_tg_message(
-                "🟢 <b>8-часовой фарм манги УЖЕ запущен и работает!</b>\n\n"
-                + format_farm_status_message(CURRENT_FARM_STATUS),
-                add_keyboard=True,
-            )
-        else:
-            FARM_STOP_FLAG = False
-            ACTIVE_FARM_TASK = asyncio.create_task(run_background_8h_farm(0, 4.0))
-    elif action == "farm_part2":
-        FARM_STOP_FLAG = False
-        ACTIVE_FARM_TASK = asyncio.create_task(run_background_8h_farm(240, 4.0))
-    elif action == "farm_status":
-        if CURRENT_FARM_STATUS.get("active"):
-            send_tg_message(format_farm_status_message(CURRENT_FARM_STATUS), add_keyboard=True)
-        else:
-            await run_check_farm_status()
-    elif action == "all":
-        if promo_code:
-            await run_promo_code_activation(promo_code)
-        await run_all_packs_opening()
-        await run_smart_forge_and_trade_pipeline()
-    elif action == "check":
-        await run_check_all_5_accounts()
-    elif action == "log":
-        await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v43.0")
-    elif action == "screen":
-        await send_live_screen_snapshot()
-
-
-
-LAST_HARD_STOP_TS: float = 0.0
-
-
-async def perform_hard_stop_and_reset(task_queue: asyncio.Queue) -> bool:
-    """
-    Экстренная полная остановка всех текущих процессов (фарм, кузня, трейд, паки, браузеры Chrome и прокси)
-    с мгновенным перезапуском внутреннего состояния сервера в режим чистого ожидания новых команд!
-    """
-    global FARM_STOP_FLAG, ACTIVE_JOB_TASK, ACTIVE_FARM_TASK, CURRENT_FARM_STATUS, WAITING_FOR_TRADE_INPUT, LAST_HARD_STOP_TS
-    now_s = time.time()
-    if now_s - LAST_HARD_STOP_TS < 3.5:
-        log_debug("[HARD STOP SKIP] Повторное нажатие СТОП за последние 3.5 сек — дубликат пропущен.")
-        return False
-    LAST_HARD_STOP_TS = now_s
-    log_debug("[HARD STOP & RESET] Получена команда 🛑 СТОП — принудительно останавливаю все задачи, браузеры и прокси...")
-    FARM_STOP_FLAG = True
-    WAITING_FOR_TRADE_INPUT = False
-
-    try:
-        FARM_RESUME_FILE.write_text(
-            json.dumps({"active": False, "stopped": True, "elapsed_minutes": 0, "saved_at": 0}),
-            encoding="utf-8",
-        )
-    except Exception:
-        pass
-
-    try:
-        EARLY_QUEUE_FILE.unlink(missing_ok=True)
-    except Exception:
-        pass
-    save_task_checkpoint("", "", stage="stopped", active=False)
-
-    while not task_queue.empty():
-        try:
-            task_queue.get_nowait()
-            task_queue.task_done()
-        except Exception:
-            break
-
-    tasks_to_cancel = []
-    if ACTIVE_JOB_TASK and not ACTIVE_JOB_TASK.done():
-        ACTIVE_JOB_TASK.cancel()
-        tasks_to_cancel.append(ACTIVE_JOB_TASK)
-    if ACTIVE_FARM_TASK and not ACTIVE_FARM_TASK.done():
-        ACTIVE_FARM_TASK.cancel()
-        tasks_to_cancel.append(ACTIVE_FARM_TASK)
-
-    if tasks_to_cancel:
-        try:
-            await asyncio.wait_for(asyncio.gather(*tasks_to_cancel, return_exceptions=True), timeout=3.0)
-        except Exception:
-            pass
-
-    ACTIVE_JOB_TASK = None
-    ACTIVE_JOB_NAME = ""
-    QUEUED_TASK_KEYS.clear()
-    ACTIVE_FARM_TASK = None
-    ACTIVE_BROWSER_PAGES.clear()
-    CURRENT_FARM_STATUS = {"active": False, "accounts": []}
-    publish_live_farm_status(CURRENT_FARM_STATUS)
-
-    # Принудительно закрываем все зависшие процессы Chrome и opera-proxy на уровне ОС,
-    # чтобы освободить все порты 25341..25352 и память для мгновенного приёма новых команд!
-    if not sys.platform.startswith("win"):
-        for proc_pattern in ("google-chrome", "chromium", "chrome", "opera-proxy"):
-            try:
-                subprocess.run(["pkill", "-9", "-f", proc_pattern], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except Exception:
-                pass
-
-    await asyncio.sleep(0.5)
-    FARM_STOP_FLAG = False
-    log_debug("[HARD STOP & RESET OK] Все процессы очищены, сервер перезапущен и ждёт новых команд!")
-    return True
-
-
-async def handle_telegram_update(upd: dict, task_queue: asyncio.Queue) -> None:
-    global FARM_STOP_FLAG, ACTIVE_FARM_TASK, ACTIVE_JOB_TASK, CURRENT_FARM_STATUS, WAITING_FOR_TRADE_INPUT
-
+async def handle_update(upd: dict, q: asyncio.Queue) -> None:
+    global STOP_FLAG, ACTIVE_JOB_TASK
     cb = upd.get("callback_query")
     if cb:
         cb_id = cb.get("id")
-        msg = cb.get("message") or {}
-        chat_id = str((msg.get("chat") or {}).get("id") or "")
         data = str(cb.get("data") or "").strip()
+        if data == "find_trades":
+            tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "🎲 Подбираю новую случайную порцию..."})
+            if "find_trades" not in QUEUED_KEYS and ACTIVE_JOB_NAME != "find_trades":
+                QUEUED_KEYS.add("find_trades")
+                await q.put("find_trades")
+        return
+    msg = upd.get("message")
+    if not msg or not msg.get("text"):
+        return
+    chat_id = str((msg.get("chat") or {}).get("id") or "")
+    if TELEGRAM_CHAT_ID and chat_id and chat_id != str(TELEGRAM_CHAT_ID):
+        return
+    low = str(msg.get("text") or "").strip().lower()
 
-        if TELEGRAM_CHAT_ID and chat_id and chat_id != str(TELEGRAM_CHAT_ID):
-            tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "⛔ Доступ запрещён", "show_alert": True})
-            return
-
-        if data == "stop_all_farm":
-            tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "🛑 Сбрасываю все процессы и перезапускаю готовность..."})
-            if await perform_hard_stop_and_reset(task_queue):
-                send_tg_message(
-                    "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
-                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v43.0)</b> — можете сразу нажимать любую кнопку ниже:",
-                    add_keyboard=True,
-                )
-            return
-
-        if data == "view_screen":
-            tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📸 Делаю снимок экрана..."})
-            await send_live_screen_snapshot()
-            return
-
-        if data == "dump_full_log":
-            tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "📜 Выгружаю полный лог..."})
-            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v43.0")
-            return
-
-        if data == "check_farm_status":
-            tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "Проверяю статус..."})
-            if CURRENT_FARM_STATUS.get("active"):
-                send_tg_message(format_farm_status_message(CURRENT_FARM_STATUS), add_keyboard=True)
-            else:
-                await run_check_farm_status()
-            return
-
-        if data == "prompt_promo":
-            tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "Введите промокод в чат 👇"})
-            send_tg_message(
-                "🎟 <b>Просто напишите и отправьте промокод одним словом в этот чат:</b>\n\n"
-                "Сервер откроет 12 уникальных IP, зайдёт на каждый из 12 аккаунтов, введёт промокод, "
-                "<b>реально проверит увеличение баланса монет</b> и пришлёт результат!",
-                add_keyboard=True,
-            )
-            return
-
-        action_map = {
-            "start_farm_8h": ("farm", "▶️ Запускаю 8-часовой фарм манги на 12 аккаунтах!"),
-            "check_balance": ("balance", "🪙 Проверяю баланс сенкоинов на 12 фарм-аккаунтах..."),
-            "roll_packs": ("packs", "🎴 Запускаю прокрутку паков «Хардкор» (480 🪙)..."),
-            "run_forge": ("forge", "⚒️ Запускаю Переплавку (Кузня) + Трейд на основу..."),
-            "check_senkuro": ("check", "🔄 Проверяю карты и осколки всех 13 аккаунтов..."),
-            "run_all": ("all", "🚀 Запускаю полный цикл (Паки + Переплавка + Трейд)..."),
-        }
-        act_code, act_label = action_map.get(data, ("check", "🔄 Проверяю карты и осколки всех 13 аккаунтов..."))
-        tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": act_label})
-
-        if act_code == "farm":
-            await execute_single_action("farm", "")
-        else:
-            send_tg_message(f"⏳ <b>{act_label}</b>\nВыполняю задачу — отчёт придёт через несколько секунд!", add_keyboard=True)
-            await enqueue_task_safely(task_queue, act_code, "")
+    if low in ("/start", "/menu", "меню"):
+        send_tg_message(
+            f"🤖 <b>Помощник перепродажи Senkuro {APP_VERSION_TAG} (без твинков и паролей)</b>\n\n"
+            "• <b>🃏 Мои карты</b> — показать твои карты <code>cesium254</code> с ценами банка на фото\n"
+            "• <b>🎯 Найти обмены</b> — сам проверит твои дешёвые карты и выдаст цели без гильдии\n"
+            "• <b>🔄 Пополнить базу</b> — просканировать новую партию дорогих карт в базу",
+            add_keyboard=True,
+        )
         return
 
-    msg = upd.get("message")
-    if msg and msg.get("text"):
-        chat_id = str((msg.get("chat") or {}).get("id") or "")
-        if TELEGRAM_CHAT_ID and chat_id and chat_id != str(TELEGRAM_CHAT_ID):
+    if low in ("🛑 стоп", "/stop", "стоп"):
+        STOP_FLAG = True
+        if ACTIVE_JOB_TASK and not ACTIVE_JOB_TASK.done():
+            ACTIVE_JOB_TASK.cancel()
+        while not q.empty():
+            try:
+                q.get_nowait()
+                q.task_done()
+            except Exception:
+                break
+        QUEUED_KEYS.clear()
+        send_tg_message("🛑 Текущая задача остановлена, сервер в режиме ожидания.", add_keyboard=True)
+        return
+
+    if low in ("📜 лог", "/log", "лог"):
+        await asyncio.to_thread(send_debug_log)
+        return
+
+    if low in ("📊 статус базы", "/status", "статус"):
+        await asyncio.to_thread(send_db_status)
+        return
+
+    btn_map = {
+        "🃏 мои карты": "my_cards",
+        "/cards": "my_cards",
+        "мои карты": "my_cards",
+        "🎯 найти обмены": "find_trades",
+        "/find": "find_trades",
+        "найти обмены": "find_trades",
+        "🔄 пополнить базу": "refill_db",
+        "/refill": "refill_db",
+        "пополнить базу": "refill_db",
+    }
+    if low in btn_map:
+        act = btn_map[low]
+        if act in QUEUED_KEYS or (ACTIVE_JOB_NAME == act and ACTIVE_JOB_TASK and not ACTIVE_JOB_TASK.done()):
+            send_tg_message("ℹ️ Эта задача уже выполняется.", add_keyboard=True)
             return
-        raw_text = str(msg.get("text") or "").strip()
-        lower = raw_text.lower()
+        QUEUED_KEYS.add(act)
+        await q.put(act)
+        return
 
-        if lower in ("/start", "/menu", "/help", "меню"):
-            send_tg_message(
-                "🤖 <b>Панель управления фермой Senkuro v43.0</b>\n\n"
-                "Выберите задачу кнопкой в нижнем меню 🎛 (его можно сворачивать и разворачивать значком справа в поле ввода) "
-                "или просто напишите промокод одним словом в чат:",
-                add_keyboard=True,
-                force_reply_kb=True,
-            )
-            return
-
-        if lower in ("/screen", "📸 экран", "📸 посмотреть экран", "экран", "скрин"):
-            await send_live_screen_snapshot()
-            return
-
-        if lower in ("/log", "📜 лог", "📜 полный лог", "лог", "логи"):
-            await asyncio.to_thread(send_full_debug_log_to_user, "Полный лог работы комбайна v43.0")
-            return
-
-        if lower in ("/stop", "🛑 стоп", "стоп", "🛑 остановить фарм / все задачи"):
-            if await perform_hard_stop_and_reset(task_queue):
-                send_tg_message(
-                    "🛑 <b>Все активные процессы, браузеры и задачи полностью остановлены и сброшены!</b>\n\n"
-                    "🟢 <b>Сервер перезапущен в чистый режим ожидания (v43.0)</b> — можете сразу нажимать любую кнопку ниже:",
-                    add_keyboard=True,
-                )
-            return
-
-        if lower in ("/status", "📊 статус", "📊 статус фарма", "📊 проверить статус фарма"):
-            if CURRENT_FARM_STATUS.get("active"):
-                send_tg_message(format_farm_status_message(CURRENT_FARM_STATUS), add_keyboard=True)
-            else:
-                await run_check_farm_status()
-            return
-
-        if lower in ("/farm", "▶️ фарм (8 ч)", "▶️ запустить фарм (8 ч)"):
-            await execute_single_action("farm", "")
-            return
-
-        if lower in ("🎟 промокод", "🎟 ввести промокод"):
-            WAITING_FOR_TRADE_INPUT = False
-            send_tg_message(
-                "🎟 <b>Просто напишите и отправьте промокод одним словом в этот чат:</b>\n"
-                "(окошко принудительного ответа убрано, чтобы ничего не залипало!)",
-                add_keyboard=True,
-            )
-            return
-
-        if lower in ("🤝 трейд", "трейд", "/trade"):
-            WAITING_FOR_TRADE_INPUT = True
-            send_tg_message(get_trade_prompt_message(), add_keyboard=True)
-            return
-
-        text_btn_map = {
-            "/balance": "balance",
-            "/relogin": "balance",
-            "relogin": "balance",
-            "🪙 баланс": "balance",
-            "🪙 баланс монет": "balance",
-            "🪙 баланс монет (4 акка)": "balance",
-            "/packs": "packs",
-            "🎴 паки": "packs",
-            "🎴 паки хардкор": "packs",
-            "🎴 крутить паки хардкор": "packs",
-            "/forge": "forge",
-            "⚒️ кузня+трейд": "forge",
-            "⚒️ кузня + трейд": "forge",
-            "⚒️ переплавка + трейд": "forge",
-            "/check": "check",
-            "🔄 чекать": "check",
-            "чекать": "check",
-            "🔄 чекать 13": "check",
-            "🔄 чекать 12": "check",
-            "🔄 чекать 9": "check",
-            "🔄 чекать 9 акков": "check",
-            "🔄 чекать 5": "check",
-            "🔄 чекать 5 акков": "check",
-            "🔄 проверить 9 аккаунтов": "check",
-            "🔄 проверить 5 аккаунтов": "check",
-            "🚀 всё": "all",
-            "🚀 сделать всё": "all",
-            "🚀 сделать всё (паки+кузня)": "all",
-        }
-        if lower in text_btn_map:
-            WAITING_FOR_TRADE_INPUT = False
-            act_c = text_btn_map[lower]
-            send_tg_message(f"⏳ Запускаю задачу <code>{act_c}</code>...", add_keyboard=True)
-            await task_queue.put((act_c, ""))
-            return
-
-        # Проверяем, является ли сообщение командой ручного Трейда (например: "1B 2C 4D 5C", "1 B, 3 B, 5 C", "1 B C", "все B")
-        is_explicit_trade_cmd = (
-            lower.startswith("/trade ")
-            or WAITING_FOR_TRADE_INPUT
-            or (" " in raw_text)
-            or ("," in raw_text)
-            or len(raw_text) <= 3
-            or bool(re.match(r"^(?:1[0-2]|[1-9])[rрsыaаbвбcсцdдfф]+$", lower))
-            or bool(re.match(r"^(?:банк|bank|выгодные|выгода|профит|profit)(?:\s+[0-9.,]+)?$", lower))
-        )
-        if is_explicit_trade_cmd:
-            parsed_tr = parse_custom_trade_spec(raw_text)
-            if parsed_tr:
-                WAITING_FOR_TRADE_INPUT = False
-                send_tg_message(f"🤝 Команда трейда <code>{raw_text}</code> принята в обработку!", add_keyboard=True)
-                await enqueue_task_safely(task_queue, "trade", raw_text)
-                return
-            elif WAITING_FOR_TRADE_INPUT and not re.match(r"^[A-Za-z0-9_-]{5,32}$", raw_text):
-                send_tg_message(
-                    "⚠️ <b>Не понял формат трейда.</b> Примеры: <code>1 B</code>, <code>1 B C</code>, <code>1B 2C 4D 5C</code> или <code>1 B, 3 B, 5 C, 6 D</code>.\n\n"
-                    + get_trade_prompt_message(),
-                    add_keyboard=True,
-                )
-                return
-
-        WAITING_FOR_TRADE_INPUT = False
-        promo_code = ""
-        if lower.startswith("/promo "):
-            promo_code = raw_text[7:].strip().upper()
-        elif not raw_text.startswith("/") and re.match(r"^[A-Za-z0-9_-]{4,32}$", raw_text):
-            promo_code = raw_text.upper()
-
-        if promo_code:
-            send_tg_message(
-                f"🎟 Принят промокод <code>{promo_code}</code>!\n"
-                "⏳ Открываю 12 уникальных IP, захожу на 12 аккаунтов, ввожу промокод и проверяю реальное увеличение баланса монет (~40 сек)...",
-                add_keyboard=True,
-            )
-            await enqueue_task_safely(task_queue, "promo", promo_code)
-            return
-
-        send_tg_message(
-            "👇 Выберите задачу кнопкой ниже (или просто отправьте промокод одним словом):",
-            add_keyboard=True,
-        )
+    send_tg_message("👇 Выберите действие кнопкой ниже:", add_keyboard=True)
 
 
-async def telegram_direct_poller_loop(task_queue: asyncio.Queue, deadline_ts: float) -> None:
-    offset = read_saved_tg_offset()
+async def poller_loop(q: asyncio.Queue, deadline: float) -> None:
+    offset = read_tg_offset()
     if offset == 0:
-        initial_upds = await asyncio.to_thread(fetch_tg_updates_sync, -1, 1)
-        if initial_upds:
-            offset = int(initial_upds[-1]["update_id"]) + 1
-            write_saved_tg_offset(offset)
-
-    yml_ver = os.environ.get("WORKFLOW_YML_VERSION", "OLD_v24_NO_SECRETS")
-    loaded_idxs = [str(a["idx"]) for a in FARM_ACCOUNTS if a.get("password")]
-    log_debug(
-        f"[DAEMON READY] Прямой Telegram Long Polling запущен (offset={offset}, workflow={yml_ver}, "
-        f"пароли загружены для {len(loaded_idxs)}/12 акков: {loaded_idxs or 'НЕТ (обновите .github/workflows/check_senkuro.yml!)'}) — сервер 100% готов!"
-    )
-    if os.environ.get("GH_EVENT_NAME") in ("push", "workflow_dispatch") and os.environ.get("IS_CONTINUATION_JOB") != "true":
+        init_u = await asyncio.to_thread(fetch_tg_updates, -1, 1)
+        if init_u:
+            offset = int(init_u[-1]["update_id"]) + 1
+            write_tg_offset(offset)
+    log_debug(f"[DAEMON READY] Senkuro Trade Assistant {APP_VERSION_TAG} запущен (offset={offset}).")
+    if os.environ.get("GH_EVENT_NAME") in ("push", "workflow_dispatch"):
         send_tg_message(
-            "🟢 <b>Сервер полностью запущен и готов к работе (v43.0)!</b>\n\n"
-            "Браузер Google Chrome и виртуальный экран готовы — теперь любая кнопка сработает сразу 👇:",
+            f"🟢 <b>Помощник перепродажи Senkuro {APP_VERSION_TAG} запущен!</b>\n"
+            "Работает без паролей и твинков — выбирайте кнопку ниже 👇",
             add_keyboard=True,
         )
-    while time.time() < deadline_ts or (ACTIVE_JOB_TASK is not None and not ACTIVE_JOB_TASK.done()):
-        updates = await asyncio.to_thread(fetch_tg_updates_sync, offset, 4)
+    while time.time() < deadline or (ACTIVE_JOB_TASK is not None and not ACTIVE_JOB_TASK.done()):
+        updates = await asyncio.to_thread(fetch_tg_updates, offset, 4)
         for upd in updates:
             uid = int(upd.get("update_id") or 0)
             if uid >= offset:
                 offset = uid + 1
-                write_saved_tg_offset(offset)
+                write_tg_offset(offset)
             try:
-                await handle_telegram_update(upd, task_queue)
+                await handle_update(upd, q)
             except Exception as e:
-                print(f"[TG UPDATE ERROR] {e}")
+                log_debug(f"[UPDATE ERR] {e}")
         await asyncio.sleep(0.3)
 
 
-async def _drain_early_queue_into_tasks(task_queue: asyncio.Queue) -> None:
-    if EARLY_QUEUE_FILE.exists():
+async def executor_loop(q: asyncio.Queue, deadline: float) -> None:
+    global ACTIVE_JOB_TASK, ACTIVE_JOB_NAME, STOP_FLAG
+    while time.time() < deadline:
         try:
-            lines = EARLY_QUEUE_FILE.read_text(encoding="utf-8").strip().splitlines()
-            EARLY_QUEUE_FILE.unlink(missing_ok=True)
-            for ln in lines:
-                if not ln.strip():
-                    continue
-                obj = json.loads(ln)
-                e_act = str(obj.get("action") or "").strip().lower()
-                e_prm = str(obj.get("promo_code") or "").strip()
-                if e_act == "farm":
-                    await execute_single_action("farm", "")
-                elif e_act:
-                    await task_queue.put((e_act, e_prm))
-        except Exception as e:
-            log_debug(f"[EARLY QUEUE DRAIN WARN] {e}")
-
-
-async def task_executor_loop(task_queue: asyncio.Queue, deadline_ts: float) -> None:
-    global ACTIVE_JOB_TASK, FARM_STOP_FLAG
-    while time.time() < deadline_ts:
-        await _drain_early_queue_into_tasks(task_queue)
-        try:
-            item = await asyncio.wait_for(task_queue.get(), timeout=2.0)
+            act = await asyncio.wait_for(q.get(), timeout=2.0)
         except asyncio.TimeoutError:
             continue
-        act_code, p_code = item
-        key_done = f"{act_code}:{p_code.strip().lower()}"
-        QUEUED_TASK_KEYS.discard(key_done)
-        ACTIVE_JOB_NAME = key_done
-        FARM_STOP_FLAG = False
-        log_debug(f"[EXECUTOR] Запуск задачи: action={act_code}, promo={p_code or '-'}")
-        track_ckpt = act_code in ("forge", "packs", "promo", "trade", "all", "check", "balance")
-        if track_ckpt:
-            save_task_checkpoint(act_code, p_code, stage="started", active=True)
-
-        async def _ckpt_heartbeat(a_c: str, p_c: str) -> None:
-            tick = 0
-            while True:
-                await asyncio.sleep(20.0)
-                tick += 20
-                save_task_checkpoint(a_c, p_c, stage=f"running_{tick}s", active=True)
-
-        hb_task = asyncio.create_task(_ckpt_heartbeat(act_code, p_code)) if track_ckpt else None
-        task_finished_cleanly = False
+        QUEUED_KEYS.discard(act)
+        ACTIVE_JOB_NAME = act
+        STOP_FLAG = False
         try:
-            ACTIVE_JOB_TASK = asyncio.create_task(execute_single_action(act_code, p_code))
+            ACTIVE_JOB_TASK = asyncio.create_task(execute_action(act))
             await ACTIVE_JOB_TASK
-            task_finished_cleanly = True
         except asyncio.CancelledError:
-            log_debug(f"[EXECUTOR CANCELLED] Задача {act_code} остановлена пользователем (СТОП).")
-            task_finished_cleanly = True
+            log_debug(f"[CANCELLED] {act}")
         except Exception as e:
-            log_debug(f"[EXECUTOR ERROR] {act_code}: {e}")
-            send_tg_message(f"⚠️ Ошибка при выполнении задачи <code>{act_code}</code>: {str(e).replace('<', '&lt;').replace('>', '&gt;')[:400]}", add_keyboard=True)
-            task_finished_cleanly = True
+            log_debug(f"[EXEC ERR] {act}: {e}")
+            send_tg_message(f"⚠️ Ошибка задачи <code>{act}</code>: <code>{str(e)[:250]}</code>", add_keyboard=True)
         finally:
-            if hb_task:
-                hb_task.cancel()
-            if track_ckpt and task_finished_cleanly:
-                save_task_checkpoint(act_code, p_code, stage="completed", active=False)
-            for _k, _pg in list(ACTIVE_BROWSER_PAGES.items()):
-                try:
-                    if _pg.is_closed():
-                        ACTIVE_BROWSER_PAGES.pop(_k, None)
-                except Exception:
-                    ACTIVE_BROWSER_PAGES.pop(_k, None)
             ACTIVE_JOB_TASK = None
             ACTIVE_JOB_NAME = ""
-            task_queue.task_done()
+            q.task_done()
 
 
 async def async_main() -> None:
-    global PENDING_TASKS, ACTIVE_FARM_TASK
-    parser = argparse.ArgumentParser(description="Senkuro Full Automation Combine v43.0")
-    parser.add_argument(
-        "--action",
-        default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon",
-        choices=["check", "menu", "daemon", "promo", "balance", "packs", "forge", "trade", "farm", "farm_part1", "farm_part2", "farm_status", "all"],
-    )
-    parser.add_argument(
-        "--promo-code",
-        default=os.environ.get("SENKURO_PROMO_CODE", "").strip(),
-    )
+    parser = argparse.ArgumentParser(description=f"Senkuro Public Trade Assistant {APP_VERSION_TAG}")
+    parser.add_argument("--action", default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon")
     args = parser.parse_args()
 
-    # Гарантированно сигнализируем early_poller.py о старте основного движка и убиваем процесс раннего поллера,
-    # чтобы он НИКОГДА не перехватывал сообщения после запуска основного скрипта!
-    try:
-        Path("/tmp/senkuro_main_ready.flag").write_text("1", encoding="utf-8")
-    except Exception:
-        pass
-    if not sys.platform.startswith("win"):
-        try:
-            subprocess.run(["pkill", "-9", "-f", "early_poller.py"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception:
-            pass
+    q: asyncio.Queue = asyncio.Queue()
+    deadline = time.time() + 4.0 * 3600.0
 
-    configure_telegram_bot_profile()
+    # При плановом запуске по расписанию (schedule) тихо пополняем локальную базу целей на 15 карт
+    if os.environ.get("GH_EVENT_NAME") == "schedule":
+        await run_refill_database(max_cards=15, silent=True)
 
-    global GLOBAL_DEADLINE_TS
-    PENDING_TASKS = asyncio.Queue()
-    deadline_ts = time.time() + 4.1 * 3600.0
-    GLOBAL_DEADLINE_TS = deadline_ts
-
-    # 1. Загружаем все команды, которые пользователь успел нажать за 40 секунд установки браузера!
-    if EARLY_QUEUE_FILE.exists():
-        try:
-            lines = EARLY_QUEUE_FILE.read_text(encoding="utf-8").strip().splitlines()
-            EARLY_QUEUE_FILE.unlink(missing_ok=True)
-            for ln in lines:
-                if not ln.strip():
-                    continue
-                obj = json.loads(ln)
-                e_act = str(obj.get("action") or "").strip().lower()
-                e_prm = str(obj.get("promo_code") or "").strip()
-                if e_act == "farm":
-                    await execute_single_action("farm", "")
-                elif e_act:
-                    await PENDING_TASKS.put((e_act, e_prm))
-        except Exception as e:
-            print(f"[EARLY QUEUE WARNING] {e}")
-
-    # 2. Проверяем, нужно ли автоматически продолжить 8-часовой фарм с сохраненной минуты.
-    # ВАЖНО: продолжаем фарм ТОЛЬКО во 2-м и 3-м джобах одного и того же запуска (IS_CONTINUATION_JOB=true или farm_part2),
-    # а при обычном старте (push / расписание / первый джоб) удаляем старый farm_resume.json из кэша GitHub Actions,
-    # чтобы давно остановленный фарм НИКОГДА сам не воскресал из старого кэша!
-    gh_event = os.environ.get("GH_EVENT_NAME", "").strip().lower()
-    should_resume_farm = False
-    elapsed_prev = 240
-    if args.action == "farm_part2":
-        should_resume_farm = True
-    elif FARM_RESUME_FILE.exists():
-        try:
-            st_data = json.loads(FARM_RESUME_FILE.read_text(encoding="utf-8"))
-            is_active = bool(st_data.get("active")) and not bool(st_data.get("stopped"))
-            saved_at = float(st_data.get("saved_at") or 0)
-            age_sec = (time.time() - saved_at) if saved_at > 0 else 999999.0
-            prev_min = int(st_data.get("elapsed_minutes") or 0)
-            # Продолжаем фарм при переходе между этапами (2-й, 3-й, 4-й этап), если:
-            # 1) это НЕ ручная загрузка нового кода (push),
-            # 2) фарм был активен и обновлял пульс менее 25 минут назад (передача эстафеты занимает 1-3 мин),
-            # 3) отработано меньше 475 из 480 минут.
-            if is_active and gh_event != "push" and 0 <= age_sec < 1500 and 0 < prev_min < 475:
-                elapsed_prev = prev_min
-                should_resume_farm = True
-                log_debug(f"[FARM AUTO-RESUME] Принята эстафета активного фарма (пульс {int(age_sec)} сек назад, отработано {elapsed_prev}/480 мин)!")
-            else:
-                log_debug(f"[FARM CACHE CLEAN] Сброшен старый статус фарма (active={is_active}, event={gh_event}, age={int(age_sec)}s, min={prev_min}).")
-                FARM_RESUME_FILE.write_text(json.dumps({"active": False, "stopped": True, "elapsed_minutes": 0, "saved_at": 0}), encoding="utf-8")
-        except Exception:
-            try:
-                FARM_RESUME_FILE.write_text(json.dumps({"active": False, "stopped": True, "elapsed_minutes": 0, "saved_at": 0}), encoding="utf-8")
-            except Exception:
-                pass
-
-    # 2.5. Если на предыдущем сервере задача (Кузня, Паки, Трейд, Промокод) была прервана по 4.5-часовому лимиту GitHub
-    #      и её чекпоинт (обновляемый каждые 20 сек) моложе 25 минут — автоматически доделываем её на новом сервере!
-    if TASK_CHECKPOINT_FILE.exists():
-        try:
-            tc_data = json.loads(TASK_CHECKPOINT_FILE.read_text(encoding="utf-8"))
-            tc_active = bool(tc_data.get("active"))
-            tc_act = str(tc_data.get("action") or "").strip().lower()
-            tc_prm = str(tc_data.get("promo_code") or "").strip()
-            tc_age = time.time() - float(tc_data.get("saved_at") or 0)
-            if tc_active and tc_act and gh_event != "push" and 0 <= tc_age < 1500:
-                if ACTIVE_TASK_LOG_FILE.exists():
-                    try:
-                        prev_task_log = ACTIVE_TASK_LOG_FILE.read_text(encoding="utf-8", errors="ignore")
-                        with open(DEBUG_LOG_FILE, "a", encoding="utf-8") as f_dbg:
-                            f_dbg.write("=== ПРОДОЛЖЕНИЕ ПРЕРВАННОЙ ЗАДАЧИ С ПРЕДЫДУЩЕГО СЕРВЕРА ===\n" + prev_task_log + "\n")
-                    except Exception:
-                        pass
-                log_debug(f"[TASK AUTO-RESUME] Обнаружена незавершённая задача '{tc_act}' с предыдущего сервера (пульс {int(tc_age)} сек назад, этап={tc_data.get('stage')}) — автоматически продолжаю!")
-                send_tg_message(
-                    f"🔄 <b>Сервер планово перезапустился по лимиту времени GitHub и автоматически продолжает незавершённую задачу <code>{tc_act}</code>!</b>",
-                    add_keyboard=True,
-                )
-                await PENDING_TASKS.put((tc_act, tc_prm))
-            else:
-                save_task_checkpoint("", "", stage="idle", active=False)
-        except Exception:
-            save_task_checkpoint("", "", stage="idle", active=False)
-
-    if should_resume_farm:
-        rem_hours = max(0.25, (480 - elapsed_prev) / 60.0)
-        log_debug(f"[FARM AUTO-RESUME] Продолжаю 8ч фарм (уже прошло {elapsed_prev} мин из 480, осталось {rem_hours:.2f} ч)!")
-        ACTIVE_FARM_TASK = asyncio.create_task(run_background_8h_farm(elapsed_prev, min(4.0, rem_hours)))
-    elif args.action not in ("daemon", "menu"):
-        if args.action in ("farm", "farm_part1"):
-            await execute_single_action("farm", "")
-        else:
-            await PENDING_TASKS.put((args.action, args.promo_code))
-
-    if os.environ.get("GITHUB_ACTIONS") != "true":
-        # Локальный однократный запуск вне GitHub Actions
-        while not PENDING_TASKS.empty():
-            act_c, prm_c = await PENDING_TASKS.get()
-            await execute_single_action(act_c, prm_c)
-        if ACTIVE_FARM_TASK:
-            await ACTIVE_FARM_TASK
+    if args.action != "daemon":
+        await execute_action(args.action)
         return
 
-    # 3. Запускаем прямой Telegram-поллер и обработчик задач параллельно на 4.1 часа
-    poller_task = asyncio.create_task(telegram_direct_poller_loop(PENDING_TASKS, deadline_ts))
-    executor_task = asyncio.create_task(task_executor_loop(PENDING_TASKS, deadline_ts))
-
-    await asyncio.gather(poller_task, executor_task, return_exceptions=True)
-
-    if ACTIVE_FARM_TASK and not ACTIVE_FARM_TASK.done():
-        ACTIVE_FARM_TASK.cancel()
-        try:
-            await ACTIVE_FARM_TASK
-        except Exception:
-            pass
-
-    # Передаём эстафету во 2-й/3-й джоб воркфлоу ТОЛЬКО если реально активен 8-часовой фарм манги,
-    # чтобы в обычном режиме ожидания не жечь вхолостую лимиты минут и не триггерить антифрод GitHub!
-    need_continue_job = False
-    if FARM_RESUME_FILE.exists():
-        try:
-            resume_st = json.loads(FARM_RESUME_FILE.read_text(encoding="utf-8"))
-            if resume_st.get("active") and not resume_st.get("stopped") and int(resume_st.get("elapsed_minutes") or 0) < 475:
-                need_continue_job = True
-        except Exception:
-            pass
-    if TASK_CHECKPOINT_FILE.exists():
-        try:
-            tc_st = json.loads(TASK_CHECKPOINT_FILE.read_text(encoding="utf-8"))
-            if tc_st.get("active") and tc_st.get("action"):
-                need_continue_job = True
-        except Exception:
-            pass
-    gh_out = os.environ.get("GITHUB_OUTPUT", "")
-    if gh_out:
-        try:
-            with open(gh_out, "a", encoding="utf-8") as f_out:
-                f_out.write(f"continue_bot={'true' if need_continue_job else 'false'}\n")
-        except Exception:
-            pass
+    await asyncio.gather(poller_loop(q, deadline), executor_loop(q, deadline), return_exceptions=True)
 
 
 if __name__ == "__main__":
