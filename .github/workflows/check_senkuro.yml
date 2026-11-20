@@ -1,10 +1,10 @@
-name: Senkuro Public Trade Assistant v46.0
+name: Senkuro Public Trade Assistant v47.0
 
 on:
   push:
     branches: [ main, master ]
   schedule:
-    - cron: '15 */3 * * *'
+    - cron: '15 * * * *'
   workflow_dispatch:
     inputs:
       action:
@@ -39,8 +39,9 @@ jobs:
           path: |
             .sessions
             bin
-          key: senkuro-trader-db-v46-${{ github.run_id }}
+          key: senkuro-trader-db-v47-${{ github.run_id }}
           restore-keys: |
+            senkuro-trader-db-v47-
             senkuro-trader-db-v46-
 
       - name: Install Playwright & Pillow
@@ -58,7 +59,7 @@ jobs:
             chmod +x bin/opera-proxy 2>/dev/null || true
           fi
 
-      - name: Run Senkuro Public Trade Assistant v46.0
+      - name: Run Senkuro Public Trade Assistant v47.0
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}

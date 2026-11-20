@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Senkuro Public Trade Assistant v46.0 (Read-Only, Zero Passwords, Zero Alts)
+Senkuro Public Trade Assistant v47.0 (Read-Only, Zero Passwords, Zero Alts)
 ---------------------------------------------------------------------------
 1. Автообновляемая база цен банка SenkuTools (addons.mozilla.org -> database.json, комиссия 20% -> x0.80).
 2. Мгновенная проверка основы cesium254 с бейджами чистой цены банка на фото карточек.
@@ -37,7 +37,7 @@ from playwright.async_api import BrowserContext, Page, async_playwright
 # 1. КОНФИГУРАЦИЯ (БЕЗ ПАРОЛЕЙ И ТВИНКОВ!)
 # ==============================================================================
 
-APP_VERSION_TAG = "v46.0"
+APP_VERSION_TAG = "v47.0"
 APP_HEADER_VERSION = "2.2.1"
 GRAPHQL_API_URL = "https://api.senkuro.com/graphql"
 
@@ -400,7 +400,7 @@ def load_trade_db() -> dict[str, Any]:
                 for k, v in default_db.items():
                     if k not in loaded or not isinstance(loaded[k], dict):
                         loaded[k] = v
-                # Автоочистка ошибочных записей от ссылки меню "Гильдии" из v46.0
+                # Автоочистка ошибочных записей от ссылки меню "Гильдии" из v47.0
                 loaded["guild_blacklist"] = {
                     u_k: u_v for u_k, u_v in loaded.get("guild_blacklist", {}).items()
                     if str((u_v or {}).get("guild") or "").strip().lower() not in ("гильдии", "guilds", "guild", "")
@@ -1183,6 +1183,8 @@ async def execute_action(act: str) -> None:
         await run_find_trades_for_my_ranks()
     elif act == "refill_db":
         await run_refill_database(max_cards=20, silent=False)
+    elif act == "refill_db_silent":
+        await run_refill_database(max_cards=15, silent=True)
     elif act == "db_status":
         await asyncio.to_thread(send_db_status)
     elif act == "log":
@@ -1257,6 +1259,8 @@ async def handle_update(upd: dict, q: asyncio.Queue) -> None:
         if act in QUEUED_KEYS or (ACTIVE_JOB_NAME == act and ACTIVE_JOB_TASK and not ACTIVE_JOB_TASK.done()):
             send_tg_message("ℹ️ Эта задача уже выполняется.", add_keyboard=True)
             return
+        if ACTIVE_JOB_TASK and not ACTIVE_JOB_TASK.done():
+            send_tg_message("⏳ Сейчас завершается фоновое обновление базы — ваша команда поставлена следующей и выполнится через несколько секунд!", add_keyboard=True)
         QUEUED_KEYS.add(act)
         await q.put(act)
         return
@@ -1324,13 +1328,14 @@ async def async_main() -> None:
     q: asyncio.Queue = asyncio.Queue()
     deadline = time.time() + 4.0 * 3600.0
 
-    # При плановом запуске по расписанию (schedule) тихо пополняем локальную базу целей на 15 карт
-    if os.environ.get("GH_EVENT_NAME") == "schedule":
-        await run_refill_database(max_cards=15, silent=True)
-
     if args.action != "daemon":
         await execute_action(args.action)
         return
+
+    # При плановом запуске (schedule) НЕ блокируем Telegram-поллер — ставим тихое пополнение базы в очередь,
+    # чтобы кнопки "🃏 Мои карты", "🎯 Найти обмены" и "📜 Лог" отвечали мгновенно с 1-й секунды!
+    if os.environ.get("GH_EVENT_NAME") == "schedule":
+        await q.put("refill_db_silent")
 
     await asyncio.gather(poller_loop(q, deadline), executor_loop(q, deadline), return_exceptions=True)
 
