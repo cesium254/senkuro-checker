@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Senkuro Public Trade Assistant v45.0 (Read-Only, Zero Passwords, Zero Alts)
+Senkuro Public Trade Assistant v46.0 (Read-Only, Zero Passwords, Zero Alts)
 ---------------------------------------------------------------------------
 1. Автообновляемая база цен банка SenkuTools (addons.mozilla.org -> database.json, комиссия 20% -> x0.80).
 2. Мгновенная проверка основы cesium254 с бейджами чистой цены банка на фото карточек.
@@ -37,7 +37,7 @@ from playwright.async_api import BrowserContext, Page, async_playwright
 # 1. КОНФИГУРАЦИЯ (БЕЗ ПАРОЛЕЙ И ТВИНКОВ!)
 # ==============================================================================
 
-APP_VERSION_TAG = "v45.0"
+APP_VERSION_TAG = "v46.0"
 APP_HEADER_VERSION = "2.2.1"
 GRAPHQL_API_URL = "https://api.senkuro.com/graphql"
 
@@ -400,6 +400,11 @@ def load_trade_db() -> dict[str, Any]:
                 for k, v in default_db.items():
                     if k not in loaded or not isinstance(loaded[k], dict):
                         loaded[k] = v
+                # Автоочистка ошибочных записей от ссылки меню "Гильдии" из v46.0
+                loaded["guild_blacklist"] = {
+                    u_k: u_v for u_k, u_v in loaded.get("guild_blacklist", {}).items()
+                    if str((u_v or {}).get("guild") or "").strip().lower() not in ("гильдии", "guilds", "guild", "")
+                }
                 return loaded
         except Exception:
             pass
@@ -803,8 +808,18 @@ async def check_owner_profile_and_card(
         await asyncio.sleep(random.uniform(0.9, 1.5))
         guild_info = await page.evaluate(
             """() => {
-                const gLink = document.querySelector('a[href*="/guilds/"], a[href*="/guild/"]');
-                if (gLink) return (gLink.textContent || gLink.getAttribute('href') || 'guild').trim().slice(0, 50);
+                const links = Array.from(document.querySelectorAll('a[href*="/guilds/"], a[href*="/guild/"]'));
+                for (const a of links) {
+                    if (a.closest('header, nav, footer')) continue;
+                    const href = (a.getAttribute('href') || '').trim();
+                    const txt = (a.textContent || '').trim();
+                    // Игнорируем общую ссылку на каталог гильдий (/guilds или /guilds/ с текстом "Гильдии")
+                    if (/^\/?guilds?\/?$/i.test(href) || txt.toLowerCase() === 'гильдии' || txt.toLowerCase() === 'guilds') continue;
+                    // Реальная гильдия игрока всегда имеет slug вида /guilds/<slug>
+                    if (/\/guilds?\/[^/?#]{2,}/i.test(href)) {
+                        return (txt || href).slice(0, 50);
+                    }
+                }
                 return '';
             }"""
         )
@@ -1023,7 +1038,7 @@ async def run_find_trades_for_my_ranks() -> None:
         send_tg_message(
             f"🎯 <b>Твои расходники:</b> {fodder_desc}\n\n"
             f"ℹ️ Свежих целей без гильдии с незакреплённой дорогой картой пока не нашлось.{extra}\n"
-            "Нажми <b>«🔄 Пополнить базу»</b>, чтобы просканировать ещё партию карт.",
+            "Нажми <b>«🎯 Найти обмены»</b> ещё раз, чтобы просканировать следующую партию карт.",
             add_keyboard=True,
         )
         return
