@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Senkuro Smart Auto-Trade & Bank Assistant v51.0
+Senkuro Smart Auto-Trade & Bank Assistant v52.0
 -----------------------------------------------
 - Рабочее окно авто-обменов: 09:00–18:00 по Киеву (ZoneInfo("Europe/Kyiv"), авто зимнее/летнее время).
 - Ультра-экономный расход украинского резидентского прокси (< 0.5 МБ/день):
@@ -53,7 +53,7 @@ socket.getaddrinfo = _ipv4_only_getaddrinfo
 # 1. КОНФИГУРАЦИЯ
 # ==============================================================================
 
-APP_VERSION_TAG = "v51.0"
+APP_VERSION_TAG = "v52.0"
 APP_HEADER_VERSION = "2.2.1"
 GRAPHQL_API_URL = "https://api.senkuro.com/graphql"
 
@@ -1078,7 +1078,7 @@ async def send_profitable_card_to_bank(card_id: str) -> None:
     if not SENKURO_MAIN_TOKEN or not UKRAINE_PROXY_RAW:
         send_tg_message("⚠️ Для отправки в банк нужно добавить секреты <code>SENKURO_MAIN_TOKEN</code> и <code>UKRAINE_PROXY_URL</code> на GitHub.", add_keyboard=True)
         return
-    card_meta = BANK_PENDING_CARDS.get(card_id) or {}
+
     st = load_auto_state()
     bank_uid = st.get("bank_uid") or ""
     if not bank_uid:
@@ -1091,13 +1091,29 @@ async def send_profitable_card_to_bank(card_id: str) -> None:
         send_tg_message(f"⚠️ Не удалось получить ID банка <b>{BANK_ACCOUNT_SLUG}</b>.", add_keyboard=True)
         return
 
+    # Если нажата кнопка "bank:all" — отправляем ВСЕ выгодные карты ОДНИМ общим трейдом
+    if card_id == "all":
+        items = list(BANK_PENDING_CARDS.items())
+        if not items:
+            send_tg_message("ℹ️ Список выгодных карт пуст — нажмите <b>«🃏 Мои карты»</b> для обновления.", add_keyboard=True)
+            return
+        offer_list = [
+            {"cardId": cid, "modifier": 0, "quantity": int(meta.get("qty") or 1)}
+            for cid, meta in items
+        ]
+        labels = [str(meta.get("label") or cid) for cid, meta in items]
+    else:
+        meta = BANK_PENDING_CARDS.get(card_id) or {}
+        offer_list = [{"cardId": card_id, "modifier": 0, "quantity": int(meta.get("qty") or 1)}]
+        labels = [str(meta.get("label") or card_id)]
+
     res = await asyncio.to_thread(
         direct_ua_gql_call,
         GQL_SUGGEST_CARD_TRADE,
         {
             "input": {
                 "userId": bank_uid,
-                "offer": [{"cardId": card_id, "modifier": 0, "quantity": 1}],
+                "offer": offer_list,
                 "request": [],
                 "description": [],
             }
@@ -1107,41 +1123,57 @@ async def send_profitable_card_to_bank(card_id: str) -> None:
     if _check_and_alert_token_error(res):
         return
     if ((res.get("data") or {}).get("suggestCardTrade") or {}).get("success"):
-        label = card_meta.get("label") or card_id
+        if card_id == "all":
+            BANK_PENDING_CARDS.clear()
+        else:
+            BANK_PENDING_CARDS.pop(card_id, None)
+        body = "\n".join(f"• {lb}" for lb in labels)
         send_tg_message(
-            f"✅ <b>Отправлено в банк <a href='{BANK_ACCOUNT_URL}'>{BANK_ACCOUNT_SLUG}</a>:</b> {label}\n"
+            f"✅ <b>Отправлено в банк <a href='{BANK_ACCOUNT_URL}'>{BANK_ACCOUNT_SLUG}</a> одним трейдом ({len(offer_list)} шт.):</b>\n{body}\n\n"
             "👉 Заходите в банк и подтверждайте начисление баланса!",
             add_keyboard=True,
         )
-        log_debug(f"[BANK SENT OK] {label} -> {BANK_ACCOUNT_SLUG}")
+        log_debug(f"[BANK SENT OK] {len(offer_list)} cards -> {BANK_ACCOUNT_SLUG}")
     else:
         errs = res.get("errors") or []
         msg = errs[0].get("message", "ошибка API") if errs else "неизвестная ошибка"
-        send_tg_message(f"⚠️ Не удалось отправить карту в банк: <code>{str(msg)[:200]}</code>", add_keyboard=True)
+        send_tg_message(f"⚠️ Не удалось отправить в банк: <code>{str(msg)[:200]}</code>", add_keyboard=True)
 
 
 async def check_and_notify_new_profitable_cards(my_data: dict[str, Any]) -> None:
     st = load_auto_state()
     notified = set(st.get("notified_profitable_ids") or [])
     current_prof_ids = {p["cardId"] for p in my_data["profitable"]}
-    # Убираем из кэша те карты, которые уже ушли с аккаунта
     notified = notified.intersection(current_prof_ids)
 
-    new_profs = [p for p in my_data["profitable"] if p["cardId"] not in notified]
-    for p_it in new_profs:
+    # Обновляем общий кэш выгодных карт для одной кнопки "Отправить всё в банк"
+    BANK_PENDING_CARDS.clear()
+    for p_it in my_data["profitable"]:
         cid = p_it["cardId"]
         badge = RANK_BADGE.get(p_it["rank"], p_it["rank"])
-        lbl = f"{badge} «{p_it['name']}» (<b>{p_it['net_price']:.2f}</b> чистыми)"
-        BANK_PENDING_CARDS[cid] = {"label": lbl, "net_price": p_it["net_price"]}
-        inline_kb = {"inline_keyboard": [[{"text": f"🏦 Отправить в банк ({BANK_ACCOUNT_SLUG})", "callback_data": f"bank:{cid}"}]]}
+        qty = int(p_it.get("qty") or 1)
+        q_sfx = f" ×{qty}" if qty > 1 else ""
+        lbl = f"{badge} «{p_it['name']}»{q_sfx} (<b>{p_it['net_price']:.2f}</b> чистыми)"
+        BANK_PENDING_CARDS[cid] = {"label": lbl, "net_price": p_it["net_price"], "qty": qty}
+
+    new_profs = [p for p in my_data["profitable"] if p["cardId"] not in notified]
+    if new_profs:
+        lines = []
+        for p_it in my_data["profitable"]:
+            cid = p_it["cardId"]
+            lines.append(f"💎 {BANK_PENDING_CARDS[cid]['label']}")
+            notified.add(cid)
+        total_cnt = sum(int(m.get("qty") or 1) for m in BANK_PENDING_CARDS.values())
+        inline_kb = {
+            "inline_keyboard": [[{"text": f"🏦 Отправить всё в банк ({total_cnt} шт. → {BANK_ACCOUNT_SLUG})", "callback_data": "bank:all"}]]
+        }
         send_tg_message(
-            f"🔔 <b>Залетела выгодная карта на {MAIN_ACCOUNT_SLUG}!</b>\n\n"
-            f"💎 {lbl}\n"
-            "Нажмите кнопку ниже, чтобы сразу отправить её в банк через ваш украинский прокси:",
+            f"🔔 <b>Новые выгодные карты на {MAIN_ACCOUNT_SLUG}:</b>\n\n"
+            + "\n".join(lines)
+            + "\n\nНажмите кнопку ниже — все карты уйдут в банк <b>одним трейдом</b>:",
             add_keyboard=False,
             inline_markup=inline_kb,
         )
-        notified.add(cid)
 
     st["notified_profitable_ids"] = list(notified)
     st["last_monitor_ts"] = time.time()
@@ -1345,7 +1377,7 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
                 errs = t_res.get("errors") or []
                 err_m = errs[0].get("message", "") if errs else ""
                 log_debug(f"[AUTO TRADE WARN] {t_obj['user_slug']}: {err_m}")
-                if any(w in err_m.lower() for w in ("too many", "limit", "много", "rate")):
+                if any(w in err_m.lower() for w in ("too many", "a lot of trades", "limit", "много", "rate")):
                     log_debug("[AUTO TRADE LIMIT] Достигнут почасовой лимит обменов — пауза до следующей волны.")
                     hit_rate_limit = True
                     break
@@ -1424,14 +1456,19 @@ async def run_check_my_cards() -> None:
                     f"🔄 <b>Свободные расходники:</b> {fodder_str}",
                 ]
                 inline_rows = []
+                BANK_PENDING_CARDS.clear()
                 if prof:
                     lines.append("")
                     lines.append(f"💎 <b>Выгодно сдать в банк (≥ {MIN_BANK_PROFIT_NET:.2f} чистыми):</b>")
+                    total_prof_qty = 0
                     for p_it in prof:
-                        lbl = f"{RANK_BADGE.get(p_it['rank'], p_it['rank'])} «{p_it['name']}» — <b>{p_it['net_price']:.2f}</b>"
+                        qty = int(p_it.get("qty") or 1)
+                        total_prof_qty += qty
+                        q_sfx = f" ×{qty}" if qty > 1 else ""
+                        lbl = f"{RANK_BADGE.get(p_it['rank'], p_it['rank'])} «{p_it['name']}»{q_sfx} — <b>{p_it['net_price']:.2f}</b>"
                         lines.append(f"  • {lbl}")
-                        BANK_PENDING_CARDS[p_it["cardId"]] = {"label": lbl, "net_price": p_it["net_price"]}
-                        inline_rows.append([{"text": f"🏦 В банк: {p_it['name'][:22]} ({p_it['net_price']:.2f})", "callback_data": f"bank:{p_it['cardId']}"}])
+                        BANK_PENDING_CARDS[p_it["cardId"]] = {"label": lbl, "net_price": p_it["net_price"], "qty": qty}
+                    inline_rows.append([{"text": f"🏦 Отправить всё в банк ({total_prof_qty} шт. → {BANK_ACCOUNT_SLUG})", "callback_data": "bank:all"}])
 
                 caption = "\n".join(lines)
                 if photo_bytes_list:
@@ -1447,7 +1484,7 @@ async def run_check_my_cards() -> None:
                     send_tg_message(caption, add_keyboard=True)
 
                 if inline_rows:
-                    send_tg_message("👇 Нажмите, чтобы сразу отправить дорогую карту в банк:", add_keyboard=False, inline_markup={"inline_keyboard": inline_rows[:5]})
+                    send_tg_message("👇 Нажмите, чтобы отправить все выгодные карты в банк одним трейдом:", add_keyboard=False, inline_markup={"inline_keyboard": inline_rows})
             finally:
                 await ctx.close()
                 await browser.close()
