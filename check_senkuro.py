@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Senkuro Smart Auto-Trade & Bank Assistant v50.0
+Senkuro Smart Auto-Trade & Bank Assistant v51.0
 -----------------------------------------------
 - Рабочее окно авто-обменов: 09:00–18:00 по Киеву (ZoneInfo("Europe/Kyiv"), авто зимнее/летнее время).
 - Ультра-экономный расход украинского резидентского прокси (< 0.5 МБ/день):
@@ -9,8 +9,8 @@ Senkuro Smart Auto-Trade & Bank Assistant v50.0
 - Вход БЕЗ пароля и БЕЗ браузера для отправки: используется только SENKURO_MAIN_TOKEN (access_token от senkuro.com).
 - Ранги: ВСЕ (F, D, C, B, A, S). Закреплённые (locked) и дорогие (>= 1.50 чистыми) карты никогда не тратятся.
 - Математика ставок (строго в плюс):
-  * net >= 2.80 -> 2x того же ранга
-  * 2.00 <= net < 2.80 -> 1x того же ранга + 1x младшего ранга (если есть) или 1-в-1
+  * net >= 2.60 -> строго 2x того же ранга
+  * 2.00 <= net < 2.60 -> 1x того же ранга + 1x младшего ранга (приоритетно) или 1-в-1
   * 1.60 <= net < 2.00 -> строго 1-в-1
 - Мониторинг каждые 20 мин: как только залетела дорогая карта (>= 1.50 чистыми), приходит уведомление с кнопкой "🏦 Отправить в банк (goldlotus)".
 """
@@ -53,17 +53,17 @@ socket.getaddrinfo = _ipv4_only_getaddrinfo
 # 1. КОНФИГУРАЦИЯ
 # ==============================================================================
 
-APP_VERSION_TAG = "v50.0"
+APP_VERSION_TAG = "v51.0"
 APP_HEADER_VERSION = "2.2.1"
 GRAPHQL_API_URL = "https://api.senkuro.com/graphql"
 
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 WORK_START_HOUR = 9
 WORK_END_HOUR = 18
-WAVE_INTERVAL_SEC = 70 * 60       # 1 час 10 мин между волнами (лимит 10/час)
+WAVE_INTERVAL_SEC = 65 * 60       # 1 час 05 мин между волнами (лимит 10/час)
 MONITOR_INTERVAL_SEC = 20 * 60    # Проверка cesium254 раз в 20 минут (через бесплатный Opera VPN)
-MAX_TRADES_PER_WAVE = 8           # Безопасный лимит < 10/час
-MAX_BATCHES_PER_RANK = 2          # До 2 непересекающихся партий на ранг
+MAX_TRADES_PER_WAVE = 9           # До 9 обменов/час (1 слот остаётся в запасе для банка)
+MAX_ORDERS_PER_BATCH = 5          # 1 и та же пара карт дублируется до 5 разным людям
 
 MAIN_ACCOUNT_SLUG = os.environ.get("SENKURO_MAIN_SLUG", "cesium254").strip() or "cesium254"
 MAIN_ACCOUNT_UID = os.environ.get("SENKURO_MAIN_UID", "VVNFUjoxODAxNDM0ODEzOTI0ODE4MDE").strip() or "VVNFUjoxODAxNDM0ODEzOTI0ODE4MDE"
@@ -1161,11 +1161,21 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
         return
 
     st = load_auto_state()
-    today_kyiv = kyiv_now().strftime("%Y-%m-%d")
-    if st.get("last_morning_reset_date") != today_kyiv and kyiv_now().hour >= WORK_START_HOUR:
-        await cancel_stale_outgoing_trades_morning()
-        st["last_morning_reset_date"] = today_kyiv
-        save_auto_state(st)
+    now_ts = time.time()
+
+    # Скользящее окно за 65 минут: защищает от лимита 10 обменов/час и от двойного нажатия кнопки
+    recent_ts = [float(x) for x in (st.get("recent_trade_ts") or []) if now_ts - float(x) < WAVE_INTERVAL_SEC]
+    remaining_slots = max(0, MAX_TRADES_PER_WAVE - len(recent_ts))
+    if remaining_slots <= 0:
+        oldest = min(recent_ts) if recent_ts else now_ts
+        mins_left = max(1, int((WAVE_INTERVAL_SEC - (now_ts - oldest)) // 60) + 1)
+        if manual_trigger:
+            send_tg_message(
+                f"⏳ <b>Почасовой лимит почти выбран ({len(recent_ts)}/{MAX_TRADES_PER_WAVE} обменов за последний час).</b>\n"
+                f"Следующие слоты освободятся примерно через <b>{mins_left} мин</b> (1 слот держим в запасе под банк).",
+                add_keyboard=True,
+            )
+        return
 
     await asyncio.to_thread(ensure_senkutools_db, True)
 
@@ -1210,8 +1220,8 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
         and now - float(t.get("verified_at") or 0) < TARGET_TTL_SECONDS
         and k not in db.get("sent_trades", {})
     ]
-    if len(fresh_targets) < 10 and not STOP_FLAG:
-        await scan_cards_batch_into_db(active_ranks, max_cards_to_scan=10, stop_when_found=10 - len(fresh_targets))
+    if len(fresh_targets) < 12 and not STOP_FLAG:
+        await scan_cards_batch_into_db(active_ranks, max_cards_to_scan=12, stop_when_found=12 - len(fresh_targets))
         db = load_trade_db()
         fresh_targets = [
             (k, t) for k, t in db.get("targets", {}).items()
@@ -1227,55 +1237,90 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
             send_tg_message("ℹ️ Под текущие ранги пока нет новых непроверенных целей — повторю в следующую волну.", add_keyboard=True)
         return
 
-    # 3. Шахматная раскладка непересекающихся партий (до 2 партий на ранг, приоритет старшим рангам)
+    # 3. Шахматная раскладка партий с ДУБЛИРОВАНИЕМ одной и той же пары карт:
+    #    - Для ранга берём 1 фиксированную пару (например Карта 1 + Карта 2) и кидаем ЕЁ ЖЕ до 5 разным людям.
+    #    - В следующей волне на этот ранг курсор переключится на следующую пару (Карта 3 + Карта 4).
+    #    - Старые исходящие обмены НЕ отменяем автоматически: если 1 трейд примут, конфликтующие отменятся сами.
     sent_count = 0
     sent_logs: list[str] = []
-    # Копируем пулы свободных карт, чтобы не использовать одни и те же карты в разных партиях
-    avail_pools = {r: list(fodder_units.get(r) or []) for r in SEARCHABLE_RANKS}
+    used_user_ids_wave: set[str] = set()
+    batch_cursors: dict[str, int] = dict(st.get("rank_batch_cursor") or {})
+    rank_start_idx = int(st.get("next_rank_idx") or 0) % len(active_ranks)
+    ordered_ranks = active_ranks[rank_start_idx:] + active_ranks[:rank_start_idx]
 
-    for rank in reversed(active_ranks):  # Приоритет более высоким рангам (S -> A -> B -> C -> D -> F)
-        if sent_count >= MAX_TRADES_PER_WAVE or STOP_FLAG:
+    hit_rate_limit = False
+    for rank in ordered_ranks:
+        if sent_count >= remaining_slots or STOP_FLAG or hit_rate_limit:
             break
-        rank_targets = [(k, t) for k, t in fresh_targets if t.get("rank") == rank]
+
+        pool_same = list(fodder_units.get(rank) or [])
+        lower_r = LOWER_RANK_MAP.get(rank)
+        pool_low = list(fodder_units.get(lower_r) or []) if lower_r else []
+
+        rank_targets = [
+            (k, t) for k, t in fresh_targets
+            if t.get("rank") == rank and t.get("user_id") not in used_user_ids_wave
+        ]
         if not rank_targets:
             continue
         random.shuffle(rank_targets)
         rank_targets.sort(key=lambda x: float(x[1].get("net_price") or 0), reverse=True)
 
-        # Группируем по карте и формируем до MAX_BATCHES_PER_RANK непересекающихся партий
-        used_batches = 0
-        for t_key, t_obj in rank_targets:
-            if sent_count >= MAX_TRADES_PER_WAVE or used_batches >= MAX_BATCHES_PER_RANK or STOP_FLAG:
-                break
-            net_p = float(t_obj.get("net_price") or 0)
-            pool_same = avail_pools.get(rank) or []
-            lower_r = LOWER_RANK_MAP.get(rank)
-            pool_low = avail_pools.get(lower_r) if lower_r else []
+        # Выбираем режим ставки для этого ранга на основе лучшей доступной цели и наличия карт
+        cursor = int(batch_cursors.get(rank) or 0)
+        tier_260 = [(k, t) for k, t in rank_targets if float(t.get("net_price") or 0) >= 2.60]
+        tier_200 = [(k, t) for k, t in rank_targets if 2.00 <= float(t.get("net_price") or 0) < 2.60]
+        tier_160 = [(k, t) for k, t in rank_targets if 1.60 <= float(t.get("net_price") or 0) < 2.00]
 
-            offer_units: list[dict[str, Any]] = []
-            offer_desc = ""
-            if net_p >= 2.80 and len(pool_same) >= 2:
-                offer_units = [pool_same.pop(0), pool_same.pop(0)]
-                offer_desc = f"2×{rank}"
-            elif net_p >= 2.00 and len(pool_same) >= 1 and lower_r and len(pool_low) >= 1:
-                offer_units = [pool_same.pop(0), pool_low.pop(0)]
-                offer_desc = f"1×{rank}+1×{lower_r}"
-            elif net_p >= 1.60 and len(pool_same) >= 1:
-                offer_units = [pool_same.pop(0)]
-                offer_desc = f"1×{rank}"
-            else:
+        chosen_targets: list[tuple[str, dict[str, Any]]] = []
+        fixed_offer: list[dict[str, Any]] = []
+        offer_desc = ""
+
+        if tier_260 and len(pool_same) >= 2:
+            # Строго 2x того же ранга: одна и та же пара дублируется до MAX_ORDERS_PER_BATCH разным людям
+            num_pairs = len(pool_same) // 2
+            p_idx = cursor % num_pairs
+            fixed_offer = [pool_same[p_idx * 2], pool_same[p_idx * 2 + 1]]
+            offer_desc = f"2×{rank}"
+            chosen_targets = tier_260
+        elif tier_200 and len(pool_same) >= 1 and lower_r and len(pool_low) >= 1:
+            # 2.00–2.59: приоритетно 1x того же + 1x младшего ранга (одна и та же пара на партию)
+            c_same = pool_same[cursor % len(pool_same)]
+            c_low = pool_low[cursor % len(pool_low)]
+            fixed_offer = [c_same, c_low]
+            offer_desc = f"1×{rank}+1×{lower_r}"
+            chosen_targets = tier_200
+        elif (tier_200 or tier_160) and len(pool_same) >= 1:
+            # 1.60–1.99 (или 2.00–2.59 без младшего ранга): строго 1-в-1
+            c_same = pool_same[cursor % len(pool_same)]
+            fixed_offer = [c_same]
+            offer_desc = f"1×{rank}"
+            chosen_targets = tier_200 if (tier_200 and not lower_r) else tier_160
+        else:
+            continue
+
+        if not fixed_offer or not chosen_targets:
+            continue
+
+        offer_payload = _compress_offer_units(fixed_offer)
+        offer_names = " + ".join(u.get("name", "?") for u in fixed_offer)
+        batch_sent = 0
+        for t_key, t_obj in chosen_targets:
+            if sent_count >= remaining_slots or batch_sent >= MAX_ORDERS_PER_BATCH or STOP_FLAG:
+                break
+            if t_obj["user_id"] in used_user_ids_wave:
                 continue
 
-            # Отправляем 1 трейд через украинский прокси (~5 КБ) с человеческой паузой
             if sent_count > 0:
-                await asyncio.sleep(random.uniform(25.0, 50.0))
+                await asyncio.sleep(random.uniform(30.0, 40.0))
+
             t_res = await asyncio.to_thread(
                 direct_ua_gql_call,
                 GQL_SUGGEST_CARD_TRADE,
                 {
                     "input": {
                         "userId": t_obj["user_id"],
-                        "offer": _compress_offer_units(offer_units),
+                        "offer": offer_payload,
                         "request": [{"cardId": t_obj["card_id"], "modifier": 0, "quantity": 1}],
                         "description": [],
                     }
@@ -1283,36 +1328,48 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
                 "suggestCardTrade",
             )
             if _check_and_alert_token_error(t_res):
+                hit_rate_limit = True
                 break
             if ((t_res.get("data") or {}).get("suggestCardTrade") or {}).get("success"):
                 sent_count += 1
-                used_batches += 1
+                batch_sent += 1
+                used_user_ids_wave.add(t_obj["user_id"])
+                recent_ts.append(time.time())
                 db["sent_trades"][t_key] = time.time()
-                sent_logs.append(f"• {offer_desc} ➡️ {RANK_BADGE.get(rank, rank)} «{t_obj['card_name']}» ({net_p:.2f}) у {t_obj['user_slug']}")
-                log_debug(f"[AUTO TRADE OK] {offer_desc} -> {t_obj['user_slug']} ({t_obj['card_name']} {net_p:.2f})")
+                u_slug = t_obj["user_slug"]
+                u_link = f"<a href='https://senkuro.com/users/{u_slug}'>{u_slug}</a>"
+                net_p = float(t_obj.get("net_price") or 0)
+                sent_logs.append(f"• {offer_desc} ({offer_names}) ➡️ {RANK_BADGE.get(rank, rank)} «{t_obj['card_name']}» ({net_p:.2f}) у {u_link}")
+                log_debug(f"[AUTO TRADE OK] {offer_desc} [{offer_names}] -> {u_slug} ({t_obj['card_name']} {net_p:.2f})")
             else:
                 errs = t_res.get("errors") or []
                 err_m = errs[0].get("message", "") if errs else ""
                 log_debug(f"[AUTO TRADE WARN] {t_obj['user_slug']}: {err_m}")
                 if any(w in err_m.lower() for w in ("too many", "limit", "много", "rate")):
                     log_debug("[AUTO TRADE LIMIT] Достигнут почасовой лимит обменов — пауза до следующей волны.")
+                    hit_rate_limit = True
                     break
-                # Вернём карты в пул, раз трейд не ушёл
-                for u in offer_units:
-                    avail_pools[u["rank"]].append(u)
+
+        if batch_sent > 0:
+            batch_cursors[rank] = cursor + 1
 
     save_trade_db(db)
-    st["last_wave_ts"] = time.time()
+    st["recent_trade_ts"] = recent_ts[-30:]
+    st["rank_batch_cursor"] = batch_cursors
+    if sent_count > 0:
+        st["last_wave_ts"] = time.time()
+        st["next_rank_idx"] = (rank_start_idx + 1) % len(active_ranks)
     save_auto_state(st)
 
     if manual_trigger:
         if sent_logs:
             send_tg_message(
-                f"⚡ <b>Авто-волна выполнена ({sent_count} обменов через UA-прокси):</b>\n\n" + "\n".join(sent_logs),
+                f"⚡ <b>Авто-волна выполнена ({sent_count} обменов через UA-прокси, за час: {len(recent_ts)}/{MAX_TRADES_PER_WAVE}):</b>\n\n"
+                + "\n".join(sent_logs),
                 add_keyboard=True,
             )
         else:
-            send_tg_message("ℹ️ В этой волне новые обмены не отправлялись (возможно, лимит часа или нет свободных карт).", add_keyboard=True)
+            send_tg_message("ℹ️ В этой волне новые обмены не отправлялись (нет подходящих пар карт или целей).", add_keyboard=True)
 
 
 # ==============================================================================
