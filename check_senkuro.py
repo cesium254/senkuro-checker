@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Senkuro Public Trade Assistant v48.0 (Read-Only, Zero Passwords, Zero Alts)
+Senkuro Public Trade Assistant v49.0 (Read-Only, Zero Passwords, Zero Alts)
 ---------------------------------------------------------------------------
 1. Автообновляемая база цен банка SenkuTools (addons.mozilla.org -> database.json, комиссия 20% -> x0.80).
 2. Мгновенная проверка основы cesium254 с бейджами чистой цены банка на фото карточек.
@@ -45,7 +45,7 @@ socket.getaddrinfo = _ipv4_only_getaddrinfo
 # 1. КОНФИГУРАЦИЯ (БЕЗ ПАРОЛЕЙ И ТВИНКОВ!)
 # ==============================================================================
 
-APP_VERSION_TAG = "v48.0"
+APP_VERSION_TAG = "v49.0"
 APP_HEADER_VERSION = "2.2.1"
 GRAPHQL_API_URL = "https://api.senkuro.com/graphql"
 
@@ -417,7 +417,7 @@ def load_trade_db() -> dict[str, Any]:
                 for k, v in default_db.items():
                     if k not in loaded or not isinstance(loaded[k], dict):
                         loaded[k] = v
-                # Автоочистка ошибочных записей от ссылки меню "Гильдии" из v48.0
+                # Автоочистка ошибочных записей от ссылки меню "Гильдии" из v49.0
                 loaded["guild_blacklist"] = {
                     u_k: u_v for u_k, u_v in loaded.get("guild_blacklist", {}).items()
                     if str((u_v or {}).get("guild") or "").strip().lower() not in ("гильдии", "guilds", "guild", "")
@@ -1298,9 +1298,9 @@ async def poller_loop(q: asyncio.Queue, deadline: float) -> None:
             offset = int(init_u[-1]["update_id"]) + 1
             write_tg_offset(offset)
     log_debug(f"[DAEMON READY] Senkuro Trade Assistant {APP_VERSION_TAG} запущен (offset={offset}).")
-    if os.environ.get("GH_EVENT_NAME") in ("push", "workflow_dispatch"):
+    if os.environ.get("GH_EVENT_NAME") in ("push", "workflow_dispatch") and os.environ.get("IS_CONTINUATION_JOB") != "true":
         send_tg_message(
-            f"🟢 <b>Помощник перепродажи Senkuro {APP_VERSION_TAG} запущен!</b>\n"
+            f"🟢 <b>Помощник перепродажи Senkuro {APP_VERSION_TAG} запущен (24/7 эстафета)!</b>\n"
             "Работает без паролей и твинков — выбирайте кнопку ниже 👇",
             add_keyboard=True,
         )
@@ -1347,8 +1347,27 @@ async def async_main() -> None:
     parser.add_argument("--action", default=os.environ.get("SENKURO_ACTION", "daemon").strip().lower() or "daemon")
     args = parser.parse_args()
 
+    try:
+        Path("/tmp/senkuro_main_ready.flag").write_text("1", encoding="utf-8")
+    except Exception:
+        pass
     q: asyncio.Queue = asyncio.Queue()
-    deadline = time.time() + 4.0 * 3600.0
+    deadline = time.time() + 4.1 * 3600.0
+
+    # Подхватываем команды, нажатые пользователем за 15 секунд старта сервера через early_poller.py
+    if EARLY_QUEUE_FILE.exists():
+        try:
+            for ln in EARLY_QUEUE_FILE.read_text(encoding="utf-8").splitlines():
+                if not ln.strip():
+                    continue
+                obj = json.loads(ln)
+                e_act = str(obj.get("action") or "").strip()
+                if e_act and e_act not in QUEUED_KEYS:
+                    QUEUED_KEYS.add(e_act)
+                    await q.put(e_act)
+            EARLY_QUEUE_FILE.unlink(missing_ok=True)
+        except Exception as eq_e:
+            log_debug(f"[EARLY QUEUE WARN] {eq_e}")
 
     if args.action != "daemon":
         await execute_action(args.action)
