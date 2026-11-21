@@ -1,4 +1,4 @@
-name: Senkuro Public Trade Assistant v49.0
+name: Senkuro Auto-Trade Assistant v50.0
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "Задача (daemon | my_cards | find_trades | refill_db | db_status)"
+        description: "Задача (daemon | my_cards | find_trades | auto_wave_manual)"
         required: false
         default: "daemon"
 
@@ -46,7 +46,7 @@ jobs:
           OFFSET_FILE = "/tmp/tg_offset.txt"
           QUEUE_FILE = "/tmp/senkuro_early_queue.jsonl"
           KB = {
-              "keyboard": [[{"text": "🃏 Мои карты"}, {"text": "🎯 Найти обмены"}], [{"text": "📜 Лог"}]],
+              "keyboard": [[{"text": "🃏 Мои карты"}, {"text": "🎯 Найти обмены"}], [{"text": "⚡ Авто-волна"}, {"text": "📜 Лог"}]],
               "resize_keyboard": True,
               "is_persistent": False,
               "input_field_placeholder": "Выберите действие 🎛 👇",
@@ -76,7 +76,7 @@ jobs:
               f.write(str(offset))
 
           if EVENT_NAME == "push":
-              send("⏳ <b>Обновление v49.0 получено! Перезапускаю сервер (~15 сек)...</b>")
+              send("⏳ <b>Обновление v50.0 получено! Перезапускаю сервер (~15 сек)...</b>")
 
           start_ts = time.time()
           while not os.path.exists("/tmp/senkuro_main_ready.flag") and (time.time() - start_ts < 65):
@@ -87,15 +87,10 @@ jobs:
                       offset = uid + 1
                       with open(OFFSET_FILE, "w", encoding="utf-8") as f:
                           f.write(str(offset))
-                  cb = u.get("callback_query")
-                  if cb and str(cb.get("data") or "") == "find_trades":
-                      tg("answerCallbackQuery", {"callback_query_id": cb.get("id"), "text": "🎲 Подбираю цели..."})
-                      enqueue("find_trades")
-                      send("⏳ Команда принята — сервер завершает старт (~15 сек) и сразу пришлёт цели!")
                   msg = u.get("message")
                   if msg and msg.get("text"):
                       low = str(msg.get("text") or "").strip().lower()
-                      m = {"🃏 мои карты": "my_cards", "/cards": "my_cards", "🎯 найти обмены": "find_trades", "/find": "find_trades", "📜 лог": "log", "/log": "log"}
+                      m = {"🃏 мои карты": "my_cards", "/cards": "my_cards", "🎯 найти обмены": "find_trades", "/find": "find_trades", "⚡ авто-волна": "auto_wave_manual", "📜 лог": "log", "/log": "log"}
                       if low in m:
                           enqueue(m[low])
                           send("⏳ Команда принята — сервер завершает старт (~15 сек) и сразу ответит!")
@@ -120,10 +115,10 @@ jobs:
           path: |
             .sessions
             bin
-          key: senkuro-trader-db-v49-p1-${{ github.run_id }}
+          key: senkuro-trader-db-v50-p1-${{ github.run_id }}
           restore-keys: |
+            senkuro-trader-db-v50-
             senkuro-trader-db-v49-
-            senkuro-trader-db-v48-
 
       - name: Install Playwright & Pillow
         run: |
@@ -140,10 +135,12 @@ jobs:
             chmod +x bin/opera-proxy 2>/dev/null || true
           fi
 
-      - name: Run Senkuro Trade Assistant v49.0 (Part 1 — Hours 0 to 4.1)
+      - name: Run Senkuro Auto-Trade v50.0 (Part 1 — Hours 0 to 4.1)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
+          SENKURO_MAIN_TOKEN: ${{ secrets.SENKURO_MAIN_TOKEN }}
+          UKRAINE_PROXY_URL: ${{ secrets.UKRAINE_PROXY_URL }}
           SENKURO_ACTION: ${{ github.event.inputs.action || 'daemon' }}
           GH_EVENT_NAME: ${{ github.event_name }}
         run: |
@@ -180,9 +177,9 @@ jobs:
           path: |
             .sessions
             bin
-          key: senkuro-trader-db-v49-p2-${{ github.run_id }}
+          key: senkuro-trader-db-v50-p2-${{ github.run_id }}
           restore-keys: |
-            senkuro-trader-db-v49-
+            senkuro-trader-db-v50-
 
       - name: Restore DB from Part 1
         continue-on-error: true
@@ -206,10 +203,12 @@ jobs:
             chmod +x bin/opera-proxy 2>/dev/null || true
           fi
 
-      - name: Run Senkuro Trade Assistant v49.0 (Part 2 — Hours 4.1 to 8.2)
+      - name: Run Senkuro Auto-Trade v50.0 (Part 2 — Hours 4.1 to 8.2)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
+          SENKURO_MAIN_TOKEN: ${{ secrets.SENKURO_MAIN_TOKEN }}
+          UKRAINE_PROXY_URL: ${{ secrets.UKRAINE_PROXY_URL }}
           IS_CONTINUATION_JOB: "true"
           GH_EVENT_NAME: "schedule"
         run: |
@@ -244,9 +243,9 @@ jobs:
           path: |
             .sessions
             bin
-          key: senkuro-trader-db-v49-p3-${{ github.run_id }}
+          key: senkuro-trader-db-v50-p3-${{ github.run_id }}
           restore-keys: |
-            senkuro-trader-db-v49-
+            senkuro-trader-db-v50-
 
       - name: Restore DB from Part 2
         continue-on-error: true
@@ -270,10 +269,12 @@ jobs:
             chmod +x bin/opera-proxy 2>/dev/null || true
           fi
 
-      - name: Run Senkuro Trade Assistant v49.0 (Part 3 — Hours 8.2 to 12.3)
+      - name: Run Senkuro Auto-Trade v50.0 (Part 3 — Hours 8.2 to 12.3)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
+          SENKURO_MAIN_TOKEN: ${{ secrets.SENKURO_MAIN_TOKEN }}
+          UKRAINE_PROXY_URL: ${{ secrets.UKRAINE_PROXY_URL }}
           IS_CONTINUATION_JOB: "true"
           GH_EVENT_NAME: "schedule"
         run: |
