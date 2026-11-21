@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Senkuro Public Trade Assistant v47.0 (Read-Only, Zero Passwords, Zero Alts)
+Senkuro Public Trade Assistant v48.0 (Read-Only, Zero Passwords, Zero Alts)
 ---------------------------------------------------------------------------
 1. Автообновляемая база цен банка SenkuTools (addons.mozilla.org -> database.json, комиссия 20% -> x0.80).
 2. Мгновенная проверка основы cesium254 с бейджами чистой цены банка на фото карточек.
@@ -33,11 +33,19 @@ from typing import Any, Optional
 
 from playwright.async_api import BrowserContext, Page, async_playwright
 
+# Принудительно используем IPv4 для запросов к Telegram API (убирает Errno 101 Network is unreachable на IPv6 в GitHub Actions)
+_orig_getaddrinfo = socket.getaddrinfo
+def _ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    if host and "telegram.org" in str(host):
+        return _orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+    return _orig_getaddrinfo(host, port, family, type, proto, flags)
+socket.getaddrinfo = _ipv4_only_getaddrinfo
+
 # ==============================================================================
 # 1. КОНФИГУРАЦИЯ (БЕЗ ПАРОЛЕЙ И ТВИНКОВ!)
 # ==============================================================================
 
-APP_VERSION_TAG = "v47.0"
+APP_VERSION_TAG = "v48.0"
 APP_HEADER_VERSION = "2.2.1"
 GRAPHQL_API_URL = "https://api.senkuro.com/graphql"
 
@@ -210,12 +218,17 @@ def send_tg_multipart(method: str, file_field: str, filename: str, file_bytes: b
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=35) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except Exception as e:
-        log_debug(f"[TG MULTIPART ERR] {method}: {e}")
-        return {"ok": False, "error": str(e)}
+    last_err = ""
+    for attempt in range(1, 4):
+        try:
+            with urllib.request.urlopen(req, timeout=35) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except Exception as e:
+            last_err = str(e)
+            log_debug(f"[TG MULTIPART ERR #{attempt}/3] {method}: {e}")
+            if attempt < 3:
+                time.sleep(1.5 * attempt)
+    return {"ok": False, "error": last_err}
 
 
 def send_tg_media_album(images_bytes: list[bytes], caption: str = "") -> bool:
@@ -255,12 +268,16 @@ def send_tg_media_album(images_bytes: list[bytes], caption: str = "") -> bool:
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=45) as resp:
-            return bool(json.loads(resp.read().decode("utf-8")).get("ok"))
-    except Exception as e:
-        log_debug(f"[TG ALBUM ERR] {e}")
-        return False
+    for attempt in range(1, 4):
+        try:
+            with urllib.request.urlopen(req, timeout=45) as resp:
+                if json.loads(resp.read().decode("utf-8")).get("ok"):
+                    return True
+        except Exception as e:
+            log_debug(f"[TG ALBUM ERR #{attempt}/3] {e}")
+            if attempt < 3:
+                time.sleep(1.5 * attempt)
+    return False
 
 
 def send_debug_log() -> None:
@@ -400,7 +417,7 @@ def load_trade_db() -> dict[str, Any]:
                 for k, v in default_db.items():
                     if k not in loaded or not isinstance(loaded[k], dict):
                         loaded[k] = v
-                # Автоочистка ошибочных записей от ссылки меню "Гильдии" из v47.0
+                # Автоочистка ошибочных записей от ссылки меню "Гильдии" из v48.0
                 loaded["guild_blacklist"] = {
                     u_k: u_v for u_k, u_v in loaded.get("guild_blacklist", {}).items()
                     if str((u_v or {}).get("guild") or "").strip().lower() not in ("гильдии", "guilds", "guild", "")
@@ -766,12 +783,17 @@ async def run_check_my_cards() -> None:
 
                 caption = "\n".join(lines)
                 if photo_bytes_list:
+                    sent_any_album = False
                     for i in range(0, len(photo_bytes_list), 10):
                         chunk = photo_bytes_list[i : i + 10]
-                        send_tg_media_album(chunk, caption=caption if i == 0 else "")
+                        if send_tg_media_album(chunk, caption=caption if i == 0 else ""):
+                            sent_any_album = True
                         if i + 10 < len(photo_bytes_list):
                             await asyncio.sleep(1.0)
-                    send_tg_message("👇 Нажмите <b>«🎯 Найти обмены»</b> — бот сам подберёт цели без гильдии под ваши ранги расходников!", add_keyboard=True)
+                    if sent_any_album:
+                        send_tg_message("👇 Нажмите <b>«🎯 Найти обмены»</b> — бот сам подберёт цели без гильдии под ваши ранги расходников!", add_keyboard=True)
+                    else:
+                        send_tg_message(caption, add_keyboard=True)
                 else:
                     send_tg_message(caption, add_keyboard=True)
             finally:
