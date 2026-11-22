@@ -1,4 +1,4 @@
-name: Senkuro Auto-Trade Assistant v52.0
+name: Senkuro Auto-Trade Assistant v53.0
 
 on:
   push:
@@ -76,7 +76,7 @@ jobs:
               f.write(str(offset))
 
           if EVENT_NAME == "push":
-              send("⏳ <b>Обновление v52.0 получено! Перезапускаю сервер (~15 сек)...</b>")
+              send("⏳ <b>Обновление v53.0 получено! Перезапускаю сервер (~15 сек)...</b>")
 
           start_ts = time.time()
           while not os.path.exists("/tmp/senkuro_main_ready.flag") and (time.time() - start_ts < 65):
@@ -135,7 +135,7 @@ jobs:
             chmod +x bin/opera-proxy 2>/dev/null || true
           fi
 
-      - name: Run Senkuro Auto-Trade v52.0 (Part 1 — Hours 0 to 4.1)
+      - name: Run Senkuro Auto-Trade v53.0 (Part 1 — Hours 0 to 4.1)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
@@ -203,7 +203,7 @@ jobs:
             chmod +x bin/opera-proxy 2>/dev/null || true
           fi
 
-      - name: Run Senkuro Auto-Trade v52.0 (Part 2 — Hours 4.1 to 8.2)
+      - name: Run Senkuro Auto-Trade v53.0 (Part 2 — Hours 4.1 to 8.2)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}
@@ -269,7 +269,7 @@ jobs:
             chmod +x bin/opera-proxy 2>/dev/null || true
           fi
 
-      - name: Run Senkuro Auto-Trade v52.0 (Part 3 — Hours 8.2 to 12.3)
+      - name: Run Senkuro Auto-Trade v53.0 (Part 3 — Hours 8.2 to 12.3)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '457787014' }}

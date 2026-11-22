@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Senkuro Smart Auto-Trade & Bank Assistant v52.0
+Senkuro Smart Auto-Trade & Bank Assistant v53.0
 -----------------------------------------------
 - Рабочее окно авто-обменов: 09:00–18:00 по Киеву (ZoneInfo("Europe/Kyiv"), авто зимнее/летнее время).
 - Ультра-экономный расход украинского резидентского прокси (< 0.5 МБ/день):
@@ -53,7 +53,7 @@ socket.getaddrinfo = _ipv4_only_getaddrinfo
 # 1. КОНФИГУРАЦИЯ
 # ==============================================================================
 
-APP_VERSION_TAG = "v52.0"
+APP_VERSION_TAG = "v53.0"
 APP_HEADER_VERSION = "2.2.1"
 GRAPHQL_API_URL = "https://api.senkuro.com/graphql"
 
@@ -97,7 +97,7 @@ MIN_BANK_PROFIT_NET = 1.50
 MIN_TARGET_NET_PRICE = 1.60
 TARGET_TTL_SECONDS = 72 * 3600
 
-SEARCHABLE_RANKS = ("F", "D", "C", "B", "A", "S")
+SEARCHABLE_RANKS = ("C", "B", "A", "S")
 LOWER_RANK_MAP = {"D": "F", "C": "D", "B": "C", "A": "B", "S": "A"}
 RANK_ORDER = ("R", "S", "A", "B", "C", "D", "F")
 RANK_BADGE = {
@@ -1141,12 +1141,7 @@ async def send_profitable_card_to_bank(card_id: str) -> None:
 
 
 async def check_and_notify_new_profitable_cards(my_data: dict[str, Any]) -> None:
-    st = load_auto_state()
-    notified = set(st.get("notified_profitable_ids") or [])
-    current_prof_ids = {p["cardId"] for p in my_data["profitable"]}
-    notified = notified.intersection(current_prof_ids)
-
-    # Обновляем общий кэш выгодных карт для одной кнопки "Отправить всё в банк"
+    """Тихий режим v53.0: не шлёт пуши в Telegram днём и ночью. Просто обновляет кэш выгодных карт для вечерней кнопки '🃏 Мои карты' -> '🏦 Отправить всё в банк'."""
     BANK_PENDING_CARDS.clear()
     for p_it in my_data["profitable"]:
         cid = p_it["cardId"]
@@ -1155,27 +1150,7 @@ async def check_and_notify_new_profitable_cards(my_data: dict[str, Any]) -> None
         q_sfx = f" ×{qty}" if qty > 1 else ""
         lbl = f"{badge} «{p_it['name']}»{q_sfx} (<b>{p_it['net_price']:.2f}</b> чистыми)"
         BANK_PENDING_CARDS[cid] = {"label": lbl, "net_price": p_it["net_price"], "qty": qty}
-
-    new_profs = [p for p in my_data["profitable"] if p["cardId"] not in notified]
-    if new_profs:
-        lines = []
-        for p_it in my_data["profitable"]:
-            cid = p_it["cardId"]
-            lines.append(f"💎 {BANK_PENDING_CARDS[cid]['label']}")
-            notified.add(cid)
-        total_cnt = sum(int(m.get("qty") or 1) for m in BANK_PENDING_CARDS.values())
-        inline_kb = {
-            "inline_keyboard": [[{"text": f"🏦 Отправить всё в банк ({total_cnt} шт. → {BANK_ACCOUNT_SLUG})", "callback_data": "bank:all"}]]
-        }
-        send_tg_message(
-            f"🔔 <b>Новые выгодные карты на {MAIN_ACCOUNT_SLUG}:</b>\n\n"
-            + "\n".join(lines)
-            + "\n\nНажмите кнопку ниже — все карты уйдут в банк <b>одним трейдом</b>:",
-            add_keyboard=False,
-            inline_markup=inline_kb,
-        )
-
-    st["notified_profitable_ids"] = list(notified)
+    st = load_auto_state()
     st["last_monitor_ts"] = time.time()
     save_auto_state(st)
 
@@ -1597,11 +1572,7 @@ async def background_scheduler_loop(q: asyncio.Queue, deadline: float) -> None:
                     await q.put(("auto_wave", ""))
                 continue
 
-        # 2. Лёгкий 20-минутный мониторинг cesium254 (через бесплатный Opera VPN) для мгновенных пушей в банк
-        if now - float(st.get("last_monitor_ts") or 0) >= MONITOR_INTERVAL_SEC:
-            if "monitor_main" not in QUEUED_KEYS and ACTIVE_JOB_NAME != "monitor_main":
-                QUEUED_KEYS.add("monitor_main")
-                await q.put(("monitor_main", ""))
+        # Тихий режим v53.0: 20-минутный мониторинг и пуши отключены — пользователь сам проверяет вечером через '🃏 Мои карты'.
 
 
 async def run_silent_monitor() -> None:
