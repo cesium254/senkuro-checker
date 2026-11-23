@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Senkuro Smart Auto-Trade & Bank Assistant v56.0
+Senkuro Smart Auto-Trade & Bank Assistant v58.0
 -----------------------------------------------
 - Рабочее окно авто-обменов: 09:00–18:00 по Киеву (ZoneInfo("Europe/Kyiv"), авто зимнее/летнее время).
 - Ультра-экономный расход украинского резидентского прокси (< 0.5 МБ/день):
@@ -53,7 +53,7 @@ socket.getaddrinfo = _ipv4_only_getaddrinfo
 # 1. КОНФИГУРАЦИЯ
 # ==============================================================================
 
-APP_VERSION_TAG = "v56.0"
+APP_VERSION_TAG = "v58.0"
 APP_HEADER_VERSION = "2.2.1"
 GRAPHQL_API_URL = "https://api.senkuro.com/graphql"
 
@@ -943,7 +943,8 @@ async def scan_cards_batch_into_db(target_ranks: list[str], max_cards_to_scan: i
         net_p = round(float(c_info.get("price") or 0) * BANK_COMMISSION_MULT, 2)
         if net_p < MIN_TARGET_NET_PRICE:
             continue
-        if now - float(db["scanned_cards"].get(c_slug) or 0) < 48 * 3600:
+        cd_sec = 12 * 3600 if net_p >= 2.60 else 48 * 3600
+        if now - float(db["scanned_cards"].get(c_slug) or 0) < cd_sec:
             continue
         candidates.append((c_slug, c_info, net_p))
 
@@ -1143,7 +1144,7 @@ async def send_profitable_card_to_bank(card_id: str) -> None:
 
 
 async def check_and_notify_new_profitable_cards(my_data: dict[str, Any]) -> None:
-    """Тихий режим v56.0: не шлёт пуши в Telegram днём и ночью. Просто обновляет кэш выгодных карт для вечерней кнопки '🃏 Мои карты' -> '🏦 Отправить всё в банк'."""
+    """Тихий режим v58.0: не шлёт пуши в Telegram днём и ночью. Просто обновляет кэш выгодных карт для вечерней кнопки '🃏 Мои карты' -> '🏦 Отправить всё в банк'."""
     BANK_PENDING_CARDS.clear()
     for p_it in my_data["profitable"]:
         cid = p_it["cardId"]
@@ -1229,8 +1230,17 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
         and now - float(t.get("verified_at") or 0) < TARGET_TTL_SECONDS
         and k not in db.get("sent_trades", {})
     ]
-    if len(fresh_targets) < 12 and not STOP_FLAG:
-        await scan_cards_batch_into_db(active_ranks, max_cards_to_scan=12, stop_when_found=12 - len(fresh_targets))
+    # Проверяем запас целей отдельно для КАЖДОГО активного ранга (сначала старшие S -> A -> B -> C),
+    # чтобы избыток целей по B/C не мешал сканировать появившийся новый ранг A или S.
+    scanned_any = False
+    for r_need in reversed(active_ranks):
+        if STOP_FLAG:
+            break
+        r_cnt = sum(1 for _, t in fresh_targets if t.get("rank") == r_need)
+        if r_cnt < 5:
+            await scan_cards_batch_into_db([r_need], max_cards_to_scan=10, stop_when_found=5 - r_cnt)
+            scanned_any = True
+    if scanned_any:
         db = load_trade_db()
         fresh_targets = [
             (k, t) for k, t in db.get("targets", {}).items()
@@ -1437,7 +1447,7 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
             elif (tier_200 or tier_160) and len(pool_same) >= 1:
                 fixed_offer = [pool_same[0]]
                 offer_desc = f"1×{rank}"
-                chosen_targets = tier_200 if (tier_200 and not lower_r) else tier_160
+                chosen_targets = tier_200 if (tier_200 and (not lower_r or not pool_low)) else tier_160
             else:
                 continue
 
@@ -1754,7 +1764,7 @@ async def background_scheduler_loop(q: asyncio.Queue, deadline: float) -> None:
                     await q.put(("auto_wave", ""))
                 continue
 
-        # Тихий режим v56.0: 20-минутный мониторинг и пуши отключены — пользователь сам проверяет вечером через '🃏 Мои карты'.
+        # Тихий режим v58.0: 20-минутный мониторинг и пуши отключены — пользователь сам проверяет вечером через '🃏 Мои карты'.
 
 
 async def run_silent_monitor() -> None:
