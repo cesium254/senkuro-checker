@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Senkuro Smart Auto-Trade & Bank Assistant v54.0
+Senkuro Smart Auto-Trade & Bank Assistant v56.0
 -----------------------------------------------
 - Рабочее окно авто-обменов: 09:00–18:00 по Киеву (ZoneInfo("Europe/Kyiv"), авто зимнее/летнее время).
 - Ультра-экономный расход украинского резидентского прокси (< 0.5 МБ/день):
@@ -53,7 +53,7 @@ socket.getaddrinfo = _ipv4_only_getaddrinfo
 # 1. КОНФИГУРАЦИЯ
 # ==============================================================================
 
-APP_VERSION_TAG = "v54.0"
+APP_VERSION_TAG = "v56.0"
 APP_HEADER_VERSION = "2.2.1"
 GRAPHQL_API_URL = "https://api.senkuro.com/graphql"
 
@@ -64,6 +64,7 @@ WAVE_INTERVAL_SEC = 65 * 60       # 1 час 05 мин между волнами
 MONITOR_INTERVAL_SEC = 20 * 60    # Проверка cesium254 раз в 20 минут (через бесплатный Opera VPN)
 MAX_TRADES_PER_WAVE = 9           # До 9 обменов/час (1 слот остаётся в запасе для банка)
 MAX_ORDERS_PER_BATCH = 5          # 1 и та же пара карт дублируется до 5 разным людям
+STICKY_PAIR_TTL_SEC = 48 * 3600   # Липкие пары хранятся 2 дня (48 ч)
 
 MAIN_ACCOUNT_SLUG = os.environ.get("SENKURO_MAIN_SLUG", "cesium254").strip() or "cesium254"
 MAIN_ACCOUNT_UID = os.environ.get("SENKURO_MAIN_UID", "VVNFUjoxODAxNDM0ODEzOTI0ODE4MDE").strip() or "VVNFUjoxODAxNDM0ODEzOTI0ODE4MDE"
@@ -832,7 +833,7 @@ async def inspect_main_account(page: Page) -> dict[str, Any]:
     shards_nodes = await fetch_public_user_cards(page, MAIN_ACCOUNT_UID, modifier_val=1)
 
     cards_info = []
-    fodder_units_by_rank: dict[str, list[dict[str, Any]]] = {r: [] for r in SEARCHABLE_RANKS}
+    fodder_units_by_rank: dict[str, list[dict[str, Any]]] = {r: [] for r in ("F", "D", "C", "B", "A", "S")}
     fodder_by_rank: Counter = Counter()
     profitable_cards = []
 
@@ -862,8 +863,9 @@ async def inspect_main_account(page: Page) -> dict[str, Any]:
         if not locked and cid and qty > 0:
             if net_p is not None and net_p >= MIN_BANK_PROFIT_NET:
                 profitable_cards.append(item)
-            elif rank in SEARCHABLE_RANKS:
-                fodder_by_rank[rank] += qty
+            elif rank in ("F", "D", "C", "B", "A", "S"):
+                if rank in SEARCHABLE_RANKS:
+                    fodder_by_rank[rank] += qty
                 for _ in range(qty):
                     fodder_units_by_rank[rank].append({"cardId": cid, "modifier": mod, "rank": rank, "name": name})
 
@@ -1141,7 +1143,7 @@ async def send_profitable_card_to_bank(card_id: str) -> None:
 
 
 async def check_and_notify_new_profitable_cards(my_data: dict[str, Any]) -> None:
-    """Тихий режим v54.0: не шлёт пуши в Telegram днём и ночью. Просто обновляет кэш выгодных карт для вечерней кнопки '🃏 Мои карты' -> '🏦 Отправить всё в банк'."""
+    """Тихий режим v56.0: не шлёт пуши в Telegram днём и ночью. Просто обновляет кэш выгодных карт для вечерней кнопки '🃏 Мои карты' -> '🏦 Отправить всё в банк'."""
     BANK_PENDING_CARDS.clear()
     for p_it in my_data["profitable"]:
         cid = p_it["cardId"]
@@ -1244,10 +1246,11 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
             send_tg_message("ℹ️ Под текущие ранги пока нет новых непроверенных целей — повторю в следующую волну.", add_keyboard=True)
         return
 
-    # 3. Учёт уже выставленных сегодня карт (по cardId) — строго НЕПЕРЕСЕКАЮЩИЕСЯ пары:
-    #    - 1+2 -> 3+4 -> 5+6 (никаких пересечений вроде 1+2 и 2+3).
-    #    - Если было 5 карт (1+2 и 3+4 выставлены, 5-я ждёт) и днём добавилась 6-я -> бот сразу сложит пару 5+6.
-    #    - Когда все доступные на сегодня пары выставлены -> бот просто ждёт до следующего утра (или новых карт).
+    # 3. Липкие пары (48 ч) + приоритет старших рангов (S -> A -> B -> C) + суточный учёт по cardId:
+    #    - Сложенные пары запоминаются на 2 дня (48 ч) локально в состоянии (0 лишних запросов и 0 байт прокси).
+    #    - Пока обе карты пары есть в профиле, на следующий день они снова уходят вместе, не ломая вчерашние трейды.
+    #    - Старшие ранги (S, A, B) идут первыми; для 1×B + 1×C сначала берётся свободная непарная C-карта,
+    #      и только если все C в парах — аккуратно разбивается ровно одна самая старая C-пара (остальные не трогаются).
     today_kyiv = kyiv_now().strftime("%Y-%m-%d")
     if st.get("offered_today_date") != today_kyiv:
         st["offered_today_date"] = today_kyiv
@@ -1255,6 +1258,26 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
     offered_today_counts: dict[str, int] = {
         str(k): int(v) for k, v in (st.get("offered_today_counts") or {}).items()
     }
+
+    # Чистим устаревшие (> 48 ч) или неполные липкие пары (если карту уже забрали в трейде или заблокировали)
+    raw_sticky = st.get("sticky_pairs") or []
+    inv_counts_by_rank: dict[str, Counter] = {}
+    for r_k in ("F", "D", "C", "B", "A", "S"):
+        inv_counts_by_rank[r_k] = Counter(str(u.get("cardId") or "") for u in (fodder_units.get(r_k) or []))
+
+    sticky_pairs: list[dict[str, Any]] = []
+    temp_inv = {r_k: Counter(cnt) for r_k, cnt in inv_counts_by_rank.items()}
+    for sp in raw_sticky:
+        sp_r = str(sp.get("rank") or "")
+        sp_ids = [str(x) for x in (sp.get("ids") or []) if x]
+        sp_ts = float(sp.get("ts") or 0)
+        if len(sp_ids) != 2 or sp_r not in temp_inv or (now_ts - sp_ts) > STICKY_PAIR_TTL_SEC:
+            continue
+        need = Counter(sp_ids)
+        if all(temp_inv[sp_r].get(cid, 0) >= q for cid, q in need.items()):
+            for cid, q in need.items():
+                temp_inv[sp_r][cid] -= q
+            sticky_pairs.append({"rank": sp_r, "ids": sp_ids, "ts": sp_ts})
 
     def _get_unused_pool(rank_name: str) -> list[dict[str, Any]]:
         raw_units = sorted(
@@ -1271,10 +1294,78 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
                 unused.append(u)
         return unused
 
+    def _pick_pair_for_rank(rank_name: str, pool_same: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
+        """Возвращает (пара_из_2_карт, была_ли_из_sticky_pairs)."""
+        avail_c = Counter(str(u.get("cardId") or "") for u in pool_same)
+        for sp in sticky_pairs:
+            if sp["rank"] != rank_name:
+                continue
+            need = Counter(sp["ids"])
+            if all(avail_c.get(cid, 0) >= q for cid, q in need.items()):
+                picked: list[dict[str, Any]] = []
+                used_idx: set[int] = set()
+                for target_cid in sp["ids"]:
+                    for idx, u in enumerate(pool_same):
+                        if idx not in used_idx and str(u.get("cardId") or "") == target_cid:
+                            picked.append(u)
+                            used_idx.add(idx)
+                            break
+                if len(picked) == 2:
+                    return picked, True
+        # Иначе собираем новую пару предпочтительно из карт, НЕ входящих в активные липкие пары
+        sticky_ids_budget = Counter()
+        for sp in sticky_pairs:
+            if sp["rank"] == rank_name:
+                for cid in sp["ids"]:
+                    sticky_ids_budget[cid] += 1
+        non_sticky: list[dict[str, Any]] = []
+        sticky_rest: list[dict[str, Any]] = []
+        for u in pool_same:
+            cid = str(u.get("cardId") or "")
+            if sticky_ids_budget.get(cid, 0) > 0:
+                sticky_ids_budget[cid] -= 1
+                sticky_rest.append(u)
+            else:
+                non_sticky.append(u)
+        combined = non_sticky + sticky_rest
+        if len(combined) >= 2:
+            return [combined[0], combined[1]], False
+        return [], False
+
+    def _pick_single_lower_card(lower_rank: str, pool_low: list[dict[str, Any]]) -> tuple[Optional[dict[str, Any]], Optional[int]]:
+        """Для 1×B + 1×C сначала берёт свободную непарную C-карту; если все C в парах — возвращает карту и индекс самой старой пары для аккуратного разбора."""
+        sticky_ids_budget = Counter()
+        for sp in sticky_pairs:
+            if sp["rank"] == lower_rank:
+                for cid in sp["ids"]:
+                    sticky_ids_budget[cid] += 1
+        for u in pool_low:
+            cid = str(u.get("cardId") or "")
+            if sticky_ids_budget.get(cid, 0) > 0:
+                sticky_ids_budget[cid] -= 1
+            else:
+                return u, None
+        # Все младшие карты заняты в липких парах — берём из самой старой пары этого ранга
+        oldest_idx: Optional[int] = None
+        oldest_ts = float("inf")
+        avail_c = Counter(str(u.get("cardId") or "") for u in pool_low)
+        for idx, sp in enumerate(sticky_pairs):
+            if sp["rank"] == lower_rank and any(avail_c.get(cid, 0) > 0 for cid in sp["ids"]):
+                if sp["ts"] < oldest_ts:
+                    oldest_ts = sp["ts"]
+                    oldest_idx = idx
+        if oldest_idx is not None:
+            for target_cid in sticky_pairs[oldest_idx]["ids"]:
+                for u in pool_low:
+                    if str(u.get("cardId") or "") == target_cid:
+                        return u, oldest_idx
+        return (pool_low[0], None) if pool_low else (None, None)
+
     # Быстрая проверка: есть ли вообще невыставленные сегодня карты в рабочих рангах?
     unused_by_rank = {r: _get_unused_pool(r) for r in active_ranks}
     if not any(unused_by_rank.values()):
         log_debug("[AUTO WAVE SKIP] Все доступные на сегодня пары карт уже выставлены — ждём новых карт или завтрашнего утра.")
+        st["sticky_pairs"] = sticky_pairs
         st["last_wave_ts"] = time.time()
         save_auto_state(st)
         if manual_trigger:
@@ -1288,11 +1379,10 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
     sent_count = 0
     sent_logs: list[str] = []
     used_user_ids_wave: set[str] = set()
-    rank_start_idx = int(st.get("next_rank_idx") or 0) % len(active_ranks)
-    ordered_ranks = active_ranks[rank_start_idx:] + active_ranks[:rank_start_idx]
+    # Приоритет старшим рангам: S -> A -> B -> C
+    ordered_ranks = list(reversed(active_ranks))
 
     hit_rate_limit = False
-    # До 2 проходов по рангам за волну, пока есть свободные слоты (>= 3) и невыставленные пары
     for _pass in range(2):
         if sent_count >= remaining_slots or STOP_FLAG or hit_rate_limit:
             break
@@ -1327,16 +1417,23 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
             chosen_targets: list[tuple[str, dict[str, Any]]] = []
             fixed_offer: list[dict[str, Any]] = []
             offer_desc = ""
+            is_new_same_pair = False
+            broken_sticky_idx: Optional[int] = None
 
             if tier_260 and len(pool_same) >= 2:
-                # Строго 2x того же ранга из ЕЩЁ НЕ ВЫСТАВЛЕННЫХ сегодня карт
-                fixed_offer = [pool_same[0], pool_same[1]]
-                offer_desc = f"2×{rank}"
-                chosen_targets = tier_260
+                picked_pair, was_sticky = _pick_pair_for_rank(rank, pool_same)
+                if len(picked_pair) == 2:
+                    fixed_offer = picked_pair
+                    offer_desc = f"2×{rank}"
+                    chosen_targets = tier_260
+                    is_new_same_pair = not was_sticky
             elif tier_200 and len(pool_same) >= 1 and lower_r and len(pool_low) >= 1:
-                fixed_offer = [pool_same[0], pool_low[0]]
-                offer_desc = f"1×{rank}+1×{lower_r}"
-                chosen_targets = tier_200
+                low_card, b_idx = _pick_single_lower_card(lower_r, pool_low)
+                if low_card:
+                    fixed_offer = [pool_same[0], low_card]
+                    offer_desc = f"1×{rank}+1×{lower_r}"
+                    chosen_targets = tier_200
+                    broken_sticky_idx = b_idx
             elif (tier_200 or tier_160) and len(pool_same) >= 1:
                 fixed_offer = [pool_same[0]]
                 offer_desc = f"1×{rank}"
@@ -1396,12 +1493,19 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
                         hit_rate_limit = True
                         break
 
-            # Фиксируем именно эти cardId как выставленные на сегодня — больше они сегодня не пересекутся ни с чем
             if batch_sent > 0:
                 for u in fixed_offer:
                     cid = str(u.get("cardId") or "")
                     if cid:
                         offered_today_counts[cid] = offered_today_counts.get(cid, 0) + 1
+                if is_new_same_pair and len(fixed_offer) == 2:
+                    sticky_pairs.append({
+                        "rank": rank,
+                        "ids": [str(fixed_offer[0].get("cardId") or ""), str(fixed_offer[1].get("cardId") or "")],
+                        "ts": time.time(),
+                    })
+                if broken_sticky_idx is not None and 0 <= broken_sticky_idx < len(sticky_pairs):
+                    sticky_pairs.pop(broken_sticky_idx)
         if not progress_in_pass:
             break
 
@@ -1409,9 +1513,8 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
     st["recent_trade_ts"] = recent_ts[-30:]
     st["offered_today_date"] = today_kyiv
     st["offered_today_counts"] = offered_today_counts
+    st["sticky_pairs"] = sticky_pairs
     st["last_wave_ts"] = time.time()
-    if sent_count > 0:
-        st["next_rank_idx"] = (rank_start_idx + 1) % len(active_ranks)
     save_auto_state(st)
 
     if manual_trigger:
@@ -1445,22 +1548,55 @@ async def run_check_my_cards() -> None:
                 fodder = data["fodder_by_rank"]
                 prof = data["profitable"]
 
+                def _download_card_img_direct(url: str) -> Optional[bytes]:
+                    hdrs = {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                        "Referer": "https://senkuro.com/",
+                        "Origin": "https://senkuro.com",
+                        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+                    }
+                    for attempt in range(2):
+                        try:
+                            req = urllib.request.Request(url, headers=hdrs)
+                            with urllib.request.urlopen(req, timeout=12) as resp:
+                                if resp.status == 200:
+                                    return resp.read()
+                        except Exception:
+                            if attempt == 0:
+                                time.sleep(0.5)
+                    return None
+
                 photo_bytes_list: list[bytes] = []
+                img_failed = 0
                 for c in cards[:20]:
                     if not c["img"]:
+                        img_failed += 1
                         continue
-                    try:
-                        r = await page.context.request.get(
-                            c["img"],
-                            headers={"Referer": "https://senkuro.com/", "Origin": "https://senkuro.com"},
-                            timeout=10000,
-                        )
-                        if r.ok:
-                            jpg = render_card_with_price_badge(await r.body(), c["net_price"])
-                            if jpg:
-                                photo_bytes_list.append(jpg)
-                    except Exception:
-                        pass
+                    raw_img = await asyncio.to_thread(_download_card_img_direct, c["img"])
+                    if not raw_img:
+                        # Фоллбэк через браузер/Opera VPN с 2 попытками
+                        for _att in range(2):
+                            try:
+                                r = await page.context.request.get(
+                                    c["img"],
+                                    headers={"Referer": "https://senkuro.com/", "Origin": "https://senkuro.com"},
+                                    timeout=16000,
+                                )
+                                if r.ok:
+                                    raw_img = await r.body()
+                                    break
+                            except Exception:
+                                await asyncio.sleep(0.5)
+                    if raw_img:
+                        jpg = render_card_with_price_badge(raw_img, c["net_price"])
+                        if jpg:
+                            photo_bytes_list.append(jpg)
+                        else:
+                            img_failed += 1
+                            log_debug(f"[IMG RENDER ERR] Не удалось отрендерить {c['name']} ({c['img'][:60]})")
+                    else:
+                        img_failed += 1
+                        log_debug(f"[IMG FETCH ERR] Не удалось скачать {c['name']} ({c['img'][:60]})")
 
                 cnt_all = Counter()
                 for c in cards:
@@ -1618,7 +1754,7 @@ async def background_scheduler_loop(q: asyncio.Queue, deadline: float) -> None:
                     await q.put(("auto_wave", ""))
                 continue
 
-        # Тихий режим v54.0: 20-минутный мониторинг и пуши отключены — пользователь сам проверяет вечером через '🃏 Мои карты'.
+        # Тихий режим v56.0: 20-минутный мониторинг и пуши отключены — пользователь сам проверяет вечером через '🃏 Мои карты'.
 
 
 async def run_silent_monitor() -> None:
