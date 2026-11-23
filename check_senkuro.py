@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Senkuro Smart Auto-Trade & Bank Assistant v58.0
+Senkuro Smart Auto-Trade & Bank Assistant v60.0
 -----------------------------------------------
 - Рабочее окно авто-обменов: 09:00–18:00 по Киеву (ZoneInfo("Europe/Kyiv"), авто зимнее/летнее время).
 - Ультра-экономный расход украинского резидентского прокси (< 0.5 МБ/день):
@@ -53,7 +53,7 @@ socket.getaddrinfo = _ipv4_only_getaddrinfo
 # 1. КОНФИГУРАЦИЯ
 # ==============================================================================
 
-APP_VERSION_TAG = "v58.0"
+APP_VERSION_TAG = "v60.0"
 APP_HEADER_VERSION = "2.2.1"
 GRAPHQL_API_URL = "https://api.senkuro.com/graphql"
 
@@ -100,6 +100,7 @@ TARGET_TTL_SECONDS = 72 * 3600
 
 SEARCHABLE_RANKS = ("C", "B", "A", "S")
 LOWER_RANK_MAP = {"D": "F", "C": "D", "B": "C", "A": "B", "S": "A"}
+LOWER2_RANK_MAP = {"C": "F", "B": "D", "A": "C", "S": "B"}
 RANK_ORDER = ("R", "S", "A", "B", "C", "D", "F")
 RANK_BADGE = {
     "R": "💠[R]",
@@ -928,25 +929,37 @@ async def check_owner_profile_and_card(page: Page, owner_slug: str, card_slug: s
     return False, None
 
 
-async def scan_cards_batch_into_db(target_ranks: list[str], max_cards_to_scan: int = 10, stop_when_found: int = 8) -> dict[str, int]:
+async def scan_cards_batch_into_db(
+    target_ranks: list[str],
+    max_cards_to_scan: int = 10,
+    stop_when_found: int = 8,
+    min_net: float = MIN_TARGET_NET_PRICE,
+    max_net: float = 999.0,
+) -> dict[str, int]:
     db = load_trade_db()
     now = time.time()
     ranks_set = {r.upper() for r in target_ranks if r.upper() in SEARCHABLE_RANKS} or set(SEARCHABLE_RANKS)
 
-    candidates = []
-    for c_slug, c_info in SENKUTOOLS_DB.items():
-        if not isinstance(c_info, dict):
-            continue
-        r = str(c_info.get("rank") or "").upper()
-        if r not in ranks_set:
-            continue
-        net_p = round(float(c_info.get("price") or 0) * BANK_COMMISSION_MULT, 2)
-        if net_p < MIN_TARGET_NET_PRICE:
-            continue
-        cd_sec = 12 * 3600 if net_p >= 2.60 else 48 * 3600
-        if now - float(db["scanned_cards"].get(c_slug) or 0) < cd_sec:
-            continue
-        candidates.append((c_slug, c_info, net_p))
+    def _collect_candidates(relaxed: bool = False) -> list[tuple[str, dict[str, Any], float]]:
+        out = []
+        for c_slug, c_info in SENKUTOOLS_DB.items():
+            if not isinstance(c_info, dict):
+                continue
+            r = str(c_info.get("rank") or "").upper()
+            if r not in ranks_set:
+                continue
+            net_p = round(float(c_info.get("price") or 0) * BANK_COMMISSION_MULT, 2)
+            if net_p < min_net or net_p > max_net:
+                continue
+            cd_sec = (4 * 3600) if relaxed else (12 * 3600 if net_p >= 2.60 else 24 * 3600)
+            if now - float(db["scanned_cards"].get(c_slug) or 0) < cd_sec:
+                continue
+            out.append((c_slug, c_info, net_p))
+        return out
+
+    candidates = _collect_candidates(relaxed=False)
+    if len(candidates) < 4:
+        candidates = _collect_candidates(relaxed=True)
 
     random.shuffle(candidates)
     candidates.sort(key=lambda x: (x[2] + random.uniform(-0.15, 0.15)), reverse=True)
@@ -1144,7 +1157,7 @@ async def send_profitable_card_to_bank(card_id: str) -> None:
 
 
 async def check_and_notify_new_profitable_cards(my_data: dict[str, Any]) -> None:
-    """Тихий режим v58.0: не шлёт пуши в Telegram днём и ночью. Просто обновляет кэш выгодных карт для вечерней кнопки '🃏 Мои карты' -> '🏦 Отправить всё в банк'."""
+    """Тихий режим v60.0: не шлёт пуши в Telegram днём и ночью. Просто обновляет кэш выгодных карт для вечерней кнопки '🃏 Мои карты' -> '🏦 Отправить всё в банк'."""
     BANK_PENDING_CARDS.clear()
     for p_it in my_data["profitable"]:
         cid = p_it["cardId"]
@@ -1219,62 +1232,43 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
             send_tg_message("ℹ️ На основе сейчас нет свободных дешёвых карт для авто-обмена.", add_keyboard=True)
         return
 
-    # 2. Добираем свежие цели без гильдии (бесплатный Opera VPN)
-    db = load_trade_db()
-    now = time.time()
-    fresh_targets = [
-        (k, t) for k, t in db.get("targets", {}).items()
-        if t.get("rank") in active_ranks
-        and t.get("user_id")
-        and t.get("card_id")
-        and now - float(t.get("verified_at") or 0) < TARGET_TTL_SECONDS
-        and k not in db.get("sent_trades", {})
-    ]
-    # Проверяем запас целей отдельно для КАЖДОГО активного ранга (сначала старшие S -> A -> B -> C),
-    # чтобы избыток целей по B/C не мешал сканировать появившийся новый ранг A или S.
-    scanned_any = False
-    for r_need in reversed(active_ranks):
-        if STOP_FLAG:
-            break
-        r_cnt = sum(1 for _, t in fresh_targets if t.get("rank") == r_need)
-        if r_cnt < 5:
-            await scan_cards_batch_into_db([r_need], max_cards_to_scan=10, stop_when_found=5 - r_cnt)
-            scanned_any = True
-    if scanned_any:
-        db = load_trade_db()
-        fresh_targets = [
-            (k, t) for k, t in db.get("targets", {}).items()
-            if t.get("rank") in active_ranks
-            and t.get("user_id")
-            and t.get("card_id")
-            and now - float(t.get("verified_at") or 0) < TARGET_TTL_SECONDS
-            and k not in db.get("sent_trades", {})
-        ]
-
-    if not fresh_targets:
-        if manual_trigger:
-            send_tg_message("ℹ️ Под текущие ранги пока нет новых непроверенных целей — повторю в следующую волну.", add_keyboard=True)
-        return
-
-    # 3. Липкие пары (48 ч) + приоритет старших рангов (S -> A -> B -> C) + суточный учёт по cardId:
-    #    - Сложенные пары запоминаются на 2 дня (48 ч) локально в состоянии (0 лишних запросов и 0 байт прокси).
-    #    - Пока обе карты пары есть в профиле, на следующий день они снова уходят вместе, не ломая вчерашние трейды.
-    #    - Старшие ранги (S, A, B) идут первыми; для 1×B + 1×C сначала берётся свободная непарная C-карта,
-    #      и только если все C в парах — аккуратно разбивается ровно одна самая старая C-пара (остальные не трогаются).
+    # 2. Умный учёт выставленных за день партий (offered_today_batches) и липких пар (48 ч):
+    #    - Храним именно связки cardId (например [Аиша, Пак]). Если любая карта из связки исчезла из профиля
+    #      (ушла в трейд или перекрафтилась), сайт сам отменил те трейды -> выжившая карта мгновенно снова СВОБОДНА!
     today_kyiv = kyiv_now().strftime("%Y-%m-%d")
-    if st.get("offered_today_date") != today_kyiv:
+    if st.get("offered_today_date") != today_kyiv or st.get("offered_today_ver") != APP_VERSION_TAG:
         st["offered_today_date"] = today_kyiv
-        st["offered_today_counts"] = {}
-    offered_today_counts: dict[str, int] = {
-        str(k): int(v) for k, v in (st.get("offered_today_counts") or {}).items()
-    }
+        st["offered_today_ver"] = APP_VERSION_TAG
+        st["offered_today_batches"] = []
 
-    # Чистим устаревшие (> 48 ч) или неполные липкие пары (если карту уже забрали в трейде или заблокировали)
-    raw_sticky = st.get("sticky_pairs") or []
+    inv_counts_all: Counter = Counter()
     inv_counts_by_rank: dict[str, Counter] = {}
     for r_k in ("F", "D", "C", "B", "A", "S"):
-        inv_counts_by_rank[r_k] = Counter(str(u.get("cardId") or "") for u in (fodder_units.get(r_k) or []))
+        c_r = Counter(str(u.get("cardId") or "") for u in (fodder_units.get(r_k) or []))
+        inv_counts_by_rank[r_k] = c_r
+        inv_counts_all.update(c_r)
 
+    # Авто-очистка сегодняшних партий, у которых хотя бы одна карта уже пропала из инвентаря
+    raw_batches = st.get("offered_today_batches") or []
+    offered_today_batches: list[dict[str, Any]] = []
+    temp_all = Counter(inv_counts_all)
+    for b in raw_batches:
+        b_ids = [str(x) for x in (b.get("ids") or []) if x]
+        if not b_ids:
+            continue
+        need = Counter(b_ids)
+        if all(temp_all.get(cid, 0) >= q for cid, q in need.items()):
+            for cid, q in need.items():
+                temp_all[cid] -= q
+            offered_today_batches.append({"ids": b_ids, "ts": float(b.get("ts") or now_ts)})
+
+    offered_today_counts: Counter = Counter()
+    for b in offered_today_batches:
+        for cid in b["ids"]:
+            offered_today_counts[cid] += 1
+
+    # Чистим устаревшие (> 48 ч) или распавшиеся липкие пары
+    raw_sticky = st.get("sticky_pairs") or []
     sticky_pairs: list[dict[str, Any]] = []
     temp_inv = {r_k: Counter(cnt) for r_k, cnt in inv_counts_by_rank.items()}
     for sp in raw_sticky:
@@ -1289,12 +1283,12 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
                 temp_inv[sp_r][cid] -= q
             sticky_pairs.append({"rank": sp_r, "ids": sp_ids, "ts": sp_ts})
 
-    def _get_unused_pool(rank_name: str) -> list[dict[str, Any]]:
+    def _get_unused_pool(rank_name: str, allow_reused_if_empty: bool = False) -> list[dict[str, Any]]:
         raw_units = sorted(
             list(fodder_units.get(rank_name) or []),
             key=lambda u: str(u.get("cardId") or ""),
         )
-        used_budget = dict(offered_today_counts)
+        used_budget = Counter(offered_today_counts)
         unused: list[dict[str, Any]] = []
         for u in raw_units:
             cid = str(u.get("cardId") or "")
@@ -1302,10 +1296,11 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
                 used_budget[cid] -= 1
             else:
                 unused.append(u)
+        if not unused and allow_reused_if_empty and raw_units:
+            return raw_units
         return unused
 
     def _pick_pair_for_rank(rank_name: str, pool_same: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
-        """Возвращает (пара_из_2_карт, была_ли_из_sticky_pairs)."""
         avail_c = Counter(str(u.get("cardId") or "") for u in pool_same)
         for sp in sticky_pairs:
             if sp["rank"] != rank_name:
@@ -1322,7 +1317,6 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
                             break
                 if len(picked) == 2:
                     return picked, True
-        # Иначе собираем новую пару предпочтительно из карт, НЕ входящих в активные липкие пары
         sticky_ids_budget = Counter()
         for sp in sticky_pairs:
             if sp["rank"] == rank_name:
@@ -1343,7 +1337,6 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
         return [], False
 
     def _pick_single_lower_card(lower_rank: str, pool_low: list[dict[str, Any]]) -> tuple[Optional[dict[str, Any]], Optional[int]]:
-        """Для 1×B + 1×C сначала берёт свободную непарную C-карту; если все C в парах — возвращает карту и индекс самой старой пары для аккуратного разбора."""
         sticky_ids_budget = Counter()
         for sp in sticky_pairs:
             if sp["rank"] == lower_rank:
@@ -1355,7 +1348,6 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
                 sticky_ids_budget[cid] -= 1
             else:
                 return u, None
-        # Все младшие карты заняты в липких парах — берём из самой старой пары этого ранга
         oldest_idx: Optional[int] = None
         oldest_ts = float("inf")
         avail_c = Counter(str(u.get("cardId") or "") for u in pool_low)
@@ -1371,10 +1363,10 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
                         return u, oldest_idx
         return (pool_low[0], None) if pool_low else (None, None)
 
-    # Быстрая проверка: есть ли вообще невыставленные сегодня карты в рабочих рангах?
     unused_by_rank = {r: _get_unused_pool(r) for r in active_ranks}
     if not any(unused_by_rank.values()):
         log_debug("[AUTO WAVE SKIP] Все доступные на сегодня пары карт уже выставлены — ждём новых карт или завтрашнего утра.")
+        st["offered_today_batches"] = offered_today_batches
         st["sticky_pairs"] = sticky_pairs
         st["last_wave_ts"] = time.time()
         save_auto_state(st)
@@ -1386,13 +1378,89 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
             )
         return
 
+    # Оцениваем, сколько реальных партий осталось выставить:
+    # если осталась всего 1 партия (например только 1×A + 1×B), отдаём ей ВСЕ свободные слоты часа (до 9), а не режем до 5!
+    est_batches = 0
+    for r_e in active_ranks:
+        cnt_e = len(unused_by_rank.get(r_e) or [])
+        if cnt_e >= 2:
+            est_batches += cnt_e // 2 + (cnt_e % 2)
+        elif cnt_e == 1:
+            est_batches += 1
+    # Если 1 карта старшего ранга заберёт единственную карту младшего ранга (например 1 A + 1 B -> ровно 1 партия)
+    if est_batches == 2 and len([r for r in active_ranks if len(unused_by_rank.get(r) or []) == 1]) == 2:
+        r_hi = list(reversed(active_ranks))[0]
+        if LOWER_RANK_MAP.get(r_hi) in active_ranks and len(unused_by_rank.get(LOWER_RANK_MAP[r_hi]) or []) == 1:
+            est_batches = 1
+    effective_batch_cap = remaining_slots if est_batches <= 1 else MAX_ORDERS_PER_BATCH
+
+    # 3. Умное сканирование под конкретный ранг И конкретный нужный диапазон цен (бесплатный Opera VPN):
+    #    - 2+ карт ранга -> ищем >= 2.60 (под 2× того же ранга)
+    #    - 1 карта ранга + есть (ранг - 1) -> ищем >= 2.00 (под 1× того же + 1× ранг ниже, включая 2.60/2.80!)
+    #    - 1 карта ранга + есть (ранг - 2) или без младших -> ищем 1.60–1.99 (под 1× того же + 1× (ранг - 2) или 1-в-1)
+    db = load_trade_db()
+    now = time.time()
+
+    def _load_fresh(cur_db: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+        return [
+            (k, t) for k, t in cur_db.get("targets", {}).items()
+            if t.get("rank") in active_ranks
+            and t.get("user_id")
+            and t.get("card_id")
+            and now - float(t.get("verified_at") or 0) < TARGET_TTL_SECONDS
+            and k not in cur_db.get("sent_trades", {})
+        ]
+
+    fresh_targets = _load_fresh(db)
+    scanned_any = False
+    ordered_ranks = list(reversed(active_ranks))  # S -> A -> B -> C
+
+    for r_need in ordered_ranks:
+        if STOP_FLAG:
+            break
+        p_same = unused_by_rank.get(r_need) or []
+        if not p_same:
+            continue
+        low1_r = LOWER_RANK_MAP.get(r_need)
+        has_low1 = bool(low1_r and _get_unused_pool(low1_r, allow_reused_if_empty=True))
+
+        if len(p_same) >= 2:
+            need_min, need_max = 2.60, 999.0
+        elif has_low1:
+            need_min, need_max = 2.00, 999.0
+        else:
+            need_min, need_max = 1.60, 1.99
+
+        r_tier_cnt = sum(
+            1 for _, t in fresh_targets
+            if t.get("rank") == r_need and need_min <= float(t.get("net_price") or 0) <= need_max
+        )
+        if r_tier_cnt < effective_batch_cap:
+            log_debug(f"[SCAN NEED] Ранг {r_need} ({need_min:.2f}–{need_max:.2f}): в базе {r_tier_cnt}/{effective_batch_cap}, досканирую...")
+            await scan_cards_batch_into_db(
+                [r_need],
+                max_cards_to_scan=16,
+                stop_when_found=effective_batch_cap - r_tier_cnt,
+                min_net=need_min,
+                max_net=need_max,
+            )
+            scanned_any = True
+
+    if scanned_any:
+        db = load_trade_db()
+        fresh_targets = _load_fresh(db)
+
+    if not fresh_targets:
+        if manual_trigger:
+            send_tg_message("ℹ️ Под текущие ранги пока нет новых непроверенных целей — повторю в следующую волну.", add_keyboard=True)
+        return
+
+    # 4. Выставление обменов (приоритет старших рангов S -> A -> B -> C, поддержка ранга -1 и ранга -2)
     sent_count = 0
     sent_logs: list[str] = []
     used_user_ids_wave: set[str] = set()
-    # Приоритет старшим рангам: S -> A -> B -> C
-    ordered_ranks = list(reversed(active_ranks))
-
     hit_rate_limit = False
+
     for _pass in range(2):
         if sent_count >= remaining_slots or STOP_FLAG or hit_rate_limit:
             break
@@ -1406,8 +1474,10 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
             pool_same = _get_unused_pool(rank)
             if not pool_same:
                 continue
-            lower_r = LOWER_RANK_MAP.get(rank)
-            pool_low = _get_unused_pool(lower_r) if lower_r else []
+            low1_r = LOWER_RANK_MAP.get(rank)
+            low2_r = LOWER2_RANK_MAP.get(rank)
+            pool_low1 = _get_unused_pool(low1_r, allow_reused_if_empty=True) if low1_r else []
+            pool_low2 = _get_unused_pool(low2_r, allow_reused_if_empty=True) if low2_r else []
 
             rank_targets = [
                 (k, t) for k, t in fresh_targets
@@ -1421,7 +1491,7 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
             rank_targets.sort(key=lambda x: float(x[1].get("net_price") or 0), reverse=True)
 
             tier_260 = [(k, t) for k, t in rank_targets if float(t.get("net_price") or 0) >= 2.60]
-            tier_200 = [(k, t) for k, t in rank_targets if 2.00 <= float(t.get("net_price") or 0) < 2.60]
+            tier_200_plus = [(k, t) for k, t in rank_targets if float(t.get("net_price") or 0) >= 2.00]
             tier_160 = [(k, t) for k, t in rank_targets if 1.60 <= float(t.get("net_price") or 0) < 2.00]
 
             chosen_targets: list[tuple[str, dict[str, Any]]] = []
@@ -1437,17 +1507,27 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
                     offer_desc = f"2×{rank}"
                     chosen_targets = tier_260
                     is_new_same_pair = not was_sticky
-            elif tier_200 and len(pool_same) >= 1 and lower_r and len(pool_low) >= 1:
-                low_card, b_idx = _pick_single_lower_card(lower_r, pool_low)
+            elif tier_200_plus and len(pool_same) >= 1 and low1_r and len(pool_low1) >= 1:
+                # 1× ранг + 1× (ранг - 1) (себестоимость ~1.67): подходит на любые цели >= 2.00 (включая 2.40, 2.60, 2.80!)
+                low_card, b_idx = _pick_single_lower_card(low1_r, pool_low1)
                 if low_card:
                     fixed_offer = [pool_same[0], low_card]
-                    offer_desc = f"1×{rank}+1×{lower_r}"
-                    chosen_targets = tier_200
+                    offer_desc = f"1×{rank}+1×{low1_r}"
+                    chosen_targets = tier_200_plus
                     broken_sticky_idx = b_idx
-            elif (tier_200 or tier_160) and len(pool_same) >= 1:
+            elif tier_160 and len(pool_same) >= 1 and low2_r and len(pool_low2) >= 1:
+                # 1× ранг + 1× (ранг - 2) (себестоимость ~1.39): отличный плюс и выше шанс принятия на 1.60–1.99!
+                low2_card, b_idx2 = _pick_single_lower_card(low2_r, pool_low2)
+                if low2_card:
+                    fixed_offer = [pool_same[0], low2_card]
+                    offer_desc = f"1×{rank}+1×{low2_r}"
+                    chosen_targets = tier_160
+                    broken_sticky_idx = b_idx2
+            elif tier_160 and len(pool_same) >= 1:
+                # Чистый 1-в-1 только на 1.60–1.99 (когда нет карт ни на 1, ни на 2 ранга ниже)
                 fixed_offer = [pool_same[0]]
                 offer_desc = f"1×{rank}"
-                chosen_targets = tier_200 if (tier_200 and (not lower_r or not pool_low)) else tier_160
+                chosen_targets = tier_160
             else:
                 continue
 
@@ -1458,7 +1538,7 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
             offer_names = " + ".join(u.get("name", "?") for u in fixed_offer)
             batch_sent = 0
             for t_key, t_obj in chosen_targets:
-                if sent_count >= remaining_slots or batch_sent >= MAX_ORDERS_PER_BATCH or STOP_FLAG:
+                if sent_count >= remaining_slots or batch_sent >= effective_batch_cap or STOP_FLAG:
                     break
                 if t_obj["user_id"] in used_user_ids_wave:
                     continue
@@ -1504,16 +1584,13 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
                         break
 
             if batch_sent > 0:
-                for u in fixed_offer:
-                    cid = str(u.get("cardId") or "")
-                    if cid:
-                        offered_today_counts[cid] = offered_today_counts.get(cid, 0) + 1
-                if is_new_same_pair and len(fixed_offer) == 2:
-                    sticky_pairs.append({
-                        "rank": rank,
-                        "ids": [str(fixed_offer[0].get("cardId") or ""), str(fixed_offer[1].get("cardId") or "")],
-                        "ts": time.time(),
-                    })
+                b_ids = [str(u.get("cardId") or "") for u in fixed_offer if u.get("cardId")]
+                if b_ids:
+                    offered_today_batches.append({"ids": b_ids, "ts": time.time()})
+                    for cid in b_ids:
+                        offered_today_counts[cid] += 1
+                if is_new_same_pair and len(b_ids) == 2:
+                    sticky_pairs.append({"rank": rank, "ids": b_ids, "ts": time.time()})
                 if broken_sticky_idx is not None and 0 <= broken_sticky_idx < len(sticky_pairs):
                     sticky_pairs.pop(broken_sticky_idx)
         if not progress_in_pass:
@@ -1522,7 +1599,8 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
     save_trade_db(db)
     st["recent_trade_ts"] = recent_ts[-30:]
     st["offered_today_date"] = today_kyiv
-    st["offered_today_counts"] = offered_today_counts
+    st["offered_today_ver"] = APP_VERSION_TAG
+    st["offered_today_batches"] = offered_today_batches
     st["sticky_pairs"] = sticky_pairs
     st["last_wave_ts"] = time.time()
     save_auto_state(st)
@@ -1764,7 +1842,7 @@ async def background_scheduler_loop(q: asyncio.Queue, deadline: float) -> None:
                     await q.put(("auto_wave", ""))
                 continue
 
-        # Тихий режим v58.0: 20-минутный мониторинг и пуши отключены — пользователь сам проверяет вечером через '🃏 Мои карты'.
+        # Тихий режим v60.0: 20-минутный мониторинг и пуши отключены — пользователь сам проверяет вечером через '🃏 Мои карты'.
 
 
 async def run_silent_monitor() -> None:
