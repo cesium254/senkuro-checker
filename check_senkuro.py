@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Senkuro Smart Auto-Trade & Bank Assistant v61.0
+Senkuro Smart Auto-Trade & Bank Assistant v62.0
 -----------------------------------------------
 - Рабочее окно авто-обменов: 09:00–18:00 по Киеву (ZoneInfo("Europe/Kyiv"), авто зимнее/летнее время).
 - Ультра-экономный расход украинского резидентского прокси (< 0.5 МБ/день):
@@ -53,7 +53,7 @@ socket.getaddrinfo = _ipv4_only_getaddrinfo
 # 1. КОНФИГУРАЦИЯ
 # ==============================================================================
 
-APP_VERSION_TAG = "v61.0"
+APP_VERSION_TAG = "v62.0"
 APP_HEADER_VERSION = "2.2.1"
 GRAPHQL_API_URL = "https://api.senkuro.com/graphql"
 
@@ -66,6 +66,8 @@ MIN_WAVE_COOLDOWN_SEC = 5 * 60    # Минимум 5 мин между авто-
 MONITOR_INTERVAL_SEC = 20 * 60
 MAX_TRADES_PER_WAVE = 9           # До 9 обменов в скользящем часе (1 слот держим в запасе под банк)
 MAX_ORDERS_PER_BATCH = 5          # До 5 человек на 1 комбинацию (до 9, если комбинация одна)
+DAILY_CAP_MIN = 50                # Случайный дневной потолок (минимум) для «очеловечивания»
+DAILY_CAP_MAX = 62                # Случайный дневной потолок (максимум)
 
 MAIN_ACCOUNT_SLUG = os.environ.get("SENKURO_MAIN_SLUG", "cesium254").strip() or "cesium254"
 MAIN_ACCOUNT_UID = os.environ.get("SENKURO_MAIN_UID", "VVNFUjoxODAxNDM0ODEzOTI0ODE4MDE").strip() or "VVNFUjoxODAxNDM0ODEzOTI0ODE4MDE"
@@ -1158,7 +1160,7 @@ async def send_profitable_card_to_bank(card_id: str) -> None:
 
 
 async def check_and_notify_new_profitable_cards(my_data: dict[str, Any]) -> None:
-    """Тихий режим v61.0: не шлёт пуши в Telegram днём и ночью. Просто обновляет кэш выгодных карт для вечерней кнопки '🃏 Мои карты' -> '🏦 Отправить всё в банк'."""
+    """Тихий режим v62.0: не шлёт пуши в Telegram днём и ночью. Просто обновляет кэш выгодных карт для вечерней кнопки '🃏 Мои карты' -> '🏦 Отправить всё в банк'."""
     BANK_PENDING_CARDS.clear()
     for p_it in my_data["profitable"]:
         cid = p_it["cardId"]
@@ -1177,7 +1179,7 @@ def _build_profitable_combo_blueprints(
     usage_today: Counter,
 ) -> list[dict[str, Any]]:
     """
-    Математический оптимизатор v61.0:
+    Математический оптимизатор v62.0:
     Перебирает ВСЕ доступные прибыльные комбинации по всем рангам (S, A, B, C, D)
     с учётом себестоимости (1×ранг=1.25, -1 ранг=0.42, -2 ранга=0.14):
       1) 1×R + 1×(R-1)  [cost=1.67, цели >= 2.00 -> профит +0.33..+1.33]
@@ -1241,11 +1243,26 @@ def _build_profitable_combo_blueprints(
                     "base_score": rw * 1.10 * fresh_bonus,
                 })
 
-        # Комбинация 3: 1×R + 1×(R-2) (себестоимость 1.39, выгодно на 1.60–2.59 и привлекательнее 1-в-1)
-        if p_low2:
+        # Комбинация 3: 1×R + 2×(R-2) (3 карты за 1, себестоимость 1.53, цели >= 1.80) — намного выше шанс принятия!
+        if len(p_low2) >= 2:
+            offer = [p_same[0], p_low2[0], p_low2[1]]
+            avg_u = sum(usage_today.get(str(u.get("cardId") or ""), 0) for u in offer) / 3.0
+            fresh_bonus = 1.95 if avg_u == 0 else (1.0 / (1.0 + 0.45 * avg_u))
+            blueprints.append({
+                "rank": rank,
+                "kind": "1+2low2",
+                "desc": f"1×{rank}+2×{low2_r}",
+                "offer": offer,
+                "cost": 1.53,
+                "min_net": 1.80,
+                "max_net": 2.59,
+                "round_num": int(avg_u) + 1,
+                "base_score": rw * 1.08 * fresh_bonus,
+            })
+        elif len(p_low2) == 1:
             offer = [p_same[0], p_low2[0]]
             avg_u = sum(usage_today.get(str(u.get("cardId") or ""), 0) for u in offer) / 2.0
-            fresh_bonus = 1.9 if avg_u == 0 else (1.0 / (1.0 + 0.45 * avg_u))
+            fresh_bonus = 1.85 if avg_u == 0 else (1.0 / (1.0 + 0.45 * avg_u))
             blueprints.append({
                 "rank": rank,
                 "kind": "1+low2",
@@ -1255,7 +1272,7 @@ def _build_profitable_combo_blueprints(
                 "min_net": 1.60,
                 "max_net": 2.59,
                 "round_num": int(avg_u) + 1,
-                "base_score": rw * 1.05 * fresh_bonus,
+                "base_score": rw * 1.00 * fresh_bonus,
             })
 
         # Комбинация 4: 1×R (1-в-1, строго 1.60–1.99 — фоллбэк, когда нет ни 2×R, ни младших карт)
@@ -1306,8 +1323,30 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
             )
         return
 
+    # Суточный плавающий потолок (50–62 трейдов/день) — включается только для фоновых волн (ручная кнопка работает всегда)
+    today_cap_day = kyiv_now().strftime("%Y-%m-%d")
+    if st.get("daily_cap_date") != today_cap_day:
+        st["daily_cap_date"] = today_cap_day
+        st["daily_cap_limit"] = random.randint(DAILY_CAP_MIN, DAILY_CAP_MAX)
+        st["daily_sent_count"] = 0
+        save_auto_state(st)
+    daily_cap_limit = int(st.get("daily_cap_limit") or 56)
+    daily_sent_count = int(st.get("daily_sent_count") or 0)
+    if not manual_trigger and daily_sent_count >= daily_cap_limit:
+        log_debug(f"[DAILY CAP] Достигнут плавающий дневной лимит ({daily_sent_count}/{daily_cap_limit}) — отдыхаем до завтра 09:00.")
+        st["last_wave_ts"] = now_ts
+        st["next_wave_not_before"] = now_ts + 30 * 60
+        save_auto_state(st)
+        return
+
     recent_ts = [float(x) for x in (st.get("recent_trade_ts") or []) if now_ts - float(x) < WAVE_INTERVAL_SEC]
-    remaining_slots = max(0, MAX_TRADES_PER_WAVE - len(recent_ts))
+    hourly_free = max(0, MAX_TRADES_PER_WAVE - len(recent_ts))
+    if not manual_trigger:
+        # Живой размер волны (6–9 шт.), не превышает ни часовой лимит, ни дневной потолок
+        wave_target = random.randint(6, MAX_TRADES_PER_WAVE)
+        remaining_slots = min(hourly_free, wave_target, max(0, daily_cap_limit - daily_sent_count))
+    else:
+        remaining_slots = hourly_free
     if remaining_slots <= 0:
         oldest = min(recent_ts) if recent_ts else now_ts
         mins_left = max(1, int((WAVE_INTERVAL_SEC - (now_ts - oldest)) // 60) + 1)
@@ -1455,7 +1494,7 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
                 continue
 
             if sent_count > 0:
-                await asyncio.sleep(random.uniform(28.0, 38.0))
+                await asyncio.sleep(random.uniform(22.0, 48.0))
 
             t_res = await asyncio.to_thread(
                 direct_ua_gql_call,
@@ -1511,7 +1550,11 @@ async def run_auto_trade_wave(manual_trigger: bool = False) -> None:
     st["recent_trade_ts"] = recent_ts[-30:]
     st["usage_today_date"] = today_kyiv
     st["card_usage_today"] = dict(usage_today)
+    st["daily_sent_count"] = daily_sent_count + sent_count
     st["last_wave_ts"] = time.time()
+    # Случайный «человеческий» сдвиг следующей волны (+4..16 мин после освобождения слотов), чтобы не бить по минутам как робот
+    if sent_count > 0:
+        st["next_wave_jitter_sec"] = random.randint(4 * 60, 16 * 60)
     if not hit_rate_limit:
         st["rate_limit_until"] = 0
     save_auto_state(st)
@@ -1754,11 +1797,12 @@ async def background_scheduler_loop(q: asyncio.Queue, deadline: float) -> None:
         # Не ждёт лишний час после волны — запускает новую волну сразу, как освобождаются слоты в скользящем окне 61 мин
         # (или через 10 мин после ответа лимита от сайта).
         if SENKURO_MAIN_TOKEN and UKRAINE_PROXY_RAW and is_working_hours_kyiv():
-            if now < float(st.get("rate_limit_until") or 0):
+            if now < float(st.get("rate_limit_until") or 0) or now < float(st.get("next_wave_not_before") or 0):
                 continue
             if now - float(st.get("last_wave_ts") or 0) < MIN_WAVE_COOLDOWN_SEC:
                 continue
-            recent_ts = [float(x) for x in (st.get("recent_trade_ts") or []) if now - float(x) < WAVE_INTERVAL_SEC]
+            jitter_s = int(st.get("next_wave_jitter_sec") or 0)
+            recent_ts = [float(x) for x in (st.get("recent_trade_ts") or []) if now - float(x) < (WAVE_INTERVAL_SEC + jitter_s)]
             slots_free = MAX_TRADES_PER_WAVE - len(recent_ts)
             if slots_free >= 1:
                 if "auto_wave" not in QUEUED_KEYS and ACTIVE_JOB_NAME != "auto_wave":
@@ -1766,7 +1810,7 @@ async def background_scheduler_loop(q: asyncio.Queue, deadline: float) -> None:
                     await q.put(("auto_wave", ""))
                 continue
 
-        # Тихий режим v61.0: 20-минутный мониторинг и пуши отключены — пользователь сам проверяет вечером через '🃏 Мои карты'.
+        # Тихий режим v62.0: 20-минутный мониторинг и пуши отключены — пользователь сам проверяет вечером через '🃏 Мои карты'.
 
 
 async def run_silent_monitor() -> None:
