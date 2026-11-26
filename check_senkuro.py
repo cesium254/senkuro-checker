@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Senkuro Smart Auto-Trade & Bank Assistant v62.0
+Senkuro Smart Auto-Trade & Bank Assistant v63.0
 -----------------------------------------------
 - Рабочее окно авто-обменов: 09:00–18:00 по Киеву (ZoneInfo("Europe/Kyiv"), авто зимнее/летнее время).
 - Ультра-экономный расход украинского резидентского прокси (< 0.5 МБ/день):
@@ -17,6 +17,7 @@ Senkuro Smart Auto-Trade & Bank Assistant v62.0
 
 import argparse
 import asyncio
+import html
 import io
 import json
 import os
@@ -53,7 +54,7 @@ socket.getaddrinfo = _ipv4_only_getaddrinfo
 # 1. КОНФИГУРАЦИЯ
 # ==============================================================================
 
-APP_VERSION_TAG = "v62.0"
+APP_VERSION_TAG = "v63.0"
 APP_HEADER_VERSION = "2.2.1"
 GRAPHQL_API_URL = "https://api.senkuro.com/graphql"
 
@@ -615,19 +616,24 @@ def direct_ua_gql_call(query: str, variables: dict, op_name: str) -> dict:
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
     }
     payload = json.dumps({"query": query, "variables": variables, "operationName": op_name}).encode("utf-8")
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url}))
-    req = urllib.request.Request(GRAPHQL_API_URL, data=payload, headers=headers, method="POST")
-    try:
-        with opener.open(req, timeout=20) as resp:
-            raw = resp.read().decode("utf-8", errors="ignore")
-            return json.loads(raw)
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="ignore")
-        log_debug(f"[UA GQL HTTP {e.code}] op={op_name}: {body[:200]}")
-        return {"errors": [{"message": f"HTTP {e.code}: {body[:160]}"}]}
-    except Exception as e:
-        log_debug(f"[UA GQL ERR] op={op_name}: {e}")
-        return {"errors": [{"message": str(e)}]}
+    last_err = ""
+    for attempt in range(1, 4):
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url}))
+        req = urllib.request.Request(GRAPHQL_API_URL, data=payload, headers=headers, method="POST")
+        try:
+            with opener.open(req, timeout=22) as resp:
+                raw = resp.read().decode("utf-8", errors="ignore")
+                return json.loads(raw)
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", errors="ignore")
+            log_debug(f"[UA GQL HTTP {e.code}] op={op_name}: {body[:200]}")
+            return {"errors": [{"message": f"HTTP {e.code}: {body[:160]}"}]}
+        except Exception as e:
+            last_err = str(e)
+            log_debug(f"[UA GQL ERR try {attempt}/3] op={op_name}: {last_err}")
+            if attempt < 3:
+                time.sleep(2.0 * attempt)
+    return {"errors": [{"message": last_err}]}
 
 
 def _check_and_alert_token_error(res: dict) -> bool:
@@ -1156,11 +1162,11 @@ async def send_profitable_card_to_bank(card_id: str) -> None:
     else:
         errs = res.get("errors") or []
         msg = errs[0].get("message", "ошибка API") if errs else "неизвестная ошибка"
-        send_tg_message(f"⚠️ Не удалось отправить в банк: <code>{str(msg)[:200]}</code>", add_keyboard=True)
+        send_tg_message(f"⚠️ Не удалось отправить в банк: <code>{html.escape(str(msg)[:200])}</code>", add_keyboard=True)
 
 
 async def check_and_notify_new_profitable_cards(my_data: dict[str, Any]) -> None:
-    """Тихий режим v62.0: не шлёт пуши в Telegram днём и ночью. Просто обновляет кэш выгодных карт для вечерней кнопки '🃏 Мои карты' -> '🏦 Отправить всё в банк'."""
+    """Тихий режим v63.0: не шлёт пуши в Telegram днём и ночью. Просто обновляет кэш выгодных карт для вечерней кнопки '🃏 Мои карты' -> '🏦 Отправить всё в банк'."""
     BANK_PENDING_CARDS.clear()
     for p_it in my_data["profitable"]:
         cid = p_it["cardId"]
@@ -1179,7 +1185,7 @@ def _build_profitable_combo_blueprints(
     usage_today: Counter,
 ) -> list[dict[str, Any]]:
     """
-    Математический оптимизатор v62.0:
+    Математический оптимизатор v63.0:
     Перебирает ВСЕ доступные прибыльные комбинации по всем рангам (S, A, B, C, D)
     с учётом себестоимости (1×ранг=1.25, -1 ранг=0.42, -2 ранга=0.14):
       1) 1×R + 1×(R-1)  [cost=1.67, цели >= 2.00 -> профит +0.33..+1.33]
@@ -1810,7 +1816,7 @@ async def background_scheduler_loop(q: asyncio.Queue, deadline: float) -> None:
                     await q.put(("auto_wave", ""))
                 continue
 
-        # Тихий режим v62.0: 20-минутный мониторинг и пуши отключены — пользователь сам проверяет вечером через '🃏 Мои карты'.
+        # Тихий режим v63.0: 20-минутный мониторинг и пуши отключены — пользователь сам проверяет вечером через '🃏 Мои карты'.
 
 
 async def run_silent_monitor() -> None:
@@ -1997,7 +2003,7 @@ async def executor_loop(q: asyncio.Queue, deadline: float) -> None:
             log_debug(f"[CANCELLED] {act}")
         except Exception as e:
             log_debug(f"[EXEC ERR] {act}: {e}")
-            send_tg_message(f"⚠️ Ошибка задачи <code>{act}</code>: <code>{str(e)[:250]}</code>", add_keyboard=True)
+            send_tg_message(f"⚠️ Ошибка задачи <code>{html.escape(str(act))}</code>: <code>{html.escape(str(e)[:250])}</code>", add_keyboard=True)
         finally:
             ACTIVE_JOB_TASK = None
             ACTIVE_JOB_NAME = ""
