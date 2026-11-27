@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Senkuro Smart Auto-Trade & Bank Assistant v63.0
+Senkuro Smart Auto-Trade & Bank Assistant v64.0
 -----------------------------------------------
 - Рабочее окно авто-обменов: 09:00–18:00 по Киеву (ZoneInfo("Europe/Kyiv"), авто зимнее/летнее время).
 - Ультра-экономный расход украинского резидентского прокси (< 0.5 МБ/день):
@@ -54,7 +54,7 @@ socket.getaddrinfo = _ipv4_only_getaddrinfo
 # 1. КОНФИГУРАЦИЯ
 # ==============================================================================
 
-APP_VERSION_TAG = "v63.0"
+APP_VERSION_TAG = "v64.0"
 APP_HEADER_VERSION = "2.2.1"
 GRAPHQL_API_URL = "https://api.senkuro.com/graphql"
 
@@ -1166,7 +1166,7 @@ async def send_profitable_card_to_bank(card_id: str) -> None:
 
 
 async def check_and_notify_new_profitable_cards(my_data: dict[str, Any]) -> None:
-    """Тихий режим v63.0: не шлёт пуши в Telegram днём и ночью. Просто обновляет кэш выгодных карт для вечерней кнопки '🃏 Мои карты' -> '🏦 Отправить всё в банк'."""
+    """Тихий режим v64.0: не шлёт пуши в Telegram днём и ночью. Просто обновляет кэш выгодных карт для вечерней кнопки '🃏 Мои карты' -> '🏦 Отправить всё в банк'."""
     BANK_PENDING_CARDS.clear()
     for p_it in my_data["profitable"]:
         cid = p_it["cardId"]
@@ -1185,21 +1185,19 @@ def _build_profitable_combo_blueprints(
     usage_today: Counter,
 ) -> list[dict[str, Any]]:
     """
-    Математический оптимизатор v63.0:
-    Перебирает ВСЕ доступные прибыльные комбинации по всем рангам (S, A, B, C, D)
-    с учётом себестоимости (1×ранг=1.25, -1 ранг=0.42, -2 ранга=0.14):
-      1) 1×R + 1×(R-1)  [cost=1.67, цели >= 2.00 -> профит +0.33..+1.33]
-      2) 2×R            [cost=2.50, цели >= 2.60 -> профит +0.10..+0.50]
-      3) 1×R + 1×(R-2)  [cost=1.39, цели >= 1.60 -> профит +0.21..+1.41]
-      4) 1×R (1-в-1)    [cost=1.25, цели 1.60..1.99 -> фоллбэк, если нет младших карт]
-    Новые карты (usage_today == 0) всегда идут первыми; далее ротация по кругам (круг 2, 3...).
+    Математический оптимизатор v64.0 (НИКАКИХ бессмысленных 1-в-1, всегда 2–3 карты в предложении):
+      1) 2×R + 1×(R-1)  [cost=2.92, цели >= 3.20 -> профит +0.28..+1.08, 3 карты за дорогую цель вроде 3.60!]
+      2) 1×R + 1×(R-1)  [cost=1.67, цели 2.00–2.99 -> профит +0.33..+1.32]
+      3) 2×R            [cost=2.50, цели 2.60–3.19 (или >=2.60 если нет R-1) -> профит +0.10..+0.69]
+      4) 1×R + 2×(R-2)  [cost=1.53, цели 1.80–2.59 -> профит +0.27..+1.06, 3 карты за 1]
+      5) 1×R + 1×(R-2)  [cost=1.39, цели 1.60–2.39 -> профит +0.21..+1.00, если R-2 всего 1 шт.]
+      * Сухой 1-в-1 полностью убран — если карта ранга одна и нет младших доплат, слоты идут в старшие выгодные связки.
     """
     rank_weight = {"S": 27.0, "A": 9.0, "B": 3.0, "C": 1.6, "D": 1.0}
     blueprints: list[dict[str, Any]] = []
 
     def _sorted_pool(r_name: str) -> list[dict[str, Any]]:
         units = list(fodder_units.get(r_name) or [])
-        # Сортируем: сначала карты с минимальным числом использований сегодня (новые -> 0), затем стабильно по cardId
         units.sort(key=lambda u: (usage_today.get(str(u.get("cardId") or ""), 0), str(u.get("cardId") or "")))
         return units
 
@@ -1213,11 +1211,28 @@ def _build_profitable_combo_blueprints(
         p_low2 = _sorted_pool(low2_r) if low2_r else []
         rw = rank_weight.get(rank, 1.0)
 
-        # Комбинация 1: 1×R + 1×(R-1) (самая высокая маржа: +0.33..+1.33)
+        # Комбинация 1: 2×R + 1×(R-1) для сверхдорогих целей >= 3.20 (например, 3.60 -> +0.68 чистыми и 3 карты в оффере!)
+        if len(p_same) >= 2 and p_low1:
+            offer = [p_same[0], p_same[1], p_low1[0]]
+            avg_u = sum(usage_today.get(str(u.get("cardId") or ""), 0) for u in offer) / 3.0
+            fresh_bonus = 2.25 if avg_u == 0 else (1.0 / (1.0 + 0.45 * avg_u))
+            blueprints.append({
+                "rank": rank,
+                "kind": "2+low1",
+                "desc": f"2×{rank}+1×{low1_r}",
+                "offer": offer,
+                "cost": 2.92,
+                "min_net": 3.20,
+                "max_net": 999.0,
+                "round_num": int(avg_u) + 1,
+                "base_score": rw * 1.42 * fresh_bonus,
+            })
+
+        # Комбинация 2: 1×R + 1×(R-1) для диапазона 2.00–2.99 (не занижаем ставки на 3.20–3.60!)
         if p_low1:
             offer = [p_same[0], p_low1[0]]
             avg_u = sum(usage_today.get(str(u.get("cardId") or ""), 0) for u in offer) / 2.0
-            fresh_bonus = 2.2 if avg_u == 0 else (1.0 / (1.0 + 0.45 * avg_u))
+            fresh_bonus = 2.20 if avg_u == 0 else (1.0 / (1.0 + 0.45 * avg_u))
             blueprints.append({
                 "rank": rank,
                 "kind": "1+low1",
@@ -1225,18 +1240,19 @@ def _build_profitable_combo_blueprints(
                 "offer": offer,
                 "cost": 1.67,
                 "min_net": 2.00,
-                "max_net": 999.0,
+                "max_net": 2.99,
                 "round_num": int(avg_u) + 1,
                 "base_score": rw * 1.35 * fresh_bonus,
             })
 
-        # Комбинация 2: 2×R (высокий шанс принятия на 2.60+, формируем до 3 разных пар если карт много)
+        # Комбинация 3: 2×R для 2.60–3.19 (если есть R-1 для >=3.20) или >=2.60 (если R-1 нет)
         if len(p_same) >= 2:
+            max_2x = 3.19 if p_low1 else 999.0
             num_pairs = min(3, len(p_same) // 2)
             for idx_p in range(num_pairs):
                 offer = [p_same[idx_p * 2], p_same[idx_p * 2 + 1]]
                 avg_u = sum(usage_today.get(str(u.get("cardId") or ""), 0) for u in offer) / 2.0
-                fresh_bonus = 2.0 if avg_u == 0 else (1.0 / (1.0 + 0.45 * avg_u))
+                fresh_bonus = 2.00 if avg_u == 0 else (1.0 / (1.0 + 0.45 * avg_u))
                 blueprints.append({
                     "rank": rank,
                     "kind": "2xsame",
@@ -1244,12 +1260,12 @@ def _build_profitable_combo_blueprints(
                     "offer": offer,
                     "cost": 2.50,
                     "min_net": 2.60,
-                    "max_net": 999.0,
+                    "max_net": max_2x,
                     "round_num": int(avg_u) + 1,
-                    "base_score": rw * 1.10 * fresh_bonus,
+                    "base_score": rw * 1.15 * fresh_bonus,
                 })
 
-        # Комбинация 3: 1×R + 2×(R-2) (3 карты за 1, себестоимость 1.53, цели >= 1.80) — намного выше шанс принятия!
+        # Комбинация 4: 1×R + 2×(R-2) (3 карты за 1, себестоимость 1.53, цели 1.80–2.59)
         if len(p_low2) >= 2:
             offer = [p_same[0], p_low2[0], p_low2[1]]
             avg_u = sum(usage_today.get(str(u.get("cardId") or ""), 0) for u in offer) / 3.0
@@ -1276,26 +1292,9 @@ def _build_profitable_combo_blueprints(
                 "offer": offer,
                 "cost": 1.39,
                 "min_net": 1.60,
-                "max_net": 2.59,
+                "max_net": 2.39,
                 "round_num": int(avg_u) + 1,
                 "base_score": rw * 1.00 * fresh_bonus,
-            })
-
-        # Комбинация 4: 1×R (1-в-1, строго 1.60–1.99 — фоллбэк, когда нет ни 2×R, ни младших карт)
-        if not p_low1 and not p_low2 and len(p_same) == 1:
-            offer = [p_same[0]]
-            u0 = usage_today.get(str(p_same[0].get("cardId") or ""), 0)
-            fresh_bonus = 1.5 if u0 == 0 else (1.0 / (1.0 + 0.45 * u0))
-            blueprints.append({
-                "rank": rank,
-                "kind": "1for1",
-                "desc": f"1×{rank}",
-                "offer": offer,
-                "cost": 1.25,
-                "min_net": 1.60,
-                "max_net": 1.99,
-                "round_num": int(u0) + 1,
-                "base_score": rw * 0.75 * fresh_bonus,
             })
 
     blueprints.sort(key=lambda b: b["base_score"], reverse=True)
@@ -1816,7 +1815,7 @@ async def background_scheduler_loop(q: asyncio.Queue, deadline: float) -> None:
                     await q.put(("auto_wave", ""))
                 continue
 
-        # Тихий режим v63.0: 20-минутный мониторинг и пуши отключены — пользователь сам проверяет вечером через '🃏 Мои карты'.
+        # Тихий режим v64.0: 20-минутный мониторинг и пуши отключены — пользователь сам проверяет вечером через '🃏 Мои карты'.
 
 
 async def run_silent_monitor() -> None:
